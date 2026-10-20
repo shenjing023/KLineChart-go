@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -36,10 +37,15 @@ type OverlaySpec struct {
 	Rubber  OverlayRubberFunc
 }
 
-var overlayReg []OverlaySpec
+var (
+	overlayMu  sync.RWMutex
+	overlayReg []OverlaySpec
+)
 
 // RegisterOverlay adds a drawing tool. A repeated or reserved kind
 // returns an error and does not replace the built-in tools.
+// RegisterOverlay, UnregisterOverlay, and lookup from a draw can run
+// on different goroutines.
 func RegisterOverlay(spec OverlaySpec) error {
 	if spec.Kind == "" || spec.Draw == nil || spec.Hit == nil {
 		return fmt.Errorf("kline: overlay %q needs a kind, draw, and hit", spec.Kind)
@@ -51,14 +57,35 @@ func RegisterOverlay(spec OverlaySpec) error {
 	case OverlayHLine, OverlaySegment, OverlayFibonacci, ToolPan, "fib":
 		return fmt.Errorf("kline: overlay kind %q is reserved", spec.Kind)
 	}
-	if _, ok := overlayByKind(spec.Kind); ok {
-		return fmt.Errorf("%w: %s", ErrDuplicateOverlay, spec.Kind)
+	overlayMu.Lock()
+	defer overlayMu.Unlock()
+	for _, have := range overlayReg {
+		if have.Kind == spec.Kind {
+			return fmt.Errorf("%w: %s", ErrDuplicateOverlay, spec.Kind)
+		}
 	}
 	overlayReg = append(overlayReg, spec)
 	return nil
 }
 
+// UnregisterOverlay removes a host-registered kind. A reserved or
+// unknown kind is a no-op. A chart that already selected the tool
+// keeps that selection until SetTool.
+func UnregisterOverlay(kind string) {
+	overlayMu.Lock()
+	defer overlayMu.Unlock()
+	next := make([]OverlaySpec, 0, len(overlayReg))
+	for _, spec := range overlayReg {
+		if spec.Kind != kind {
+			next = append(next, spec)
+		}
+	}
+	overlayReg = next
+}
+
 func overlayByKind(kind string) (OverlaySpec, bool) {
+	overlayMu.RLock()
+	defer overlayMu.RUnlock()
 	for _, spec := range overlayReg {
 		if spec.Kind == kind {
 			return spec, true

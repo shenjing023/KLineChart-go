@@ -178,6 +178,10 @@ func (h *hostOsc) Scale(first, last int) chart.Linear {
 
 func registerHostSpecs(t *testing.T) {
 	t.Helper()
+	t.Cleanup(func() {
+		kline.Unregister("HOST")
+		kline.Unregister("HOSTOSC")
+	})
 	specs := []kline.Spec{
 		{Name: "HOST", Kind: kline.PaneMain, New: func() kline.Indicator { return &hostLine{color: ui.RGB(255, 140, 0)} }},
 		{Name: "HOSTOSC", Kind: kline.PaneSub, New: func() kline.Indicator { return &hostOsc{color: ui.RGB(20, 200, 40)} }},
@@ -389,6 +393,7 @@ func TestHostIndicatorAndSubPane(t *testing.T) {
 }
 
 func TestSyncIndicatorsPicksUpLateRegistration(t *testing.T) {
+	t.Cleanup(func() { kline.Unregister("HOSTLATE") })
 	c := kline.NewChart(kline.ChartOptions{Symbols: []string{"ALPHA"}, Indicators: []string{}})
 	// A ui.Toggle bound before the sync keeps driving the chart after it.
 	ma := c.IndicatorEnabled("MA")
@@ -435,6 +440,7 @@ func TestSyncIndicatorsPicksUpLateRegistration(t *testing.T) {
 }
 
 func TestHostOverlayTool(t *testing.T) {
+	t.Cleanup(func() { kline.UnregisterOverlay("hostmark") })
 	err := kline.RegisterOverlay(kline.OverlaySpec{
 		Kind:    "hostmark",
 		Anchors: 1,

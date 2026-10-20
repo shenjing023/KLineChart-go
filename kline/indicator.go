@@ -3,6 +3,7 @@ package kline
 import (
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/chart"
@@ -73,7 +74,10 @@ type Spec struct {
 	New  func() Indicator
 }
 
-var registry []Spec
+var (
+	registryMu sync.RWMutex
+	registry   []Spec
+)
 
 // Register appends an indicator. Name, Kind, and New are required.
 // Kind is PaneMain or PaneSub, and New().PaneKind must return that
@@ -81,6 +85,7 @@ var registry []Spec
 // register. A repeated name returns ErrDuplicateIndicator and leaves
 // the list unchanged. Call it from an init function, before NewChart.
 // A chart that already exists picks the spec up from SyncIndicators.
+// Register, Unregister, and Registry can be called from any goroutine.
 func Register(spec Spec) error {
 	if spec.Name == "" || spec.New == nil {
 		return fmt.Errorf("kline: indicator %q needs a name and constructor", spec.Name)
@@ -95,6 +100,8 @@ func Register(spec Spec) error {
 	if got := ind.PaneKind(); got != spec.Kind {
 		return fmt.Errorf("%w: %s registered %s, constructor returned %s", ErrIndicatorKind, spec.Name, spec.Kind, got)
 	}
+	registryMu.Lock()
+	defer registryMu.Unlock()
 	for _, have := range registry {
 		if have.Name == spec.Name {
 			return fmt.Errorf("%w: %s", ErrDuplicateIndicator, spec.Name)
@@ -102,6 +109,21 @@ func Register(spec Spec) error {
 	}
 	registry = append(registry, spec)
 	return nil
+}
+
+// Unregister removes name from the indicator list. An unknown name is
+// a no-op. A chart that already copied the spec keeps it until
+// SyncIndicators.
+func Unregister(name string) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	next := make([]Spec, 0, len(registry))
+	for _, spec := range registry {
+		if spec.Name != name {
+			next = append(next, spec)
+		}
+	}
+	registry = next
 }
 
 func mustRegister(spec Spec) {
@@ -112,6 +134,8 @@ func mustRegister(spec Spec) {
 
 // Registry returns a copy of the registered indicator list.
 func Registry() []Spec {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
 	out := make([]Spec, len(registry))
 	copy(out, registry)
 	return out
