@@ -96,8 +96,9 @@ type app struct {
 	// tool is Pan, H-Line, Segment, or Fib. Draw tools do not pan: the
 	// pointer places and moves overlays instead.
 	tool int
-	// magnet snaps new points and endpoint drags to OHLC. Body drags
-	// still use the raw pointer price.
+	// magnet snaps new points, including the press that places a new
+	// H-Line, and endpoint drags on Segment and Fib. Dragging an
+	// existing H-Line body uses the raw pointer price.
 	magnet kline.MagnetMode
 	// layout is Stack or Overlay. Stack is the zero value.
 	layout int
@@ -114,6 +115,10 @@ type app struct {
 	dragPane int
 	dragID   string
 	dragPart int
+	// dragNewHLine is set only when this press places a new H-Line and
+	// starts its drag. pointerMove then keeps the magnet price. Dragging
+	// an existing H-Line body leaves it false.
+	dragNewHLine bool
 	// press is a pan-tool click, used to select on release when the
 	// pointer barely moved. A drag keeps panning and does not select.
 	pressOn   bool
@@ -539,7 +544,7 @@ func (a *app) view(c *ui.Context) {
 				a.fitted = false
 			}
 		})
-		hint := "Pan drags both panes. H-Line and Segment draw on the pane you click, and pan is off while a draw tool is selected. Delete removes the selected line. Right-click removes the line under the pointer."
+		hint := "Pan drags both panes. H-Line, Segment, and Fib draw on the pane you click, and pan is off while a draw tool is selected. Delete removes the selected line. Right-click removes the line under the pointer."
 		if a.layout == layoutOverlay {
 			hint = "Overlay indexes both symbols to 100 at the first visible bar where both closes are positive. ALPHA stays candles. BETA is the close line. Volume and MACD are ALPHA only, and drawings stay on ALPHA. Pan and the wheel still move the shared viewport."
 		}
@@ -735,6 +740,7 @@ func (a *app) pointerDown(pane int, ev ui.InputEvent) bool {
 		}
 		o := a.panes[pane].overlays.Add(kline.OverlayHLine, a.pointAt(pane, x, y))
 		a.startDrag(pane, o.ID, kline.HitBody)
+		a.dragNewHLine = true
 		return true
 	case toolSegment:
 		if a.draftOn && a.draftPane == pane {
@@ -792,6 +798,7 @@ func (a *app) startDrag(pane int, id string, part int) {
 	a.dragPane = pane
 	a.dragID = id
 	a.dragPart = part
+	a.dragNewHLine = false
 }
 
 func (a *app) pointerMove(pane int, ev ui.InputEvent) bool {
@@ -800,6 +807,9 @@ func (a *app) pointerMove(pane int, ev ui.InputEvent) bool {
 	}
 	x, y, _ := a.plotLocal(pane, ev)
 	if a.dragPart < 0 {
+		if a.dragNewHLine {
+			return a.panes[pane].overlays.SetPrice(a.dragID, a.pointAt(pane, x, y).Price)
+		}
 		price := a.painted[pane].Price
 		scale := a.priceScale(pane)
 		return a.panes[pane].overlays.SetPrice(a.dragID, kline.LocalYToPrice(float64(price.H), y, scale))
@@ -810,6 +820,7 @@ func (a *app) pointerMove(pane int, ev ui.InputEvent) bool {
 func (a *app) pointerUp(pane int, ev ui.InputEvent) bool {
 	if a.dragOn && pane == a.dragPane && ev.Button == 0 {
 		a.dragOn = false
+		a.dragNewHLine = false
 		return true
 	}
 	if a.tool == toolPan && a.pressOn && pane == a.pressPane && ev.Button == 0 {
@@ -908,17 +919,17 @@ func (a *app) pointAt(pane int, x, y float64) kline.Point {
 		}
 	}
 	var when time.Time
-	var bar kline.Candle
-	if idx >= 0 && idx < len(cs) {
-		when = cs[idx].Time
-		bar = cs[idx]
-	}
 	scale := a.priceScale(pane)
 	raw := kline.LocalYToPrice(float64(price.H), y, scale)
+	px := raw
+	if idx >= 0 && idx < len(cs) {
+		when = cs[idx].Time
+		px = kline.SnapPrice(a.magnet, cs[idx], raw, float64(price.H), scale)
+	}
 	return kline.Point{
 		BarIndex: idx,
 		Time:     when,
-		Price:    kline.SnapPrice(a.magnet, bar, raw, float64(price.H), scale),
+		Price:    px,
 	}
 }
 

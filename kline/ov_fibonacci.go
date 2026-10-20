@@ -7,15 +7,15 @@ import (
 	"github.com/egoist/mygo/ui/chart"
 )
 
-// FibRatios are the standard retracement levels, from the first anchor
-// through the second. Ratio 0 is the first click and 1 is the second.
+// FibRatios are the standard retracement levels. Ratio 0 is the second
+// anchor and ratio 1 is the first.
 var FibRatios = []float64{0, 0.236, 0.382, 0.5, 0.618, 0.786, 1}
 
-// FibLevelPrice maps a ratio between two anchor prices. The anchors are
-// not sorted into high and low first, so a downward draw still uses the
-// click order.
+// FibLevelPrice maps a ratio onto the span between two anchor prices.
+// Ratio 0 sits on the second anchor and ratio 1 sits on the first:
+// anchor1 + ratio*(anchor0-anchor1). Anchors are not sorted first.
 func FibLevelPrice(anchor0, anchor1 float64, ratio float64) float64 {
-	return anchor0 + ratio*(anchor1-anchor0)
+	return anchor1 + ratio*(anchor0-anchor1)
 }
 
 func hitFibonacci(o Overlay, x, y, plotW, plotH float64, vp Viewport, scale chart.Linear, cs []Candle) (int, bool) {

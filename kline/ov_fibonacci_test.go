@@ -10,13 +10,13 @@ import (
 func TestFibLevelPrices(t *testing.T) {
 	p0, p1 := 100.0, 50.0
 	want := map[float64]float64{
-		0:     100,
-		0.236: 88.2,
-		0.382: 80.9,
+		0:     50,
+		0.236: 61.8,
+		0.382: 69.1,
 		0.5:   75,
-		0.618: 69.1,
-		0.786: 60.7,
-		1:     50,
+		0.618: 80.9,
+		0.786: 89.3,
+		1:     100,
 	}
 	if len(FibRatios) != len(want) {
 		t.Fatalf("FibRatios len %d", len(FibRatios))
@@ -27,10 +27,17 @@ func TestFibLevelPrices(t *testing.T) {
 			t.Fatalf("ratio[%d]=%v price %v want %v", i, r, got, want[r])
 		}
 	}
-	// Downward draw: anchors are not sorted into high/low first.
+	// 40 then 80 is an upward draw. Anchors stay in click order.
+	// Ratio 0 is the second anchor and ratio 1 is the first.
+	if got := FibLevelPrice(40, 80, 0); math.Abs(got-80) > 1e-9 {
+		t.Fatalf("upward ratio 0 = %v, want second anchor 80", got)
+	}
+	if got := FibLevelPrice(40, 80, 1); math.Abs(got-40) > 1e-9 {
+		t.Fatalf("upward ratio 1 = %v, want first anchor 40", got)
+	}
 	got := FibLevelPrice(40, 80, 0.5)
 	if math.Abs(got-60) > 1e-9 {
-		t.Fatalf("downward mid %v", got)
+		t.Fatalf("upward mid %v", got)
 	}
 }
 

@@ -1518,6 +1518,84 @@ func TestMagnetToolbarAndBehavior(t *testing.T) {
 	if onOHLC(wantRaw, barAt, 1e-4) {
 		t.Fatal("pick a drag target between OHLC levels for this test")
 	}
+	if onOHLC(dragged, barAt, 1e-4) {
+		t.Fatalf("existing hline body drag snapped onto OHLC %v (raw %v)", dragged, wantRaw)
+	}
+}
+
+// A real press jitters. The price stored after Press, a 1 DIP move, and
+// Release must stay on the bar's OHLC when magnet is strong.
+func TestNewHLinePressMoveKeepsStrongMagnet(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	if err := tt.Click("Magnet Strong"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("H-Line"); err != nil {
+		t.Fatal(err)
+	}
+	p0 := a.painted[0].Price
+	x := p0.X + 200
+	y := p0.Y + p0.H*0.42
+	y1 := y + 1 // 1 DIP
+	plotX := float64(x - p0.X)
+	idx, ok := a.vp.IndexAt(plotX, len(a.panes[0].candles))
+	if !ok {
+		t.Fatal("no bar under the pointer")
+	}
+	scale := a.priceScale(0)
+	raw := kline.LocalYToPrice(float64(p0.H), float64(y1-p0.Y), scale)
+	bar := a.panes[0].candles[idx]
+	if onOHLC(raw, bar, 1e-4) {
+		y = p0.Y + p0.H*0.37
+		y1 = y + 1
+		raw = kline.LocalYToPrice(float64(p0.H), float64(y1-p0.Y), scale)
+		bar = a.panes[0].candles[idx]
+	}
+	if onOHLC(raw, bar, 1e-4) {
+		t.Fatalf("1 DIP move landed on OHLC %v of %+v; pick another Y", raw, bar)
+	}
+	tt.Press(x, y)
+	tt.Move(x, y1)
+	tt.Release(x, y1)
+	items := a.panes[0].overlays.Items()
+	if len(items) != 1 || len(items[0].Points) != 1 {
+		t.Fatal("hline was not placed")
+	}
+	stored := items[0].Points[0].Price
+	if !onOHLC(stored, bar, 1e-4) {
+		t.Fatalf("new hline after 1 DIP move stored %v, want OHLC of bar %+v (raw %v)", stored, bar, raw)
+	}
+}
+
+func TestStrongMagnetEmptySeriesKeepsPointerPrice(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	for i := range a.panes {
+		a.panes[i].candles = nil
+	}
+	if err := tt.Click("Magnet Strong"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("H-Line"); err != nil {
+		t.Fatal(err)
+	}
+	p0 := a.painted[0].Price
+	x := p0.X + 180
+	y := p0.Y + p0.H*0.45
+	raw := kline.LocalYToPrice(float64(p0.H), float64(y-p0.Y), a.priceScale(0))
+	if math.Abs(raw) < 1e-4 {
+		t.Fatal("pointer price is 0; pick a Y off the scale floor")
+	}
+	tt.ClickAt(x, y)
+	items := a.panes[0].overlays.Items()
+	if len(items) != 1 || len(items[0].Points) != 1 {
+		t.Fatal("hline was not placed on an empty series")
+	}
+	stored := items[0].Points[0].Price
+	if math.Abs(stored-raw) > 1e-4 {
+		t.Fatalf("empty series strong magnet stored %v, pointer price %v", stored, raw)
+	}
 }
 
 func mustBox(t *testing.T, tt *ui.Tester, label string) ui.Rect {
