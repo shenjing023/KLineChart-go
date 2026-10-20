@@ -166,7 +166,7 @@ func init() {
 
 ### Overlay
 
-`RegisterOverlay` adds a tool `SetTool` accepts. `Anchors` is 1 (click to place, drag to move) or 2 (two clicks, then drag an endpoint). `hline`, `segment`, `fib`, and `fibonacci` are reserved. Delete and right-click use the same hit test as the built-ins. `Draw` must not change `o.Points`: the chart passes the layer's own slice.
+`RegisterOverlay` adds a tool `SetTool` accepts. `Anchors` is 1 (click to place, drag to move) or 2 (two clicks, then drag an endpoint). `pan`, `hline`, `segment`, `fib`, and `fibonacci` are reserved. `ToolFib` and `OverlayFibonacci` are both `"fibonacci"`, and `SetTool("fib")` selects that same tool, so `Tool()` matches `Overlay.Kind` on a Fibonacci drawing. Delete and right-click use the same hit test as the built-ins. `Draw` must not change `o.Points`: the chart passes the layer's own slice.
 
 ```go
 _ = kline.RegisterOverlay(kline.OverlaySpec{

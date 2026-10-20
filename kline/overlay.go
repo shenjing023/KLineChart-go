@@ -48,7 +48,7 @@ func RegisterOverlay(spec OverlaySpec) error {
 		return fmt.Errorf("kline: overlay %q anchors must be 1 or 2", spec.Kind)
 	}
 	switch spec.Kind {
-	case OverlayHLine, OverlaySegment, OverlayFibonacci, ToolPan, ToolFib:
+	case OverlayHLine, OverlaySegment, OverlayFibonacci, ToolPan, "fib":
 		return fmt.Errorf("kline: overlay kind %q is reserved", spec.Kind)
 	}
 	if _, ok := overlayByKind(spec.Kind); ok {

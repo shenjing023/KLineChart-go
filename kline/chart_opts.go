@@ -25,8 +25,11 @@ const (
 	ToolHLine = "hline"
 	// ToolSegment places a two-point segment.
 	ToolSegment = "segment"
-	// ToolFib places a two-point Fibonacci retracement.
-	ToolFib = "fib"
+	// ToolFib places a two-point Fibonacci retracement. It is the same
+	// string as OverlayFibonacci, the kind stored on the drawing, so
+	// Tool() compares equal to Overlay.Kind. SetTool also accepts the
+	// older name "fib".
+	ToolFib = OverlayFibonacci
 )
 
 // ErrNilSource is returned when SetSource is called with a nil source.
@@ -480,9 +483,10 @@ func (a *Chart) SetMagnet(mode MagnetMode) { a.magnet = mode }
 // Magnet is the current snap mode.
 func (a *Chart) Magnet() MagnetMode { return a.magnet }
 
-// SetTool selects pan, hline, segment, fib, or a kind passed to
-// RegisterOverlay. A change clears an in-progress drawing. Unknown
-// names return ErrUnknownTool and leave the current tool in place.
+// SetTool selects pan, hline, segment, fibonacci, or a kind passed to
+// RegisterOverlay. "fib" is the older name of the Fibonacci tool and
+// selects the same tool. A change clears an in-progress drawing.
+// Unknown names return ErrUnknownTool and leave the current tool in place.
 func (a *Chart) SetTool(name string) error {
 	var tool int
 	custom := ""
@@ -493,7 +497,7 @@ func (a *Chart) SetTool(name string) error {
 		tool = toolHLine
 	case ToolSegment:
 		tool = toolSegment
-	case ToolFib:
+	case ToolFib, "fib":
 		tool = toolFib
 	default:
 		if _, ok := overlayByKind(name); !ok {
