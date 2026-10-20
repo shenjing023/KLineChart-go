@@ -192,8 +192,9 @@ func drawLinePlot(p *ui.Painter, plot ui.Rect, lp LinePlot, vp Viewport, yScale 
 }
 
 // applyIndicatorStyle copies theme colors onto the indicators Paint
-// knows how to draw, and returns the sub-pane series whose rect is open.
-func applyIndicatorStyle(inds []Indicator, panes Panes, style Style) (macd *MACD, kdj *KDJ) {
+// knows how to draw. Sub-pane colors are applied only when that pane
+// is open. Callers do not need the indicators back.
+func applyIndicatorStyle(inds []Indicator, panes Panes, style Style) {
 	for _, ind := range inds {
 		if ind == nil {
 			continue
@@ -206,16 +207,13 @@ func applyIndicatorStyle(inds []Indicator, panes Panes, style Style) (macd *MACD
 		case *MACD:
 			if panes.MACD.H > 1 {
 				v.SetColors(style.MACDDIF, style.MACDDEA, style.Up, style.Down, style.MACDZero)
-				macd = v
 			}
 		case *KDJ:
 			if panes.KDJ.H > 1 {
 				v.SetColors(style.KDJK, style.KDJD, style.KDJJ)
-				kdj = v
 			}
 		}
 	}
-	return macd, kdj
 }
 
 func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volScale chart.Linear, style Style) {

@@ -6,6 +6,26 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+func TestApplyIndicatorStyleColorsOpenPanes(t *testing.T) {
+	macd := NewMACD(12, 26, 9)
+	kdj := NewKDJ(9, 3, 3)
+	macd.DIFColor, macd.DEAColor, macd.Up, macd.Down, macd.Zero = ui.Color{}, ui.Color{}, ui.Color{}, ui.Color{}, ui.Color{}
+	kdj.KColor, kdj.DColor, kdj.JColor = ui.Color{}, ui.Color{}, ui.Color{}
+	style := DarkDefault()
+	applyIndicatorStyle([]Indicator{macd, kdj}, Panes{}, style)
+	if macd.DIFColor != (ui.Color{}) || kdj.KColor != (ui.Color{}) {
+		t.Fatal("a closed sub-pane should not take theme colors")
+	}
+	open := Panes{MACD: ui.Rect{W: 10, H: 40}, KDJ: ui.Rect{W: 10, H: 40}}
+	applyIndicatorStyle([]Indicator{macd, kdj}, open, style)
+	if macd.DIFColor != style.MACDDIF || macd.DEAColor != style.MACDDEA || macd.Up != style.Up || macd.Zero != style.MACDZero {
+		t.Fatalf("MACD colors %+v", macd)
+	}
+	if kdj.KColor != style.KDJK || kdj.DColor != style.KDJD || kdj.JColor != style.KDJJ {
+		t.Fatalf("KDJ colors %+v", kdj)
+	}
+}
+
 func TestSplitGivesPriceAndVolume(t *testing.T) {
 	panes := Split(ui.Rect{X: 10, Y: 20, W: 800, H: 500})
 	if panes.Price.W <= 0 || panes.Price.H <= 0 {
