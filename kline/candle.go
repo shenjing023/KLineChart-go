@@ -66,8 +66,16 @@ func Generate(n int, seed int64) []Candle {
 // SMA is the simple moving average of Close over period bars.
 // Values before the window is full are NaN. period < 1 returns nil.
 func SMA(cs []Candle, period int) []float64 {
+	line, _ := smaLine(cs, period)
+	return line
+}
+
+// smaLine is SMA plus the rolling sum left after the last bar. That sum
+// is the last `period` closes, or every close when the series is shorter,
+// and an append updates it in constant time.
+func smaLine(cs []Candle, period int) ([]float64, float64) {
 	if period < 1 || len(cs) == 0 {
-		return nil
+		return nil, 0
 	}
 	out := make([]float64, len(cs))
 	var sum float64
@@ -82,7 +90,7 @@ func SMA(cs []Candle, period int) []float64 {
 		}
 		out[i] = sum / float64(period)
 	}
-	return out
+	return out, sum
 }
 
 // FormatPrice renders a price with two decimals.

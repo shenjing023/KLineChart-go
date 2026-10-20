@@ -254,7 +254,14 @@ func (a *Chart) LimitPct() float64 { return a.limitPct }
 // SubscribeBar error is returned after the new bars are loaded.
 // Subscriptions opened for that call are rolled back, and a handler from
 // the previous subscription does not apply.
+//
+// During replay, SetPeriod does not ask the source. A coarser period
+// aggregates only the revealed bars, including a partial last bucket.
+// A finer period returns ErrReplayPeriod and leaves the cursor in place.
 func (a *Chart) SetPeriod(p Period) error {
+	if a != nil && a.replay != nil {
+		return a.replay.setPeriod(p)
+	}
 	if !p.Valid() {
 		return ErrInvalidPeriod
 	}
@@ -285,6 +292,9 @@ func (a *Chart) AlignError() error { return a.alignErr }
 func (a *Chart) Close() error {
 	if a == nil {
 		return nil
+	}
+	if a.replay != nil {
+		a.replay.Close()
 	}
 	return a.dropLive()
 }
@@ -334,6 +344,9 @@ func (a *Chart) Layout() string {
 // subscriptions opened for the call are rolled back. The handler must
 // not call SetPeriod, SetSource, or View.
 func (a *Chart) SetSource(src DataSource) error {
+	if a != nil && a.replay != nil {
+		a.replay.Close()
+	}
 	if src == nil {
 		return ErrNilSource
 	}

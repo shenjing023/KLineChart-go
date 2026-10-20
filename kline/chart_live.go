@@ -101,9 +101,9 @@ func (a *Chart) paneOf(symbol string) int {
 // held or shown, is revised in place. A newer open time is held until
 // every symbol has a bar at that open time, then those bars are appended
 // together, so candle i stays the same open time on every pane. An older
-// open time is ignored. Indicators are recalculated when shown candles
-// change. A view sitting on the right edge stays there; a panned view
-// does not jump.
+// open time is ignored. Shown candles update indicators from that bar
+// when the indicator implements BarTail, and recalculate otherwise. A
+// view sitting on the right edge stays there; a panned view does not jump.
 func (a *Chart) applyLiveBar(symbol string, bar Candle) {
 	i := a.paneOf(symbol)
 	if i < 0 {
@@ -121,25 +121,21 @@ func (a *Chart) applyLiveBar(symbol string, bar Candle) {
 	} else if n := len(s.candles); n > 0 {
 		switch {
 		case bar.Time.Equal(s.candles[n-1].Time):
+			prev := s.candles[n-1]
 			s.candles[n-1] = bar
-			a.recalc(s)
+			a.reviseInds(s, prev)
 			return
 		case !bar.Time.After(s.candles[n-1].Time):
 			return
 		}
 	}
-	s.held = append(s.held, bar)
+	before := a.bars()
 	pinned := a.pinnedRight()
+	s.held = append(s.held, bar)
 	if !a.promote() {
 		return
 	}
-	for j := range a.panes {
-		a.recalc(&a.panes[j])
-		a.reindexMarks(&a.panes[j])
-	}
-	if pinned && a.plotW > 1 {
-		a.vp.FitRight(a.bars(), a.plotW)
-	}
+	a.afterPromote(before, pinned)
 }
 
 // promote appends held bars once every symbol has one at the same open

@@ -28,6 +28,19 @@ type MACD struct {
 	Short, Long, Signal                int
 	DIF, DEA, Hist                     []float64
 	DIFColor, DEAColor, Up, Down, Zero ui.Color
+	// run is the state after the last bar. prev is the state before it,
+	// so a revise of that bar does not walk the series again.
+	run, prev macdRun
+}
+
+// macdRun is the EMA state after n closes. closeSum is only the seed
+// for the first EMA of each length; later values use emaS and emaL.
+type macdRun struct {
+	closeSum     float64
+	emaS, emaL   float64
+	haveS, haveL bool
+	difSum, dea  float64
+	n            int
 }
 
 // NewMACD returns a MACD with the given periods. Draw colors start as
@@ -60,52 +73,105 @@ func (m *MACD) Calc(cs []Candle) {
 	m.DIF = nanSlice(n)
 	m.DEA = nanSlice(n)
 	m.Hist = nanSlice(n)
-	short, long, signal := m.Short, m.Long, m.Signal
-	if n == 0 || short < 1 || long < 1 || signal < 1 || short == long {
+	m.run = macdRun{}
+	m.prev = macdRun{}
+	if n == 0 || m.Short < 1 || m.Long < 1 || m.Signal < 1 || m.Short == m.Long {
 		return
 	}
-	var closeSum float64
-	var emaShort, emaLong float64
-	var dif, difSum, dea float64
-	haveShort, haveLong := false, false
+	st := macdRun{}
+	for i := 0; i < n; i++ {
+		prev := st
+		st, m.DIF[i], m.DEA[i], m.Hist[i] = m.step(st, cs[i].Close)
+		if i == n-1 {
+			m.prev = prev
+		}
+	}
+	m.run = st
+}
+
+// step applies one close. i is st.n. DIF, DEA, and the histogram stay
+// NaN until their seeds exist, matching a full Calc.
+func (m *MACD) step(st macdRun, close float64) (macdRun, float64, float64, float64) {
+	dif, dea, hist := math.NaN(), math.NaN(), math.NaN()
+	short, long, signal := m.Short, m.Long, m.Signal
+	if short < 1 || long < 1 || signal < 1 || short == long {
+		st.n++
+		return st, dif, dea, hist
+	}
+	i := st.n
+	st.closeSum += close
+	if i >= short-1 {
+		if i > short-1 {
+			st.emaS = (2*close + float64(short-1)*st.emaS) / float64(short+1)
+		} else {
+			st.emaS = st.closeSum / float64(short)
+		}
+		st.haveS = true
+	}
+	if i >= long-1 {
+		if i > long-1 {
+			st.emaL = (2*close + float64(long-1)*st.emaL) / float64(long+1)
+		} else {
+			st.emaL = st.closeSum / float64(long)
+		}
+		st.haveL = true
+	}
 	maxPeriod := long
 	if short > maxPeriod {
 		maxPeriod = short
 	}
-	for i := 0; i < n; i++ {
-		close := cs[i].Close
-		closeSum += close
-		if i >= short-1 {
-			if i > short-1 {
-				emaShort = (2*close + float64(short-1)*emaShort) / float64(short+1)
+	if i >= maxPeriod-1 && st.haveS && st.haveL {
+		d := st.emaS - st.emaL
+		dif = d
+		st.difSum += d
+		if i >= maxPeriod+signal-2 {
+			if i > maxPeriod+signal-2 {
+				st.dea = (d*2 + st.dea*float64(signal-1)) / float64(signal+1)
 			} else {
-				emaShort = closeSum / float64(short)
+				st.dea = st.difSum / float64(signal)
 			}
-			haveShort = true
-		}
-		if i >= long-1 {
-			if i > long-1 {
-				emaLong = (2*close + float64(long-1)*emaLong) / float64(long+1)
-			} else {
-				emaLong = closeSum / float64(long)
-			}
-			haveLong = true
-		}
-		if i >= maxPeriod-1 && haveShort && haveLong {
-			dif = emaShort - emaLong
-			m.DIF[i] = dif
-			difSum += dif
-			if i >= maxPeriod+signal-2 {
-				if i > maxPeriod+signal-2 {
-					dea = (dif*2 + dea*float64(signal-1)) / float64(signal+1)
-				} else {
-					dea = difSum / float64(signal)
-				}
-				m.DEA[i] = dea
-				m.Hist[i] = (dif - dea) * 2
-			}
+			dea = st.dea
+			hist = (d - dea) * 2
 		}
 	}
+	st.n++
+	return st, dif, dea, hist
+}
+
+func (m *MACD) tailLen(n int) bool {
+	return m != nil && m.Short >= 1 && m.Long >= 1 && m.Signal >= 1 && m.Short != m.Long &&
+		len(m.DIF) == n && len(m.DEA) == n && len(m.Hist) == n && m.run.n == n
+}
+
+// Append extends DIF, DEA, and the histogram by the last close in cs.
+func (m *MACD) Append(cs []Candle) {
+	if m == nil || len(cs) == 0 || !m.tailLen(len(cs)-1) {
+		if m != nil {
+			m.Calc(cs)
+		}
+		return
+	}
+	prev := m.run
+	st, dif, dea, hist := m.step(m.run, cs[len(cs)-1].Close)
+	m.DIF = append(m.DIF, dif)
+	m.DEA = append(m.DEA, dea)
+	m.Hist = append(m.Hist, hist)
+	m.prev = prev
+	m.run = st
+}
+
+// Revise recomputes the last bar from the state saved before it.
+func (m *MACD) Revise(cs []Candle, _ Candle) {
+	if m == nil || len(cs) == 0 || !m.tailLen(len(cs)) {
+		if m != nil {
+			m.Calc(cs)
+		}
+		return
+	}
+	st, dif, dea, hist := m.step(m.prev, cs[len(cs)-1].Close)
+	last := len(cs) - 1
+	m.DIF[last], m.DEA[last], m.Hist[last] = dif, dea, hist
+	m.run = st
 }
 
 // YDomain is the padded range of DIF, DEA, and the histogram in
