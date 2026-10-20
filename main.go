@@ -16,131 +16,204 @@ import (
 const (
 	sampleBars = 600
 	sampleSeed = 42
+	otherSeed  = 99
 )
 
-// app is the state the window shows.
-type app struct {
+// series is one symbol. Every series in the window shares the hourly
+// clock from kline.Generate, so a bar index is the same time on each.
+type series struct {
+	name    string
 	candles []kline.Candle
 	ma5     []float64
 	ma20    []float64
-	vp      kline.Viewport
-	// fitted is set once the price plot has a width, so the first frame
+}
+
+// app is the state the window shows. One viewport and one crossIndex
+// are shared by every pane.
+type app struct {
+	panes []series
+	vp    kline.Viewport
+	// fitted is set once a price plot has a width, so the first frame
 	// opens on the latest bars instead of bar 0.
 	fitted bool
-	// hovering and hoverX/hoverY are the pointer in the chart element's
-	// local DIPs. plotW is the price-plot width from the last paint,
-	// which wheel and drag use before the next layout.
-	hovering       bool
-	hoverX, hoverY float32
-	plotW          float64
+	// plotW is the price-plot width from the last paint. Wheel and drag
+	// on any pane use it; the panes are the same width.
+	plotW float64
+	// crossIndex is the bar under the pointer, or -1 when the pointer
+	// is outside every pane. crossPane is the pane that has the pointer,
+	// which is the only one that draws the horizontal line.
+	crossIndex int
+	crossPane  int
+	hoverX     float32
+	hoverY     float32
 }
 
 func newApp() *app {
-	cs := kline.Generate(sampleBars, sampleSeed)
 	return &app{
-		candles: cs,
-		ma5:     kline.SMA(cs, 5),
-		ma20:    kline.SMA(cs, 20),
-		vp:      kline.Viewport{BarWidth: kline.DefaultBarWidth},
+		panes: []series{
+			newSeries("ALPHA", sampleSeed),
+			newSeries("BETA", otherSeed),
+		},
+		vp:         kline.Viewport{BarWidth: kline.DefaultBarWidth},
+		crossIndex: -1,
+		crossPane:  -1,
 	}
+}
+
+func newSeries(name string, seed int64) series {
+	cs := kline.Generate(sampleBars, seed)
+	return series{name: name, candles: cs, ma5: kline.SMA(cs, 5), ma20: kline.SMA(cs, 20)}
+}
+
+func (a *app) bars() int {
+	if len(a.panes) == 0 {
+		return 0
+	}
+	n := len(a.panes[0].candles)
+	for _, s := range a.panes[1:] {
+		if len(s.candles) < n {
+			n = len(s.candles)
+		}
+	}
+	return n
 }
 
 func (a *app) view(c *ui.Context) {
 	t := c.Theme()
 	style := kline.StyleFrom(t)
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
-		ui.Row(c).Padding(10, 14).Gap(12).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Padding(8, 14, 0, 14).Gap(12).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "K-line").Bold().FontSize(16)
-			ui.Textf(c, "%d bars", len(a.candles)).FontSize(12).TextColor(t.TextMuted)
+			ui.Textf(c, "%d bars · %d panes", a.bars(), len(a.panes)).FontSize(12).TextColor(t.TextMuted)
 			ui.Text(c, "MA5").FontSize(12).TextColor(style.MA5)
 			ui.Text(c, "MA20").FontSize(12).TextColor(style.MA20)
-			ui.Text(c, a.readout()).Font("monospace").FontSize(12).NoWrap().Grow(1)
+			ui.Box(c).Grow(1)
 			if ui.Button(c, "Reset view").Clicked() {
 				a.vp.BarWidth = kline.DefaultBarWidth
 				a.fitted = false
 			}
 		})
-		ui.Text(c, "Drag to pan · wheel to zoom · the crosshair reads the bar under the pointer").
-			Padding(0, 14, 8, 14).FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, "Drag or scroll either pane. Both share the time range, and the crosshair stays on the same bar.").
+			Padding(4, 14, 6, 14).FontSize(12).TextColor(t.TextMuted)
 
-		chart := ui.Box(c.Key("chart")).Grow(1).WidthPercent(100).
-			Label("Candlestick chart").Cursor(ui.CursorCrosshair)
-		chart.HandleInput(a.onInput)
-		// Dragged is how far the pointer moved since the last frame while
-		// the button is down. Positive dx follows the pointer to the right.
-		if dx, _, ok := chart.Dragged(); ok && dx != 0 {
-			a.vp.Pan(float64(dx), a.plotW, len(a.candles))
+		// Headers are built before the charts report the pointer, so they
+		// show crossIndex from the previous frame. The charts record the
+		// new index, and a changed index asks for one more frame so every
+		// header catches up before the next input.
+		nextIndex := -1
+		nextPane := -1
+		hoverX, hoverY := float32(0), float32(0)
+		anyHover := false
+		anyPress := false
+		for i := range a.panes {
+			s := &a.panes[i]
+			ui.Row(c).Padding(2, 14, 2, 14).Gap(10).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, s.name).Bold().FontSize(13)
+				ui.Text(c, a.readout(i)).Font("monospace").FontSize(12).NoWrap().Grow(1)
+			})
+			chart := ui.Box(c.Key(s.name)).Grow(1).WidthPercent(100).
+				Label(s.name + " chart").Cursor(ui.CursorCrosshair)
+			chart.HandleInput(a.onInput)
+			if dx, _, pressed := chart.Dragged(); pressed {
+				anyPress = true
+				if dx != 0 {
+					a.vp.Pan(float64(dx), a.plotW, a.bars())
+				}
+			}
+			if x, y, over := chart.PointerPosition(); over {
+				anyHover = true
+				nextPane = i
+				hoverX, hoverY = x, y
+				if bar, ok := a.vp.IndexAt(float64(x), a.bars()); ok {
+					nextIndex = bar
+				}
+			}
+			showTime := i == len(a.panes)-1
+			pane := i
+			chart.Draw(func(p *ui.Painter, r ui.Rect) {
+				a.paintPane(p, r, t, pane, showTime)
+			})
 		}
-		if x, y, over := chart.PointerPosition(); over {
-			a.hovering = true
-			a.hoverX, a.hoverY = x, y
-		} else if _, _, pressed := chart.Dragged(); !pressed {
-			a.hovering = false
+		if !anyHover && !anyPress {
+			nextIndex = -1
+			nextPane = -1
 		}
-		chart.Draw(func(p *ui.Painter, r ui.Rect) {
-			a.paint(p, r, t)
-		})
+		if nextIndex != a.crossIndex || nextPane != a.crossPane || hoverX != a.hoverX || hoverY != a.hoverY {
+			a.crossIndex = nextIndex
+			a.crossPane = nextPane
+			a.hoverX, a.hoverY = hoverX, hoverY
+			c.AnimationFrame()
+		}
 	})
 }
 
-// onInput takes the wheel. MyGo delivers InputScroll in DIPs. Positive
-// DY is the direction that scrolls content downward, and that zooms the
-// bars out. Positive DX scrolls toward later bars, so it pans the
-// opposite way from a drag to the right (a drag follows the pointer).
+// onInput takes the wheel from whichever pane the pointer is over.
+// MyGo delivers InputScroll in DIPs. Positive DY is the direction that
+// scrolls content downward, and that zooms the bars out. Positive DX
+// scrolls toward later bars. The viewport is shared, so the other pane
+// moves with this one.
 func (a *app) onInput(ev ui.InputEvent) bool {
 	if ev.Kind != ui.InputScroll {
 		return false
 	}
 	if ev.DY != 0 {
-		// ev.X is local to the chart box. The price plot starts at its
-		// left edge, so that x is already the zoom anchor.
-		a.vp.Zoom(float64(ev.DY), float64(ev.X), a.plotW, len(a.candles))
+		// ev.X is local to the pane. Each price plot starts at the
+		// pane's left edge, so that x is the shared zoom anchor.
+		a.vp.Zoom(float64(ev.DY), float64(ev.X), a.plotW, a.bars())
 	}
 	if ev.DX != 0 {
-		a.vp.Pan(-float64(ev.DX), a.plotW, len(a.candles))
+		a.vp.Pan(-float64(ev.DX), a.plotW, a.bars())
 	}
 	return ev.DX != 0 || ev.DY != 0
 }
 
-func (a *app) paint(p *ui.Painter, r ui.Rect, t *ui.Theme) {
-	panes := kline.Split(r)
+func (a *app) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime bool) {
+	var panes kline.Panes
+	if showTime {
+		panes = kline.Split(r)
+	} else {
+		panes = kline.SplitNoTime(r)
+	}
 	a.plotW = float64(panes.Price.W)
 	// The plot width is only known once layout has run, which is inside
 	// Draw. Fitting here puts the latest bars on screen on the first
 	// frame instead of waiting for a second build.
 	if !a.fitted && panes.Price.W > 1 {
-		a.vp.FitRight(len(a.candles), a.plotW)
+		a.vp.FitRight(a.bars(), a.plotW)
 		a.fitted = true
 	}
-	a.vp.Clamp(len(a.candles), a.plotW)
+	a.vp.Clamp(a.bars(), a.plotW)
 	ptr := kline.Pointer{}
-	if a.hovering {
+	if a.crossPane == i {
 		ptr = kline.Pointer{On: true, X: r.X + a.hoverX, Y: r.Y + a.hoverY}
 	}
-	kline.Paint(p, panes, a.candles, a.ma5, a.ma20, a.vp, ptr, kline.StyleFrom(t))
+	s := a.panes[i]
+	kline.Paint(p, panes, s.candles, s.ma5, s.ma20, a.vp, ptr, a.crossIndex, kline.StyleFrom(t))
 }
 
-func (a *app) readout() string {
-	n := len(a.candles)
+func (a *app) readout(i int) string {
+	if i < 0 || i >= len(a.panes) {
+		return ""
+	}
+	s := a.panes[i]
+	n := len(s.candles)
 	if n == 0 {
 		return "No bars"
 	}
-	i := n - 1
+	idx := n - 1
 	label := "Last"
-	if a.hovering {
-		if idx, ok := a.vp.IndexAt(float64(a.hoverX), n); ok {
-			i = idx
-			label = "Hover"
-		}
+	if a.crossIndex >= 0 && a.crossIndex < n {
+		idx = a.crossIndex
+		label = "Hover"
 	}
 	ma5, ma20 := math.NaN(), math.NaN()
-	if i < len(a.ma5) {
-		ma5 = a.ma5[i]
+	if idx < len(s.ma5) {
+		ma5 = s.ma5[idx]
 	}
-	if i < len(a.ma20) {
-		ma20 = a.ma20[i]
+	if idx < len(s.ma20) {
+		ma20 = s.ma20[idx]
 	}
-	return label + "  " + kline.FormatBar(a.candles[i], ma5, ma20)
+	return label + "  " + kline.FormatBar(s.candles[idx], ma5, ma20)
 }
 
 func main() {
@@ -149,9 +222,9 @@ func main() {
 		mygo.NewWindow(mygo.WindowOptions{
 			Title:     "K-line",
 			Width:     1100,
-			Height:    680,
+			Height:    900,
 			MinWidth:  640,
-			MinHeight: 420,
+			MinHeight: 640,
 			StateKey:  "kline",
 			Content:   ui.View(a.view),
 		})

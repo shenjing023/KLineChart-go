@@ -6,14 +6,14 @@ It is a demo of the interaction in [KLineChart](https://github.com/klinecharts/K
 
 ## What you can do
 
+- Two symbols, ALPHA and BETA, stacked in one window. Each is its own price plot with a volume strip directly under it. They are not drawn on one price scale.
+- The panes share one horizontal viewport. Dragging or scrolling either pane pans and zooms both, so the same bar indexes stay aligned.
+- One crosshair. Moving the pointer in either pane selects one bar index and draws that vertical line on every pane. The pane under the pointer also draws the horizontal line. Each header shows that symbol's own OHLCV and moving averages for the index. The time axis is drawn once, under the lower pane.
 - Candles with wicks. Green when close is at or above open, red otherwise (KLineChart's default).
-- Volume bars in a pane under the candles, colored the same way.
-- MA5 and MA20 over the closes.
-- Drag horizontally to pan. The wheel zooms the bar width around the pointer. A sideways scroll pans.
-- A crosshair and a readout of the hovered bar: time (UTC), open, high, low, close, volume, and the moving averages when they exist. Away from the plot, the readout stays on the latest bar.
-- The price scale follows the visible bars. Grid lines and tick labels track that range.
-- **Reset view** returns to the latest bars at the default width.
-- 600 hourly bars from a fixed random walk, so the app runs with no network and no API key.
+- MA5 and MA20 on each symbol.
+- The price scale of each pane follows that symbol's visible bars.
+- **Reset view** returns both panes to the latest bars at the default width.
+- 600 hourly bars per symbol from a fixed random walk, same clock, different seeds, so the app runs with no network and no API key.
 
 ## Run
 
@@ -52,10 +52,10 @@ Native UI draws with Direct3D 11 on Windows, Metal on macOS, and OpenGL on Linux
 
 ## Layout
 
-- `main.go` — window, header readout, drag, wheel, and the first-frame fit.
+- `main.go` — window, one readout per symbol, and the shared viewport and crosshair index.
 - `kline/` — `Candle`, the synthetic series, SMA, the viewport (index, bar width, pan, zoom, hit testing), and `Paint` using `ui.Painter`.
 
-Bar `i` starts `(i - offset) * barWidth` DIPs from the left of the price plot. Dragging right decreases `offset`. The wheel keeps the bar under the pointer fixed while the width changes. The Y axis is `chart.Linear` over the visible high/low, padded, including MA points that fall in that window.
+Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot. Dragging right decreases `offset` for all panes. The wheel keeps the bar under the pointer fixed while the width changes, and the other pane uses that same width. Each pane's Y axis is its own `chart.Linear` over that symbol's visible high/low. `Paint` takes the shared bar index so a pane draws the vertical line even when the pointer is on the other one.
 
 ## Out of scope
 
@@ -67,6 +67,6 @@ Bar `i` starts `(i - offset) * barWidth` DIPs from the left of the price plot. D
 ## Limitations
 
 - Bars are evenly spaced by index. The sample is hourly, so the time axis matches the bars. A real series with missing sessions would still be drawn one slot per bar.
-- The price scale always refits the visible range. There is no locked or manual scale.
+- Each price scale always refits that pane's visible range. There is no locked or manual scale, and the two symbols are not overlaid on one scale.
 - Zoom changes bar width between 3 and 28 DIPs. It is not KLineChart's gesture model.
 - The cloud build compiles and tests the view headlessly. It does not open the window.
