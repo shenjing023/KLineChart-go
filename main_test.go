@@ -1,9 +1,14 @@
 package main
 
 import (
+	"fmt"
+	"image"
+	"image/png"
 	"math"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/shenjing023/KLineChart-go/kline"
@@ -130,6 +135,218 @@ func assertSameBar(t *testing.T, tt *ui.Tester, a *app, idx int) {
 	}
 	if !tt.HasText(r0) || !tt.HasText(r1) {
 		t.Fatalf("headers missing linked readouts, texts %q", tt.Texts())
+	}
+}
+
+func TestPeriodSwitchReloadsBothPanes(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 900)
+	if !tt.HasText("Period 1h") || !tt.HasText("1h") || !tt.HasText("4h") || !tt.HasText("1d") {
+		t.Fatalf("toolbar texts %q", tt.Texts())
+	}
+	if err := tt.Click("4h"); err != nil {
+		t.Fatal(err)
+	}
+	assertStep(t, a, 4*time.Hour)
+	if !tt.HasText("Period 4h") {
+		t.Fatalf("texts %q", tt.Texts())
+	}
+	assertFitRight(t, a)
+	if err := tt.Click("1d"); err != nil {
+		t.Fatal(err)
+	}
+	assertStep(t, a, 24*time.Hour)
+	assertFitRight(t, a)
+	if a.panes[0].candles[0].Time != a.panes[1].candles[0].Time {
+		t.Fatal("panes drifted apart after the period switch")
+	}
+
+	a.vp.Offset = 40
+	tt.Frame()
+	if err := tt.Click("Reset view"); err != nil {
+		t.Fatal(err)
+	}
+	if a.vp.BarWidth != kline.DefaultBarWidth {
+		t.Fatalf("reset width %v", a.vp.BarWidth)
+	}
+	assertFitRight(t, a)
+}
+
+func TestForwardPrependKeepsScreenIndex(t *testing.T) {
+	a := newApp()
+	a.fitted = true
+	a.vp.Offset = 2
+	const watch = 20
+	want := float64(watch) - a.vp.Offset
+	times := []time.Time{a.panes[0].candles[watch].Time, a.panes[1].candles[watch].Time}
+	before := len(a.panes[0].candles)
+	a.ensureForward()
+	if len(a.panes[0].candles) != before+forwardBatch || len(a.panes[1].candles) != before+forwardBatch {
+		t.Fatalf("lengths %d %d, before %d", len(a.panes[0].candles), len(a.panes[1].candles), before)
+	}
+	for i, s := range a.panes {
+		idx := -1
+		for j, c := range s.candles {
+			if c.Time.Equal(times[i]) {
+				idx = j
+				break
+			}
+		}
+		if idx < 0 {
+			t.Fatalf("pane %d lost %s", i, times[i])
+		}
+		if math.Abs(float64(idx)-a.vp.Offset-want) > 1e-9 {
+			t.Fatalf("pane %d screen %v, want %v", i, float64(idx)-a.vp.Offset, want)
+		}
+	}
+	n := len(a.panes[0].candles)
+	a.ensureForward()
+	if len(a.panes[0].candles) != n {
+		t.Fatal("second call loaded again after the offset left the edge")
+	}
+}
+
+func TestFrameTriggersForward(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 960, 720)
+	a.vp.Offset = 1
+	before := len(a.panes[0].candles)
+	watched := a.panes[0].candles[9].Time
+	screen := float64(9) - 1
+	tt.Frame()
+	if len(a.panes[0].candles) <= before {
+		t.Fatal("frame did not prepend")
+	}
+	idx := -1
+	for i, c := range a.panes[0].candles {
+		if c.Time.Equal(watched) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatal("lost watched bar")
+	}
+	if math.Abs(float64(idx)-a.vp.Offset-screen) > 1e-9 {
+		t.Fatalf("screen %v, want %v", float64(idx)-a.vp.Offset, screen)
+	}
+	if !tt.HasText(fmt.Sprintf("%d bars", a.bars())) {
+		t.Fatalf("texts %q", tt.Texts())
+	}
+}
+
+func TestForwardSkipsWhileLoading(t *testing.T) {
+	a := newApp()
+	a.fitted = true
+	calls := 0
+	inner := a.src
+	a.src = sourceFunc(func(req kline.BarRequest) ([]kline.Candle, bool, error) {
+		calls++
+		return inner.GetBars(req)
+	})
+	a.loading = true
+	a.vp.Offset = 1
+	before := len(a.panes[0].candles)
+	a.ensureForward()
+	if calls != 0 || len(a.panes[0].candles) != before {
+		t.Fatalf("in-flight load calls %d len %d", calls, len(a.panes[0].candles))
+	}
+}
+
+func TestForwardDoesNotReenter(t *testing.T) {
+	a := newApp()
+	a.fitted = true
+	a.vp.Offset = 1
+	src := &reenterSource{inner: a.src, app: a}
+	a.src = src
+	a.ensureForward()
+	if src.forwards != len(a.panes) {
+		t.Fatalf("forward calls %d, want %d", src.forwards, len(a.panes))
+	}
+}
+
+func TestRenderFrames(t *testing.T) {
+	dir := os.Getenv("KLINE_FRAMES")
+	if dir == "" {
+		t.Skip("set KLINE_FRAMES to write png frames")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 900)
+	writePNG(t, dir+"/p0-1h.png", tt.Image())
+	if err := tt.Click("1d"); err != nil {
+		t.Fatal(err)
+	}
+	writePNG(t, dir+"/p0-1d.png", tt.Image())
+	a.vp.Offset = 1
+	tt.Frame()
+	writePNG(t, dir+"/p0-forward.png", tt.Image())
+}
+
+func assertStep(t *testing.T, a *app, step time.Duration) {
+	t.Helper()
+	if len(a.panes) != 2 {
+		t.Fatalf("panes %d", len(a.panes))
+	}
+	for _, s := range a.panes {
+		if len(s.candles) < 2 {
+			t.Fatalf("%s len %d", s.name, len(s.candles))
+		}
+		if got := s.candles[1].Time.Sub(s.candles[0].Time); got != step {
+			t.Fatalf("%s step %s, want %s", s.name, got, step)
+		}
+	}
+}
+
+func assertFitRight(t *testing.T, a *app) {
+	t.Helper()
+	if !a.fitted || a.plotW <= 0 {
+		t.Fatalf("fitted %v plotW %v", a.fitted, a.plotW)
+	}
+	v := kline.Viewport{BarWidth: a.vp.BarWidth}
+	v.FitRight(a.bars(), a.plotW)
+	if math.Abs(a.vp.Offset-v.Offset) > 1e-6 {
+		t.Fatalf("offset %v, fit %v", a.vp.Offset, v.Offset)
+	}
+}
+
+type sourceFunc func(kline.BarRequest) ([]kline.Candle, bool, error)
+
+func (f sourceFunc) GetBars(req kline.BarRequest) ([]kline.Candle, bool, error) {
+	return f(req)
+}
+
+type reenterSource struct {
+	inner    kline.DataSource
+	app      *app
+	forwards int
+}
+
+func (r *reenterSource) GetBars(req kline.BarRequest) ([]kline.Candle, bool, error) {
+	if req.Kind == kline.KindForward {
+		r.forwards++
+		if r.forwards > 8 {
+			return nil, false, fmt.Errorf("forward reentered")
+		}
+		r.app.ensureForward()
+	}
+	return r.inner.GetBars(req)
+}
+
+func writePNG(t *testing.T, path string, img *image.RGBA) {
+	t.Helper()
+	if img == nil {
+		t.Fatal("nil frame")
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
 	}
 }
 
