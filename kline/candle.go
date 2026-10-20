@@ -1,7 +1,8 @@
-// Package kline draws a minimal candlestick chart: OHLC bodies, volume,
-// a moving-average overlay, and the viewport math for pan and zoom.
-// MyGo's ui/chart package has scales and axes, not candles and not
-// pan/zoom, so this package owns that geometry.
+// Package kline draws a minimal candlestick chart: OHLC bodies, a
+// built-in volume strip, indicators on the price plot and in sub-panes,
+// and the viewport math for pan and zoom. MyGo's ui/chart package has
+// scales and axes, not candles and not pan/zoom, so this package owns
+// that geometry.
 package kline
 
 import (

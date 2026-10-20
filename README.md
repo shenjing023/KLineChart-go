@@ -6,11 +6,13 @@ It is a demo of the interaction in [KLineChart](https://github.com/klinecharts/K
 
 ## What you can do
 
-- Two symbols, ALPHA and BETA, stacked in one window. Each is its own price plot with a volume strip directly under it. They are not drawn on one price scale.
+- Two symbols, ALPHA and BETA, stacked in one window. Each symbol is price, then a volume strip, then a MACD sub-pane. They are not drawn on one price scale.
 - The panes share one horizontal viewport. Dragging or scrolling either pane pans and zooms both, so the same bar indexes stay aligned.
-- One crosshair. Moving the pointer in either pane selects one bar index and draws that vertical line on every pane. The pane under the pointer also draws the horizontal line. Each header shows that symbol's own OHLCV and moving averages for the index. The time axis is drawn once, under the lower pane.
+- One crosshair. Moving the pointer in either pane selects one bar index and draws that vertical line through that symbol's price plot, volume strip, and MACD sub-pane, and through the other symbol as well. The symbol under the pointer also draws the horizontal line. Each header shows that symbol's own OHLCV, and the MA and MACD values when those indicators are on. The time axis is drawn once, under the lower symbol.
 - Candles with wicks. Green when close is at or above open, red otherwise (KLineChart's default).
-- MA5 and MA20 on each symbol.
+- MA5 and MA20 on each price plot. The **MA** toggle turns both lines off together. It starts on.
+- MACD(12, 26, 9) in a sub-pane under each volume strip: DIF, DEA, and a histogram of `2*(DIF-DEA)`, on that pane's own Y scale. The **MACD** toggle starts on. Turning it off removes the sub-pane and the MACD readout.
+- Volume is the built-in VOL strip between price and MACD. It is not a separate indicator and has no toggle.
 - The price scale of each pane follows that symbol's visible bars.
 - **Reset view** returns both panes to the latest bars at the default width.
 - **1h / 4h / 1d** reload both panes from the data source and fit the latest bars. The default **1h** series is the same walk as before (ALPHA seed 42, BETA seed 99).
@@ -53,8 +55,8 @@ Native UI draws with Direct3D 11 on Windows, Metal on macOS, and OpenGL on Linux
 
 ## Layout
 
-- `main.go` — window, one readout per symbol, the shared viewport and crosshair index, and the period toolbar.
-- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, and `DataSource` (`Period`, `BarRequest`, `SyntheticSource`).
+- `main.go` — window, one readout per symbol, the shared viewport and crosshair index, and the period and indicator toggles.
+- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, `DataSource` (`Period`, `BarRequest`, `SyntheticSource`), and the indicator list (`MA`, `MACD`). Volume is drawn by `Paint`, not by an indicator.
 
 Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot. Dragging right decreases `offset` for all panes. The wheel keeps the bar under the pointer fixed while the width changes, and the other pane uses that same width. Each pane's Y axis is its own `chart.Linear` over that symbol's visible high/low. `Paint` takes the shared bar index so a pane draws the vertical line even when the pointer is on the other one.
 
@@ -73,10 +75,28 @@ Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot.
 
 - 真实行情 HTTP、WebSocket、`subscribeBar`
 - 缺会话的空隙压缩
-- P1 副图指标（MACD）、可开关 MA
 - P2 画线
 - P3 同轴叠加
 - P4 外置样式、明暗主题、空心阳线
+
+## P1
+
+本阶段把主图均线和 MACD 收成可开关的指标。布局仍是两个 symbol 上下排列，时间轴只画在最底下。
+
+能做：
+
+- `kline.Indicator`：`Calc`、主图 `DrawMain`、副图 `DrawSub`、十字线 `ValueAt`。`kline.Registry` 列出已注册指标；窗口启动时抄进自己的列表，每个 symbol 各算一份。
+- **MA** 开关。打开时主图画 MA5 和 MA20，读数带上这两条；关掉后两条线一起消失，价格轴也不再为它们留空。默认开。
+- **MACD(12, 26, 9)** 副图。DIF = EMA12 − EMA26，DEA 是 DIF 的 9 周期 EMA，柱 = `2*(DIF-DEA)`。EMA 的第一笔用 SMA 做种子，和 KLineChart 的算法一致。副图有自己的 Y 轴，零轴在刻度里。默认开。
+- 每个 symbol 自上而下是：价格（含 MA）、内置 VOL 量柱、MACD。只有最下面的 symbol 画时间轴。关掉 MACD 后，该副图行消失，回到价格 + 量柱。
+- 十字线的竖线穿过价格、量柱和 MACD。指针所在的那一块另外画横线；停在 MACD 上时，右侧标出该副图的 Y 值。两个 symbol 的抬头都显示这一根的 DIF / DEA / HIST。
+- VOL 仍是 `Paint` 里的量柱带，不是 `Indicator`。这一阶段不另做 VOL 开关。
+
+明确不做：
+
+- BOLL、SAR 等其余指标，以及运行时 `registerIndicator` 热加载
+- 把 VOL 再包成可替换指标
+- P2 画线、P3 同轴叠加、P4 样式外置
 
 ## Out of scope
 

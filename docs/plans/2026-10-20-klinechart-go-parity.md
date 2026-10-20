@@ -179,9 +179,9 @@ type Indicator interface {
 - Modify: `kline/paint.go`（调用 MA 绘制）
 - Modify: `main.go`
 
-- [ ] `MA` 实现 Calc/DrawMain；`app` 用指标列表替代裸 `ma5/ma20` 切片字段（或两者并存一版后删旧字段）。
-- [ ] UI：勾选/按钮「MA」开关。
-- [ ] 测试：Calc 与旧 `SMA` 数值一致。
+- [x] `MA` 实现 Calc/DrawMain；`app` 用指标列表替代裸 `ma5/ma20` 切片字段（或两者并存一版后删旧字段）。
+- [x] UI：勾选/按钮「MA」开关。
+- [x] 测试：Calc 与旧 `SMA` 数值一致。
 
 ### Task P1.2：MACD 副图
 
@@ -190,16 +190,16 @@ type Indicator interface {
 - Modify: `kline/layout.go`（新建或从 paint 抽出 Split）
 - Modify: `main.go`, `README.md`
 
-- [ ] MACD(12,26,9)：DIF、DEA、柱；副图自有 Y 域。
-- [ ] 十字线读数增加 MACD 值。
-- [ ] 开关「MACD」；默认开。
-- [ ] 测试：已知短序列 fixture 断言 DIF/DEA；UI 测试副图矩形非空。
-- [ ] 截图：双图 + MACD 副图 + 联动竖线穿过副图。
+- [x] MACD(12,26,9)：DIF、DEA、柱；副图自有 Y 域。
+- [x] 十字线读数增加 MACD 值。
+- [x] 开关「MACD」；默认开。
+- [x] 测试：已知短序列 fixture 断言 DIF/DEA；UI 测试副图矩形非空。
+- [x] 截图：双图 + MACD 副图 + 联动竖线穿过副图。
 
 ### Task P1.3：VOL 指标化（可选收敛）
 
-- [ ] 若量柱仍独立绘制，本任务可只文档声明「VOL = 内置量区」；或抽 `ind_vol.go` 统一 DrawSub。
-- [ ] PR：`P1: indicators MA + MACD sub-pane`。
+- [x] 若量柱仍独立绘制，本任务可只文档声明「VOL = 内置量区」；或抽 `ind_vol.go` 统一 DrawSub。P1 选择前者：量柱留在 `Paint`，README 写明 VOL 是内置量区。
+- [x] PR：`P1: indicators MA + MACD sub-pane`。
 
 **P1 不做：** 完整 30 指标、自定义 `registerIndicator` 热加载、BOLL/SAR 等（可列后续 backlog）。
 

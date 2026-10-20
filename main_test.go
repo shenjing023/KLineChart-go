@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"math"
 	"os"
@@ -265,6 +266,128 @@ func TestForwardDoesNotReenter(t *testing.T) {
 	}
 }
 
+func TestIndicatorsAndMACDPane(t *testing.T) {
+	const viewW, viewH = 1100, 980
+	a := newApp()
+	tt := ui.NewTester(a.view, viewW, viewH)
+	if !tt.HasText("MA") || !tt.HasText("MACD") {
+		t.Fatalf("toolbar texts %q", tt.Texts())
+	}
+	if len(a.painted) != 2 {
+		t.Fatalf("painted panes %d", len(a.painted))
+	}
+	if a.painted[0].Time.H != 0 {
+		t.Fatal("the upper symbol should leave the time axis to the bottom one")
+	}
+	if a.painted[1].Time.H <= 0 || a.painted[1].Time.Y < a.painted[1].MACD.Y+a.painted[1].MACD.H-1 {
+		t.Fatalf("time axis %+v macd %+v", a.painted[1].Time, a.painted[1].MACD)
+	}
+	for i, panes := range a.painted {
+		if panes.Price.H <= 1 || panes.Volume.H <= 1 || panes.MACD.H <= 1 {
+			t.Fatalf("pane %d empty band %+v", i, panes)
+		}
+		if panes.Volume.Y < panes.Price.Y+panes.Price.H || panes.MACD.Y < panes.Volume.Y+panes.Volume.H {
+			t.Fatalf("pane %d order price/volume/MACD %+v", i, panes)
+		}
+	}
+	last := a.readout(0)
+	for _, part := range []string{"MA5", "MA20", "DIF", "DEA", "HIST"} {
+		if !strings.Contains(last, part) {
+			t.Fatalf("readout missing %s: %q", part, last)
+		}
+	}
+
+	macd := a.painted[0].MACD
+	tt.Move(macd.X+90, macd.Y+macd.H/2)
+	if a.crossPane != 0 || a.crossIndex < 0 {
+		t.Fatalf("hover in the MACD band index %d pane %d", a.crossIndex, a.crossPane)
+	}
+	if !strings.Contains(a.readout(0), "Hover") || !strings.Contains(a.readout(0), "DIF") || !strings.Contains(a.readout(1), "DIF") {
+		t.Fatalf("linked MACD readout\n%s\n%s", a.readout(0), a.readout(1))
+	}
+	assertCrosshairThroughMACD(t, tt.Image(), viewW, viewH, a, 0)
+	assertCrosshairThroughMACD(t, tt.Image(), viewW, viewH, a, 1)
+
+	if err := tt.Click("MACD"); err != nil {
+		t.Fatal(err)
+	}
+	if a.painted[0].MACD.H != 0 || a.painted[1].MACD.H != 0 {
+		t.Fatalf("MACD off still has a sub-pane %+v %+v", a.painted[0].MACD, a.painted[1].MACD)
+	}
+	if strings.Contains(a.readout(0), "DIF") || strings.Contains(a.readout(1), "HIST") {
+		t.Fatalf("MACD readout stayed\n%s\n%s", a.readout(0), a.readout(1))
+	}
+	if !strings.Contains(a.readout(0), "MA5") {
+		t.Fatalf("MA should stay on: %q", a.readout(0))
+	}
+	if err := tt.Click("MA"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(a.readout(0), "MA5") || strings.Contains(a.readout(0), "MA20") {
+		t.Fatalf("MA readout stayed %q", a.readout(0))
+	}
+	if err := tt.Click("MACD"); err != nil {
+		t.Fatal(err)
+	}
+	if a.painted[0].MACD.H <= 1 || strings.Contains(a.readout(0), "MA5") || !strings.Contains(a.readout(0), "DIF") {
+		t.Fatalf("MACD back on, MA still off: h %v readout %q", a.painted[0].MACD.H, a.readout(0))
+	}
+}
+
+func assertCrosshairThroughMACD(t *testing.T, img *image.RGBA, viewW, viewH int, a *app, pane int) {
+	t.Helper()
+	if img == nil {
+		t.Fatal("nil frame")
+	}
+	band := a.painted[pane].MACD
+	xDIP := a.painted[pane].Price.X + float32(a.vp.BarLeft(a.crossIndex)+a.vp.BarWidth/2)
+	b := img.Bounds()
+	sx := float32(b.Dx()) / float32(viewW)
+	sy := float32(b.Dy()) / float32(viewH)
+	x := int(xDIP*sx + 0.5)
+	y0 := int(band.Y * sy)
+	y1 := int((band.Y + band.H) * sy)
+	if y0 < b.Min.Y {
+		y0 = b.Min.Y
+	}
+	if y1 > b.Max.Y {
+		y1 = b.Max.Y
+	}
+	// Match the crosshair color, not the plot fill. Light and dark themes
+	// use different muted grays; either one counts.
+	muted := []ui.Color{ui.LightTheme().TextMuted, ui.DarkTheme().TextMuted}
+	hits := 0
+	rows := y1 - y0
+	for y := y0; y < y1; y++ {
+		for dx := -1; dx <= 1; dx++ {
+			px := x + dx
+			if px < b.Min.X || px >= b.Max.X {
+				continue
+			}
+			c := img.RGBAAt(px, y)
+			if nearColor(c, muted) {
+				hits++
+				break
+			}
+		}
+	}
+	if rows < 8 || hits*2 < rows {
+		t.Fatalf("pane %d vertical crosshair should cross the MACD band: hits %d of %d rows at x %d, band %+v", pane, hits, rows, x, band)
+	}
+}
+
+func nearColor(c color.RGBA, targets []ui.Color) bool {
+	for _, m := range targets {
+		dr := int(c.R) - int(m.R)
+		dg := int(c.G) - int(m.G)
+		db := int(c.B) - int(m.B)
+		if dr*dr+dg*dg+db*db <= 24*24 {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRenderFrames(t *testing.T) {
 	dir := os.Getenv("KLINE_FRAMES")
 	if dir == "" {
@@ -274,15 +397,18 @@ func TestRenderFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := newApp()
-	tt := ui.NewTester(a.view, 1100, 900)
-	writePNG(t, dir+"/p0-1h.png", tt.Image())
+	tt := ui.NewTester(a.view, 1100, 1000)
+	writePNG(t, dir+"/p1-macd.png", tt.Image())
+	if len(a.painted) < 2 || a.painted[0].MACD.H <= 1 {
+		t.Fatal("frame has no MACD band")
+	}
+	macd := a.painted[0].MACD
+	tt.Move(macd.X+120, macd.Y+macd.H/2)
+	writePNG(t, dir+"/p1-crosshair.png", tt.Image())
 	if err := tt.Click("1d"); err != nil {
 		t.Fatal(err)
 	}
-	writePNG(t, dir+"/p0-1d.png", tt.Image())
-	a.vp.Offset = 1
-	tt.Frame()
-	writePNG(t, dir+"/p0-forward.png", tt.Image())
+	writePNG(t, dir+"/p1-1d.png", tt.Image())
 }
 
 func assertStep(t *testing.T, a *app, step time.Duration) {

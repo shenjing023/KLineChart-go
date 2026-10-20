@@ -8,66 +8,10 @@ import (
 )
 
 const (
-	axisWidth  = 72
-	timeHeight = 22
-	paneGap    = 8
-	volumeFrac = 0.22
 	// bodyFrac is the candle body width as a fraction of BarWidth.
 	// The rest is the gap between neighboring bodies.
 	bodyFrac = 0.68
 )
-
-// Panes is the chart box split into the price plot, the volume plot,
-// and the axes. Coordinates are window DIPs, the same space a Draw
-// callback receives.
-type Panes struct {
-	Price, Volume, Time ui.Rect
-	PriceAxis           ui.Rect
-	VolumeAxis          ui.Rect
-}
-
-// Split divides r into a price plot, a volume plot under it, a time
-// axis along the bottom, and a price axis on the right.
-func Split(r ui.Rect) Panes { return split(r, true) }
-
-// SplitNoTime is the same layout without the time axis. A stack of
-// panes uses it for every pane except the bottom one, which keeps the
-// shared time labels.
-func SplitNoTime(r ui.Rect) Panes { return split(r, false) }
-
-func split(r ui.Rect, showTime bool) Panes {
-	axisW := float32(axisWidth)
-	timeH := float32(0)
-	if showTime {
-		timeH = timeHeight
-	}
-	gap := float32(paneGap)
-	if r.W < axisW+40 {
-		axisW = max(r.W*0.18, 1)
-	}
-	plotW := max(r.W-axisW, 1)
-	bodyH := r.H - timeH
-	if bodyH < gap+8 {
-		bodyH = r.H
-		timeH = 0
-	}
-	volH := float32(math.Round(float64((bodyH - gap) * volumeFrac)))
-	if volH < 20 && bodyH > 60 {
-		volH = 20
-	}
-	priceH := bodyH - gap - volH
-	if priceH < 1 {
-		priceH = 1
-		volH = max(bodyH-gap-priceH, 1)
-	}
-	return Panes{
-		Price:      ui.Rect{X: r.X, Y: r.Y, W: plotW, H: priceH},
-		Volume:     ui.Rect{X: r.X, Y: r.Y + priceH + gap, W: plotW, H: volH},
-		Time:       ui.Rect{X: r.X, Y: r.Y + priceH + gap + volH, W: plotW, H: timeH},
-		PriceAxis:  ui.Rect{X: r.X + plotW, Y: r.Y, W: axisW, H: priceH},
-		VolumeAxis: ui.Rect{X: r.X + plotW, Y: r.Y + priceH + gap, W: axisW, H: volH},
-	}
-}
 
 // Style is the chart's colors. Up is a rising close (close >= open).
 type Style struct {
@@ -116,14 +60,19 @@ type Pointer struct {
 	X, Y float32
 }
 
-// Paint draws the series in panes. vp is not modified. ma5 and ma20 may
-// be nil or shorter than cs; NaN samples are skipped.
+// Paint draws the series in panes. vp is not modified. inds are the
+// indicators mounted on this symbol; nil entries are skipped. Main
+// indicators overlay the price plot. The first sub indicator is drawn
+// in panes.MACD when that rect has a height. Volume stays the built-in
+// VOL strip.
 //
 // barIndex draws the vertical crosshair on that bar even when ptr is
 // outside this pane, so several panes can share one bar. -1 draws the
 // vertical line from ptr when ptr is over the plot, and draws nothing
 // when it is not. The horizontal line and the price tag follow ptr only.
-func Paint(p *ui.Painter, panes Panes, cs []Candle, ma5, ma20 []float64, vp Viewport, ptr Pointer, barIndex int, style Style) {
+// The vertical line runs through the price plot, the volume strip, and
+// the MACD sub-pane.
+func Paint(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, style Style) {
 	price := panes.Price
 	if price.W < 2 || price.H < 2 {
 		return
@@ -131,8 +80,30 @@ func Paint(p *ui.Painter, panes Panes, cs []Candle, ma5, ma20 []float64, vp View
 	p.Fill(ui.Rect{X: price.X, Y: price.Y, W: price.W + panes.PriceAxis.W, H: panes.Time.Y + panes.Time.H - price.Y}, style.Plot, 0)
 	p.Fill(panes.Volume, style.VolumeBg, 0)
 
+	var extra [][]float64
+	var sub Indicator
+	for _, ind := range inds {
+		if ind == nil {
+			continue
+		}
+		switch ind.PaneKind() {
+		case PaneMain:
+			if ma, ok := ind.(*MA); ok {
+				ma.SetColors([]ui.Color{style.MA5, style.MA20})
+				extra = append(extra, ma.Lines()...)
+			}
+		case PaneSub:
+			if sub == nil && panes.MACD.H > 1 {
+				if macd, ok := ind.(*MACD); ok {
+					macd.SetColors(style.MA5, style.MA20, style.Up, style.Down, style.Grid)
+				}
+				sub = ind
+			}
+		}
+	}
+
 	first, last := vp.Visible(len(cs), float64(price.W))
-	lo, hi := PriceDomain(cs, first, last, ma5, ma20)
+	lo, hi := PriceDomain(cs, first, last, extra...)
 	// chart.Linear maps a value to a fraction that grows upward.
 	// chart.Y turns that fraction into a window Y, with 0 at the
 	// bottom of the rect and 1 at the top.
@@ -145,16 +116,38 @@ func Paint(p *ui.Painter, panes Panes, cs []Candle, ma5, ma20 []float64, vp View
 		volScale.Hi = volScale.Lo + 1
 	}
 
+	var macdScale chart.Linear
+	hasMACD := false
+	if sub != nil {
+		if scaled, ok := sub.(interface {
+			Scale(first, last int) chart.Linear
+		}); ok {
+			macdScale = scaled.Scale(first, last)
+			hasMACD = true
+		}
+	}
+
 	drawGrid(p, panes, cs, vp, yScale, volScale, style)
 	p.Clip(price, 0, func() {
 		drawCandles(p, price, cs, vp, yScale, first, last, style)
-		drawMA(p, price, ma5, vp, yScale, first, last, style.MA5)
-		drawMA(p, price, ma20, vp, yScale, first, last, style.MA20)
+		for _, ind := range inds {
+			if ind != nil && ind.PaneKind() == PaneMain {
+				ind.DrawMain(p, price, vp, yScale)
+			}
+		}
 	})
 	p.Clip(panes.Volume, 0, func() {
 		drawVolume(p, panes.Volume, cs, vp, volScale, first, last, style)
 	})
-	drawCrosshair(p, panes, cs, vp, yScale, ptr, barIndex, style)
+	if sub != nil {
+		if hasMACD {
+			drawMACDAxis(p, panes, macdScale, style)
+		}
+		p.Clip(panes.MACD, 0, func() {
+			sub.DrawSub(p, panes.MACD, vp)
+		})
+	}
+	drawCrosshair(p, panes, cs, vp, yScale, macdScale, hasMACD, ptr, barIndex, style)
 }
 
 func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volScale chart.Linear, style Style) {
@@ -183,7 +176,7 @@ func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volS
 				continue
 			}
 			x := chart.X(price, tick.At)
-			p.Line(x, price.Y, x, panes.Volume.Y+panes.Volume.H, 1, style.Grid)
+			p.Line(x, price.Y, x, bandsBottom(panes), 1, style.Grid)
 			if panes.Time.H > 0 {
 				drawLabel(p, x, panes.Time.Y+panes.Time.H/2, tick.Label, style.Muted, ui.Center)
 			}
@@ -192,6 +185,29 @@ func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volS
 	if panes.Volume.Y > price.Y+price.H {
 		p.Line(price.X, panes.Volume.Y-float32(paneGap)/2, price.X+price.W, panes.Volume.Y-float32(paneGap)/2, 1, style.Grid)
 	}
+	if panes.MACD.H > 0 && panes.MACD.Y > panes.Volume.Y+panes.Volume.H {
+		p.Line(price.X, panes.MACD.Y-float32(paneGap)/2, price.X+price.W, panes.MACD.Y-float32(paneGap)/2, 1, style.Grid)
+	}
+}
+
+func drawMACDAxis(p *ui.Painter, panes Panes, scale chart.Linear, style Style) {
+	if panes.MACD.H < 8 {
+		return
+	}
+	for _, tick := range scale.Ticks(3) {
+		if tick.At < -0.01 || tick.At > 1.01 {
+			continue
+		}
+		y := chart.Y(panes.MACD, tick.At)
+		drawLabel(p, panes.MACDAxis.X+6, y, tick.Label, style.Muted, ui.Start)
+	}
+}
+
+func bandsBottom(panes Panes) float32 {
+	if panes.MACD.H > 0 {
+		return panes.MACD.Y + panes.MACD.H
+	}
+	return panes.Volume.Y + panes.Volume.H
 }
 
 func drawCandles(p *ui.Painter, plot ui.Rect, cs []Candle, vp Viewport, yScale chart.Linear, first, last int, style Style) {
@@ -282,7 +298,7 @@ func drawVolume(p *ui.Painter, plot ui.Rect, cs []Candle, vp Viewport, volScale 
 	}
 }
 
-func drawCrosshair(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale chart.Linear, ptr Pointer, barIndex int, style Style) {
+func drawCrosshair(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, macdScale chart.Linear, hasMACD bool, ptr Pointer, barIndex int, style Style) {
 	if len(cs) == 0 {
 		return
 	}
@@ -300,14 +316,16 @@ func drawCrosshair(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale 
 	if x < price.X || x > price.X+price.W {
 		return
 	}
-	bottom := panes.Volume.Y + panes.Volume.H
+	bottom := bandsBottom(panes)
 	p.Line(x, price.Y, x, bottom, 1, style.Cross)
 
 	// The horizontal line stays on the pane under the pointer. Other
-	// panes only share the vertical line at this bar index.
+	// panes only share the vertical line at this bar index. The vertical
+	// line continues through the MACD sub-pane.
 	inPrice := ptr.On && ptr.Y >= price.Y && ptr.Y <= price.Y+price.H
-	inVol := ptr.On && ptr.Y >= panes.Volume.Y && ptr.Y <= bottom
-	if inPrice || inVol {
+	inVol := ptr.On && ptr.Y >= panes.Volume.Y && ptr.Y <= panes.Volume.Y+panes.Volume.H
+	inMACD := hasMACD && ptr.On && ptr.Y >= panes.MACD.Y && ptr.Y <= panes.MACD.Y+panes.MACD.H
+	if inPrice || inVol || inMACD {
 		p.Line(price.X, ptr.Y, price.X+price.W, ptr.Y, 1, style.Cross)
 	}
 	if inPrice && price.H > 0 {
@@ -316,6 +334,10 @@ func drawCrosshair(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale 
 		frac := float32((price.Y+price.H)-ptr.Y) / price.H
 		label := FormatPrice(yScale.Invert(frac))
 		drawTag(p, panes.PriceAxis.X+4, ptr.Y, label, style)
+	}
+	if inMACD && panes.MACD.H > 0 {
+		frac := float32((panes.MACD.Y+panes.MACD.H)-ptr.Y) / panes.MACD.H
+		drawTag(p, panes.MACDAxis.X+4, ptr.Y, FormatPrice(macdScale.Invert(frac)), style)
 	}
 	if panes.Time.H > 0 {
 		drawTag(p, x, panes.Time.Y+panes.Time.H/2, cs[i].Time.UTC().Format("01-02 15:04"), style)
