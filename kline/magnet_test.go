@@ -1,6 +1,7 @@
 package kline
 
 import (
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -61,6 +62,36 @@ func TestSnapPriceWeakWithinRadius(t *testing.T) {
 	yHigh := PriceToLocalY(plotH, 200, scale)
 	if math.Abs(yPtr-yHigh) > HitRadius+0.01 {
 		t.Fatalf("test setup: expected within hit radius, y diff %v", math.Abs(yPtr-yHigh))
+	}
+}
+
+func TestSnapPriceUnknownModeDoesNotSnap(t *testing.T) {
+	scale := chart.NewLinear(0, 1000)
+	const plotH = 1000.0
+	b := barOHLC(100, 110, 90, 105)
+	price := 104.0
+	got := SnapPrice(MagnetMode(9), b, price, plotH, scale)
+	if got != price {
+		t.Fatalf("unknown magnet mode snapped %v to %v", price, got)
+	}
+}
+
+func TestSetMagnetRejectsUnknown(t *testing.T) {
+	a := NewChart(ChartOptions{Magnet: MagnetStrong})
+	if a.Magnet() != MagnetStrong {
+		t.Fatalf("magnet %v", a.Magnet())
+	}
+	if err := a.SetMagnet(MagnetMode(9)); err == nil {
+		t.Fatal("unknown magnet returned nil")
+	} else if !errors.Is(err, ErrUnknownMagnet) {
+		t.Fatalf("unknown magnet: %v", err)
+	}
+	if a.Magnet() != MagnetStrong {
+		t.Fatalf("unknown magnet changed the mode to %v", a.Magnet())
+	}
+	a = NewChart(ChartOptions{Magnet: MagnetMode(9)})
+	if a.Magnet() != MagnetOff {
+		t.Fatalf("invalid option stored %v", a.Magnet())
 	}
 }
 

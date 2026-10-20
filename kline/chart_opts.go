@@ -41,6 +41,14 @@ var ErrUnknownIndicator = errors.New("kline: unknown indicator")
 // ErrUnknownTool is returned when SetTool does not know the name.
 var ErrUnknownTool = errors.New("kline: unknown tool")
 
+// ErrUnknownLayout is returned when SetLayout is not given LayoutStack
+// or LayoutOverlay. The layout already in use stays.
+var ErrUnknownLayout = errors.New("kline: unknown layout")
+
+// ErrUnknownMagnet is returned when SetMagnet is not given MagnetOff,
+// MagnetWeak, or MagnetStrong. The mode already in use stays.
+var ErrUnknownMagnet = errors.New("kline: unknown magnet mode")
+
 // ErrDuplicateSymbol is LoadError when ChartOptions.Symbols names a symbol
 // twice. Such a chart has no panes, and every load returns this error.
 var ErrDuplicateSymbol = errors.New("kline: duplicate symbol")
@@ -139,7 +147,7 @@ func NewChart(opts ChartOptions) *Chart {
 		vp:         Viewport{BarWidth: DefaultBarWidth},
 		crossIndex: -1,
 		crossPane:  -1,
-		magnet:     opts.Magnet,
+		magnet:     knownMagnet(opts.Magnet),
 		layout:     layout,
 		hollowUp:   opts.Hollow || opts.Style.HollowUp,
 		style:      opts.Style,
@@ -266,8 +274,10 @@ func (a *Chart) Close() error {
 func (a *Chart) Period() Period { return a.period }
 
 // SetLayout switches between LayoutStack and LayoutOverlay. Any other
-// string leaves the layout as it is. A change clears an in-progress drawing.
-func (a *Chart) SetLayout(layout string) {
+// string returns ErrUnknownLayout and leaves the layout as it is. A
+// change clears an in-progress drawing. NewChart still treats an empty
+// or unknown Layout option as stack; this method is what reports a typo.
+func (a *Chart) SetLayout(layout string) error {
 	next := a.layout
 	switch layout {
 	case LayoutStack:
@@ -275,14 +285,15 @@ func (a *Chart) SetLayout(layout string) {
 	case LayoutOverlay:
 		next = layoutOverlay
 	default:
-		return
+		return fmt.Errorf("%w: %s", ErrUnknownLayout, layout)
 	}
 	if next == a.layout {
-		return
+		return nil
 	}
 	a.layout = next
 	a.draftOn = false
 	a.dragOn = false
+	return nil
 }
 
 // Layout is LayoutStack or LayoutOverlay.
@@ -477,8 +488,17 @@ func (a *Chart) IndicatorEnabled(name string) *bool {
 }
 
 // SetMagnet sets how new overlay points snap. It does not move points
-// already placed.
-func (a *Chart) SetMagnet(mode MagnetMode) { a.magnet = mode }
+// already placed. A mode other than off, weak, or strong returns
+// ErrUnknownMagnet and leaves the current mode in place.
+func (a *Chart) SetMagnet(mode MagnetMode) error {
+	switch mode {
+	case MagnetOff, MagnetWeak, MagnetStrong:
+		a.magnet = mode
+		return nil
+	default:
+		return fmt.Errorf("%w: %d", ErrUnknownMagnet, mode)
+	}
+}
 
 // Magnet is the current snap mode.
 func (a *Chart) Magnet() MagnetMode { return a.magnet }

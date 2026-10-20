@@ -1,6 +1,7 @@
 package kline
 
 import (
+	"errors"
 	"image"
 	"testing"
 	"time"
@@ -156,17 +157,25 @@ func TestSetStyleAndLimitPct(t *testing.T) {
 	}
 }
 
-func TestSetLayoutIgnoresUnknown(t *testing.T) {
+func TestSetLayoutRejectsUnknown(t *testing.T) {
 	c := NewChart(ChartOptions{})
-	c.SetLayout(LayoutOverlay)
+	if err := c.SetLayout(LayoutOverlay); err != nil {
+		t.Fatal(err)
+	}
 	if c.Layout() != LayoutOverlay {
 		t.Fatalf("layout %s", c.Layout())
 	}
-	c.SetLayout("sideways")
-	if c.Layout() != LayoutOverlay {
-		t.Fatal("unknown layout should leave overlay in place")
+	if err := c.SetLayout("sideways"); err == nil {
+		t.Fatal("unknown layout returned nil")
+	} else if !errors.Is(err, ErrUnknownLayout) {
+		t.Fatalf("unknown layout: %v", err)
 	}
-	c.SetLayout(LayoutStack)
+	if c.Layout() != LayoutOverlay {
+		t.Fatal("unknown layout changed the chart")
+	}
+	if err := c.SetLayout(LayoutStack); err != nil {
+		t.Fatal(err)
+	}
 	if c.Layout() != LayoutStack {
 		t.Fatalf("layout %s", c.Layout())
 	}

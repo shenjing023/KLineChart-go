@@ -24,7 +24,7 @@ It is a demo of the interaction in [KLineChart](https://github.com/klinecharts/K
 - **1h / 4h / 1d** reload both panes from the data source and fit the latest bars. The default **1h** series is the same walk as before (ALPHA seed 42, BETA seed 99).
 - Dragging to the left edge loads older bars, prepends them, and shifts the shared offset by that count so the bars on screen stay put. A load already in flight does not start another.
 - **Pan / H-Line / Segment / Fib.** Pan drags the chart. H-Line places a horizontal price line with one click; dragging it changes the price. Segment takes two clicks, with a rubber band between them. **Fib** takes two clicks and draws seven standard retracement levels (0 through 1) across the horizontal span between the anchors, with a level preview while the second click is pending. Ratio 0 is the second click and ratio 1 is the first click. A draw tool turns pan off. The selected drawing is highlighted. Delete removes it, and a right-click removes the drawing under the pointer. Drawings belong to the pane that was clicked. In Overlay, new drawings are stored on ALPHA in raw price, and BETA's existing lines stay hidden until you return to Stack.
-- **Magnet Off / Weak / Strong.** Off leaves the pointer price alone. Weak snaps to the nearest Open, High, Low, or Close on the bar under the pointer when that OHLC is within 6 DIPs in local Y. Strong always snaps to the nearest OHLC. New points snap, including the press that places a new H-Line, and so do endpoint drags on Segment and Fib. Dragging an existing H-Line body does not. Changing the mode does not rewrite lines already placed. Default is Off.
+- **Magnet Off / Weak / Strong.** Off leaves the pointer price alone. Weak snaps to the nearest Open, High, Low, or Close on the bar under the pointer when that OHLC is within 6 DIPs in local Y. Strong always snaps to the nearest OHLC. Any other `MagnetMode` does not snap. `SetMagnet` returns `ErrUnknownMagnet` for a value other than those three and leaves the current mode. `NewChart` treats an out-of-range `ChartOptions.Magnet` as off. New points snap, including the press that places a new H-Line, and so do endpoint drags on Segment and Fib. Dragging an existing H-Line body does not. Changing the mode does not rewrite lines already placed. Default is Off.
 
 ## Run
 
@@ -87,7 +87,7 @@ if err := chart.LoadError(); err != nil {
 
 _ = chart.SetPeriod(kline.Period{Span: 1, Unit: kline.UnitDay})
 _ = chart.SetIndicators([]string{"MA", "BOLL"}) // nil or empty turns all off; an unknown name changes nothing
-chart.SetLayout(kline.LayoutOverlay)
+_ = chart.SetLayout(kline.LayoutOverlay) // unknown name returns ErrUnknownLayout and keeps the current layout
 _ = chart.SetSource(src) // nil returns ErrNilSource; a failed reload keeps the previous source
 chart.EditStyle(nil, func(s *kline.Style) {
     s.Up = ui.RGB(239, 83, 80) // rising red, rest of the palette stays
