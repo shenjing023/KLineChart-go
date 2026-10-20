@@ -31,3 +31,8 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# MyGo dev and package output
+/build/
+/.mygo/
+mygo_windows_*.syso
