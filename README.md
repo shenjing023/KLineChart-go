@@ -103,6 +103,8 @@ _, _ = first, last
 
 `NewChart` with a `Style` that only sets a candle color fills the rest from `DarkDefault`. `EditStyle` starts from the theme you pass (`nil` is dark), keeps the live hollow switch and limit percent, then applies the edit. `SetHollow` and `SetLimitPct` change those two switches without dropping the color override. `Style.CandleBodyColor` is the rule Paint uses: a non-positive `limitPct` always returns `Up` or `Down`. An invalid `SetPeriod` returns `ErrInvalidPeriod` and leaves the loaded bars in place.
 
+`ChartOptions.Marshal` hops a live bar onto the UI thread. Pass `win.Update` (`(*mygo.Window).Update`): it runs the callback on the main thread and redraws. `mygo.RunOnMain` hops and waits, and does not redraw, so the host must `Invalidate`. A nil `Marshal` applies the bar on the caller and does not request a frame. `SetPeriod` and `SetSource` return a `SubscribeBar` error; subscriptions opened for that call are rolled back. `Close` unsubscribes and ignores a handler that runs afterward. The live callback must not call `SetPeriod`, `SetSource`, or `View`.
+
 `kline/host_embed_test.go` is the same path from an external package: embed with no toolbar, a host `DataSource`/`LiveSource`, a registered indicator, and a registered overlay.
 
 ## Extend
@@ -184,7 +186,7 @@ _ = chart.SetTool("mark")
 
 ### Data source
 
-History is `DataSource.GetBars`. A feed that can push also implements `LiveSource`. The chart subscribes when `SetSource` or `SetPeriod` sees that interface, and ignores a plain `DataSource`. `SyntheticSource` is not a live feed. `StubLiveSource` is the in-memory double. This repo does not open a connection. `kline/host_embed_test.go` has a complete feed: init, forward, subscribe, and one pushed bar.
+History is `DataSource.GetBars`. A feed that can push also implements `LiveSource`. The chart subscribes when `SetSource` or `SetPeriod` sees that interface, and ignores a plain `DataSource`. Older bars are prepended only when every pane that already has bars accepts the same count; otherwise the shared offset stays put and each pane keeps the `more` flag the source reported. A forward `GetBars` error leaves the panes unchanged and is not retried on the next frame. `SyntheticSource` is not a live feed. `StubLiveSource` is the in-memory double. This repo does not open a connection. `kline/host_embed_test.go` has a complete feed: init, forward, subscribe, and one pushed bar.
 
 Indicator series are cached until the candles change. Pan and zoom do not call `Calc`.
 
@@ -329,9 +331,11 @@ Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot.
 - `kline.LiveSource` 在 `DataSource` 上增加 `SubscribeBar` / `UnsubscribeBar`。`GetBars` 仍负责历史。`BarHandler` 收到一根 K 线：新的开盘时间，或最后一根的修订。
 - 图表在 `setPeriod` 里对数据源做 type assert。源实现了 `LiveSource` 就按当前周期给每个 symbol 订阅，并在换周期或换源时退订上一个源。没有实现就只走 `GetBars`，`SyntheticSource` 属于这一类，它不会假装在推送。
 - 收到的 bar：开盘时间比最后一根新，就追加；开盘时间相同，就替换最后一根；更早的开盘时间丢掉。指标会重算。视窗正贴在右边缘时，新的一根仍留在右边；已经平移开的视窗不跳。
+- `SetPeriod` / `SetSource` 把 `SubscribeBar` 的错误返回给宿主。同一轮里已经订上的 symbol 会退订。`Close` 退订并让已经交出去的 handler 不再改图。
+- `ChartOptions.Marshal` 把实时 bar 送到 UI 线程。传 `win.Update`（`(*mygo.Window).Update`），它会在主线程执行并请求重绘。`nil` 表示就在调用方的 goroutine 上同步执行，测试走这条。`mygo.RunOnMain` 只跳线程、不重绘，宿主要自己 `Invalidate`。handler 不能再调用 `SetPeriod`、`SetSource` 或 `View`。
 - `kline.StubLiveSource` 把历史和订阅都放在内存里。`SetBars` 写入历史，`Push` 在已订阅时调用 handler，`UnsubscribeBar` 之后不再投递。测试用它，不需要网络。
 
-真实源由宿主实现，不在本仓库里。历史实现 `GetBars`；能推送时再实现 `LiveSource`。`Push` 的调用方决定在哪一个 goroutine 上进入 handler，stub 是同步调用。宿主若从别的 goroutine 推送，要自己串到 UI 线程。下面是形状，不是可运行的客户端：
+真实源由宿主实现，不在本仓库里。历史实现 `GetBars`；能推送时再实现 `LiveSource`。`Push` 的调用方决定在哪一个 goroutine 上进入 handler，stub 是同步调用。宿主从别的 goroutine 推送时，把 `ChartOptions.Marshal` 设为 `win.Update`。下面是形状，不是可运行的客户端：
 
 ```go
 type feed struct{}
@@ -397,7 +401,7 @@ func (f *feed) UnsubscribeBar(symbol string, period kline.Period) error {
 
 - `kline.NewChart`。选项有 `Source`、`Symbols`、`Period`、`Layout`（`"stack"` 或 `"overlay"`）、`Style`、`Hollow`、`Indicators`、`Magnet`。没填的项用演示默认值：合成源、ALPHA 和 BETA、1h、Stack、MA 和 MACD 开、磁吸关、颜色跟窗口主题。
 - `View` 是 MyGo 的视图函数。单独做窗口时用 `ui.View(chart.View)`。宿主有自己的工具条时，在那一栏下面调用 `chart.View(ctx)`。没有工具条也会画出 Stack 的 K 线、量柱和选中的指标，平移、缩放、十字线都能用。
-- `SetPeriod`、`SetLayout`、`SetSource`。换周期会重新加载并清掉画线。`SetSource(nil)` 返回错误。加载失败时保留原来的源。源实现了 `LiveSource` 仍会订阅，没有实现就只走 `GetBars`。
+- `SetPeriod`、`SetLayout`、`SetSource`、`Close`。换周期会重新加载并清掉画线。`SetSource(nil)` 返回错误。`GetBars` 失败时保留原来的源。`SubscribeBar` 失败时返回错误，并退掉这一轮已经订上的 symbol。源实现了 `LiveSource` 仍会订阅，没有实现就只走 `GetBars`。`Close` 退订。
 - 工具条还绑定了 `SetTool`、`SetMagnet`、`SetIndicator`、`SetHollow`、`ResetView`。指标开关和 Hollow 也可以直接拿 `IndicatorEnabled` / `HollowEnabled` 的 `*bool` 交给 `ui.Toggle`。
 - `SetStyle` 换成一整套颜色。`SetLimitPct` 单独改涨跌停阈值。`Style.CandleBodyColor` 的规则是：`limitPct <= 0` 时只用 `Up` / `Down`（收盘不低于开盘为涨）。`limitPct > 0` 且上一根收盘为正时，`(close-prevClose)/prevClose >= limitPct` 用 `LimitUp`，`<= -limitPct` 用 `LimitDown`。收盘等于最高价本身不算涨停。量柱和 MACD 柱仍用 `Up` / `Down`。
 - 演示工具条 **Classic / US / Contrast** 改 K 线颜色。**Limit 10%** 把阈值设为 0.10，再点一次关掉。默认阈值是 0，所以涨跌停色先备着，不画上去。Hollow 仍然只描涨的实体，涨停那根若收盘不低于开盘，描的是 `LimitUp`。

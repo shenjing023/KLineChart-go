@@ -3,6 +3,7 @@ package kline
 import (
 	"math"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -15,6 +16,10 @@ const (
 	// forwardEdge is the shared offset below which older bars are loaded.
 	// Offset is the bar index at the left edge, the same value Viewport uses.
 	forwardEdge = 5
+	// forwardBackoff is how long ensureForward waits after a GetBars error,
+	// or after a forward batch that cannot be shared, before calling the
+	// source again. View calls ensureForward on every frame.
+	forwardBackoff = 500 * time.Millisecond
 )
 
 const (
@@ -137,6 +142,15 @@ type Chart struct {
 	// a DataSource, which is the synthetic demo.
 	live     LiveSource
 	liveSubs []liveSub
+	// liveGen fences handlers. dropLive bumps it so a callback that
+	// outlives UnsubscribeBar does not apply. Push may run off the UI
+	// goroutine, so this is atomic.
+	liveGen atomic.Uint64
+	// marshal is ChartOptions.Marshal. Nil applies a live bar on the caller.
+	marshal func(func())
+	// forwardHold is the earliest time a failed forward load may try again.
+	// The zero time means there is no hold.
+	forwardHold time.Time
 }
 
 // liveSub is one SubscribeBar the window currently holds.
@@ -174,48 +188,93 @@ func (a *Chart) setPeriod(p Period) error {
 		a.vp.FitRight(a.bars(), a.plotW)
 		a.fitted = true
 	}
-	a.followLive()
-	return nil
+	a.clearForwardHold()
+	return a.followLive()
 }
 
 // followLive subscribes when src implements LiveSource and drops any
 // previous subscription, including one on a source the window no longer
 // uses. A plain DataSource, such as SyntheticSource, is ignored. Nothing
-// here opens a connection.
-func (a *Chart) followLive() {
-	a.dropLive()
+// here opens a connection. A SubscribeBar error unsubscribes the symbols
+// that already succeeded and fences their handlers.
+func (a *Chart) followLive() error {
+	_ = a.dropLive()
 	live, ok := a.src.(LiveSource)
-	if !ok {
-		return
+	if !ok || live == nil {
+		return nil
 	}
+	gen := a.liveGen.Load()
 	subs := make([]liveSub, 0, len(a.panes))
 	for _, s := range a.panes {
 		symbol := s.name
-		err := live.SubscribeBar(symbol, a.period, func(bar Candle) {
-			a.applyLiveBar(symbol, bar)
+		period := a.period
+		err := live.SubscribeBar(symbol, period, func(bar Candle) {
+			a.onLiveBar(gen, symbol, period, bar)
 		})
 		if err != nil {
-			continue
+			for _, sub := range subs {
+				_ = live.UnsubscribeBar(sub.symbol, sub.period)
+			}
+			a.liveGen.Add(1)
+			return err
 		}
-		subs = append(subs, liveSub{symbol: symbol, period: a.period})
+		subs = append(subs, liveSub{symbol: symbol, period: period})
 	}
 	if len(subs) == 0 {
-		return
+		return nil
 	}
 	a.live = live
 	a.liveSubs = subs
+	return nil
 }
 
-func (a *Chart) dropLive() {
-	if a.live == nil {
-		a.liveSubs = nil
-		return
-	}
-	for _, sub := range a.liveSubs {
-		_ = a.live.UnsubscribeBar(sub.symbol, sub.period)
-	}
+func (a *Chart) dropLive() error {
+	a.liveGen.Add(1)
+	live := a.live
+	subs := a.liveSubs
 	a.live = nil
 	a.liveSubs = nil
+	if live == nil {
+		return nil
+	}
+	var err error
+	for _, sub := range subs {
+		if uerr := live.UnsubscribeBar(sub.symbol, sub.period); uerr != nil && err == nil {
+			err = uerr
+		}
+	}
+	return err
+}
+
+// onLiveBar applies bar when the subscription is still current. The
+// generation check is safe from the feed's goroutine. Period, symbol,
+// and the candle slice are touched only inside apply, which Marshal
+// runs on the UI thread. The handler must not call SetPeriod, SetSource,
+// or View.
+func (a *Chart) onLiveBar(gen uint64, symbol string, period Period, bar Candle) {
+	if gen != a.liveGen.Load() {
+		return
+	}
+	apply := func() {
+		if gen != a.liveGen.Load() || period != a.period || !a.showing(symbol) {
+			return
+		}
+		a.applyLiveBar(symbol, bar)
+	}
+	if a.marshal != nil {
+		a.marshal(apply)
+		return
+	}
+	apply()
+}
+
+func (a *Chart) showing(symbol string) bool {
+	for i := range a.panes {
+		if a.panes[i].name == symbol {
+			return true
+		}
+	}
+	return false
 }
 
 // applyLiveBar appends a bar with a newer open time, or replaces the
@@ -256,24 +315,25 @@ func (a *Chart) pinnedRight() bool {
 }
 
 // ensureForward prepends older bars when the shared offset is near the
-// left edge. Offset increases by the prepended count, which is the same
-// rule as Viewport: bar i moves to i+n, so (i+n) - (offset+n) is unchanged.
-// A load already in flight does not start another.
+// left edge. The prepend is one transaction: every pane that currently
+// has bars must accept the same count of strictly-earlier bars. Offset
+// then increases by that count, which is the same rule as Viewport:
+// bar i moves to i+n, so (i+n) - (offset+n) is unchanged. A pane that
+// cannot accept the batch leaves offset and crossIndex where they are.
+// more is stored as the source reported it. A GetBars error changes
+// nothing and waits forwardBackoff before the next try, so a frame loop
+// does not call the source again immediately. A load already in flight
+// does not start another.
 func (a *Chart) ensureForward() {
-	if a.loading || a.src == nil || !a.fitted || a.vp.Offset >= forwardEdge || !a.anyMore() {
+	if a.loading || a.src == nil || !a.fitted || a.vp.Offset >= forwardEdge || a.forwardCooling() || !a.canForward() {
 		return
 	}
 	a.loading = true
 	defer func() { a.loading = false }()
 
-	type fetched struct {
-		bars []Candle
-		more bool
-		ok   bool
-	}
-	got := make([]fetched, len(a.panes))
+	got := make([]forwardFetch, len(a.panes))
 	for i, s := range a.panes {
-		if !s.more || len(s.candles) == 0 {
+		if len(s.candles) == 0 {
 			continue
 		}
 		bars, more, err := a.src.GetBars(BarRequest{
@@ -284,35 +344,30 @@ func (a *Chart) ensureForward() {
 			Limit:  forwardBatch,
 		})
 		if err != nil {
+			a.holdForward()
 			return
 		}
 		bars = strictlyBefore(bars, s.candles[0].Time)
-		got[i] = fetched{bars: bars, more: more, ok: true}
+		got[i] = forwardFetch{bars: bars, more: more, ok: true}
 	}
 	n := 0
-	have := false
-	for _, g := range got {
-		if !g.ok || len(g.bars) == 0 {
+	for i, s := range a.panes {
+		if len(s.candles) == 0 {
 			continue
 		}
-		if !have || len(g.bars) < n {
-			n = len(g.bars)
-			have = true
+		if !got[i].ok || len(got[i].bars) == 0 {
+			a.keepReportedMore(got)
+			return
+		}
+		if n == 0 || len(got[i].bars) < n {
+			n = len(got[i].bars)
 		}
 	}
-	if !have || n == 0 {
-		for i := range a.panes {
-			if got[i].ok && len(got[i].bars) == 0 {
-				a.panes[i].more = false
-			}
-		}
+	if n == 0 {
 		return
 	}
 	for i := range a.panes {
-		if !got[i].ok || len(got[i].bars) == 0 {
-			if got[i].ok {
-				a.panes[i].more = false
-			}
+		if len(a.panes[i].candles) == 0 {
 			continue
 		}
 		older := got[i].bars
@@ -325,15 +380,59 @@ func (a *Chart) ensureForward() {
 	if a.crossIndex >= 0 {
 		a.crossIndex += n
 	}
+	a.clearForwardHold()
 }
 
-func (a *Chart) anyMore() bool {
+// canForward reports whether every pane that has bars can take a
+// strictly-earlier batch. One pane with more set false blocks the load:
+// shifting offset for the others would break the shared open time.
+func (a *Chart) canForward() bool {
+	ready := false
 	for _, s := range a.panes {
-		if s.more && len(s.candles) > 0 {
-			return true
+		if len(s.candles) == 0 {
+			continue
+		}
+		if !s.more {
+			return false
+		}
+		ready = true
+	}
+	return ready
+}
+
+// forwardFetch is one pane's forward response. ok is false when that
+// pane was not asked, which is a pane that currently has no bars.
+type forwardFetch struct {
+	bars []Candle
+	more bool
+	ok   bool
+}
+
+// keepReportedMore stores each fetched more flag and, when every pane
+// with bars still says more, waits before asking again. An empty
+// strictly-earlier batch with more still true would otherwise run on
+// every frame.
+func (a *Chart) keepReportedMore(got []forwardFetch) {
+	for i := range a.panes {
+		if i < len(got) && got[i].ok {
+			a.panes[i].more = got[i].more
 		}
 	}
-	return false
+	if a.canForward() {
+		a.holdForward()
+	}
+}
+
+func (a *Chart) forwardCooling() bool {
+	return !a.forwardHold.IsZero() && time.Now().Before(a.forwardHold)
+}
+
+func (a *Chart) holdForward() {
+	a.forwardHold = time.Now().Add(forwardBackoff)
+}
+
+func (a *Chart) clearForwardHold() {
+	a.forwardHold = time.Time{}
 }
 
 func strictlyBefore(bars []Candle, anchor time.Time) []Candle {
