@@ -35,6 +35,11 @@ type Panes struct {
 	VolumeAxis                     ui.Rect
 	MACDAxis                       ui.Rect
 	KDJAxis                        ui.Rect
+	// Extra holds sub-panes past the built-in MACD and KDJ bands, in
+	// indicator order. It is empty when only those built-ins are open,
+	// so their rects stay on MACD and KDJ.
+	Extra     []ui.Rect
+	ExtraAxis []ui.Rect
 }
 
 // Split divides r into a price plot, a volume plot under it, a time
@@ -219,5 +224,82 @@ func splitBoth(r ui.Rect, showTime bool) Panes {
 		VolumeAxis: ui.Rect{X: r.X + plotW, Y: volY, W: axisW, H: volH},
 		MACDAxis:   ui.Rect{X: r.X + plotW, Y: macdY, W: axisW, H: macdH},
 		KDJAxis:    ui.Rect{X: r.X + plotW, Y: kdjY, W: axisW, H: kdjH},
+	}
+}
+
+// splitMany is price, volume, then n sub-panes of equal height. n > 2.
+// The built-in one- and two-band layouts stay on SplitStack so their
+// rects do not move.
+func splitMany(r ui.Rect, showTime bool, n int) Panes {
+	if n < 1 {
+		return SplitStack(r, showTime, false, false)
+	}
+	axisW := float32(axisWidth)
+	timeH := float32(0)
+	if showTime {
+		timeH = timeHeight
+	}
+	gap := float32(paneGap)
+	if r.W < axisW+40 {
+		axisW = max(r.W*0.18, 1)
+	}
+	plotW := max(r.W-axisW, 1)
+	bodyH := r.H - timeH
+	if bodyH < gap+8 {
+		bodyH = r.H
+		timeH = 0
+	}
+	gaps := gap * float32(n+1)
+	inner := bodyH - gaps
+	if inner < 1 {
+		inner = 1
+	}
+	volFrac := 0.12
+	subFrac := 0.16
+	sum := volFrac + subFrac*float64(n)
+	if sum > 0.72 {
+		scale := 0.72 / sum
+		volFrac *= scale
+		subFrac *= scale
+	}
+	volH := float32(math.Round(float64(inner) * volFrac))
+	subH := float32(math.Round(float64(inner) * subFrac))
+	if volH < 12 && bodyH > 80 {
+		volH = 12
+	}
+	if subH < 18 && bodyH > 100 {
+		subH = 18
+	}
+	priceH := bodyH - gaps - volH - subH*float32(n)
+	if priceH < 1 {
+		priceH = 1
+		room := bodyH - gaps - priceH
+		if room < float32(n+1) {
+			room = float32(n + 1)
+		}
+		volH = max(room*0.2, 1)
+		subH = max((room-volH)/float32(n), 1)
+		priceH = bodyH - gaps - volH - subH*float32(n)
+		if priceH < 1 {
+			priceH = 1
+		}
+	}
+	volY := r.Y + priceH + gap
+	extras := make([]ui.Rect, n)
+	extraAxes := make([]ui.Rect, n)
+	y := volY + volH + gap
+	for i := 0; i < n; i++ {
+		extras[i] = ui.Rect{X: r.X, Y: y, W: plotW, H: subH}
+		extraAxes[i] = ui.Rect{X: r.X + plotW, Y: y, W: axisW, H: subH}
+		y += subH + gap
+	}
+	return Panes{
+		Price:      ui.Rect{X: r.X, Y: r.Y, W: plotW, H: priceH},
+		Volume:     ui.Rect{X: r.X, Y: volY, W: plotW, H: volH},
+		Extra:      extras,
+		ExtraAxis:  extraAxes,
+		Time:       ui.Rect{X: r.X, Y: y - gap, W: plotW, H: timeH},
+		PriceAxis:  ui.Rect{X: r.X + plotW, Y: r.Y, W: axisW, H: priceH},
+		VolumeAxis: ui.Rect{X: r.X + plotW, Y: volY, W: axisW, H: volH},
 	}
 }

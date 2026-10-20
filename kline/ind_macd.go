@@ -8,7 +8,7 @@ import (
 )
 
 func init() {
-	Register(Spec{
+	mustRegister(Spec{
 		Name: "MACD",
 		Kind: PaneSub,
 		New:  func() Indicator { return NewMACD(12, 26, 9) },

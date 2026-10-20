@@ -22,6 +22,7 @@ const (
 	toolHLine
 	toolSegment
 	toolFib
+	toolCustom
 )
 
 const (
@@ -87,9 +88,14 @@ type Chart struct {
 	slots []indicatorSlot
 	// painted is each symbol's layout from the latest frame.
 	painted []Panes
-	// tool is Pan, H-Line, Segment, or Fib. Draw tools do not pan: the
-	// pointer places and moves overlays instead.
+	// tool is Pan, H-Line, Segment, Fib, or a host-registered kind.
+	// Draw tools do not pan: the pointer places and moves overlays instead.
 	tool int
+	// customKind is the registered overlay kind when tool is toolCustom.
+	customKind string
+	// hideHeader skips the symbol readouts View normally paints. The
+	// host reads them from Readout.
+	hideHeader bool
 	// magnet snaps new points, including the press that places a new
 	// H-Line, and endpoint drags on Segment and Fib. Dragging an
 	// existing H-Line body uses the raw pointer price.
@@ -377,21 +383,74 @@ func (a *Chart) active(s series) []Indicator {
 	return out
 }
 
-// subPanes reports which sub-pane toggles are on. MACD sits under volume.
-// KDJ sits under MACD when both are on, or under volume when MACD is off.
-func (a *Chart) subPanes() (macd, kdj bool) {
-	for _, slot := range a.slots {
-		if !slot.on {
-			continue
-		}
-		switch slot.spec.Name {
-		case "MACD":
-			macd = true
-		case "KDJ":
-			kdj = true
+// enabledSubs is the sub-pane indicators that are on, in toolbar order.
+// The instances come from the first symbol. Every symbol mounts the
+// same list, so the kinds match.
+func (a *Chart) enabledSubs() []Indicator {
+	if len(a.panes) == 0 {
+		return nil
+	}
+	var out []Indicator
+	for _, ind := range a.active(a.panes[0]) {
+		if ind != nil && ind.PaneKind() == PaneSub {
+			out = append(out, ind)
 		}
 	}
-	return macd, kdj
+	return out
+}
+
+// layoutPanes keeps the built-in MACD and KDJ geometry when those are
+// the only sub-panes. A host sub-pane is an extra band.
+func (a *Chart) layoutPanes(r ui.Rect, showTime bool) Panes {
+	subs := a.enabledSubs()
+	n := len(subs)
+	switch n {
+	case 0:
+		// SplitStack leaves a zero-height MACD rect. Keep it so this
+		// layout stays identical to the built-in no-sub-pane split.
+		return SplitStack(r, showTime, false, false)
+	case 1:
+		return assignSubRects(SplitStack(r, showTime, true, false), subs, n)
+	case 2:
+		return assignSubRects(SplitStack(r, showTime, true, true), subs, n)
+	default:
+		return assignSubRects(splitMany(r, showTime, n), subs, n)
+	}
+}
+
+func assignSubRects(p Panes, subs []Indicator, n int) Panes {
+	plots, axes := takeSubRects(p, n)
+	p.MACD, p.MACDAxis = ui.Rect{}, ui.Rect{}
+	p.KDJ, p.KDJAxis = ui.Rect{}, ui.Rect{}
+	p.Extra, p.ExtraAxis = nil, nil
+	for i, ind := range subs {
+		if i >= len(plots) || i >= len(axes) {
+			break
+		}
+		switch ind.(type) {
+		case *MACD:
+			p.MACD, p.MACDAxis = plots[i], axes[i]
+		case *KDJ:
+			p.KDJ, p.KDJAxis = plots[i], axes[i]
+		default:
+			p.Extra = append(p.Extra, plots[i])
+			p.ExtraAxis = append(p.ExtraAxis, axes[i])
+		}
+	}
+	return p
+}
+
+func takeSubRects(p Panes, n int) (plots, axes []ui.Rect) {
+	switch {
+	case n > 2:
+		return append([]ui.Rect(nil), p.Extra...), append([]ui.Rect(nil), p.ExtraAxis...)
+	case n == 2:
+		return []ui.Rect{p.MACD, p.KDJ}, []ui.Rect{p.MACDAxis, p.KDJAxis}
+	case n == 1:
+		return []ui.Rect{p.MACD}, []ui.Rect{p.MACDAxis}
+	default:
+		return nil, nil
+	}
 }
 
 // orderedSpecs keeps the toolbar in a stable order: the indicators that
@@ -469,13 +528,15 @@ func (a *Chart) View(c *ui.Context) {
 		if a.layout == layoutOverlay {
 			// One plot. Both headers stay, so the crosshair can show
 			// each symbol's own values at the shared bar index.
-			for i := range a.panes {
-				a.symbolHeader(c, i)
+			if !a.hideHeader {
+				for i := range a.panes {
+					a.symbolHeader(c, i)
+				}
 			}
 			slots = []chartSlot{{key: "compare", label: "Compare chart", pane: 0, showTime: true}}
 		}
 		for _, slot := range slots {
-			if a.layout != layoutOverlay {
+			if a.layout != layoutOverlay && !a.hideHeader {
 				a.symbolHeader(c, slot.pane)
 			}
 			chart := ui.Box(c.Key(slot.key)).Grow(1).WidthPercent(100).
@@ -604,64 +665,62 @@ func (a *Chart) pointerDown(pane int, ev ui.InputEvent) bool {
 	hit, hitOK := a.hit(pane, x, y)
 	switch a.tool {
 	case toolHLine:
-		if hitOK && a.overlayKind(pane, hit.ID) == OverlayHLine {
-			a.panes[pane].overlays.Select(hit.ID)
-			a.startDrag(pane, hit.ID, HitBody)
-			return true
-		}
-		o := a.panes[pane].overlays.Add(OverlayHLine, a.pointAt(pane, x, y))
-		a.startDrag(pane, o.ID, HitBody)
-		a.dragNewHLine = true
-		return true
+		return a.placeOne(pane, OverlayHLine, hit, hitOK, x, y)
 	case toolSegment:
-		if a.draftOn && a.draftPane == pane {
-			a.panes[pane].overlays.Add(OverlaySegment, a.draft, a.pointAt(pane, x, y))
-			a.draftOn = false
-			a.dragOn = false
-			return true
-		}
-		if hitOK && a.overlayKind(pane, hit.ID) == OverlaySegment && hit.Part >= 0 {
-			a.panes[pane].overlays.Select(hit.ID)
-			a.draftOn = false
-			a.startDrag(pane, hit.ID, hit.Part)
-			return true
-		}
-		if hitOK {
-			a.panes[pane].overlays.Select(hit.ID)
-			a.draftOn = false
-			return true
-		}
-		a.draft = a.pointAt(pane, x, y)
-		a.draftOn = true
-		a.draftPane = pane
-		a.dragOn = false
-		return true
+		return a.placeTwo(pane, OverlaySegment, hit, hitOK, x, y)
 	case toolFib:
-		if a.draftOn && a.draftPane == pane {
-			a.panes[pane].overlays.Add(OverlayFibonacci, a.draft, a.pointAt(pane, x, y))
-			a.draftOn = false
-			a.dragOn = false
-			return true
+		return a.placeTwo(pane, OverlayFibonacci, hit, hitOK, x, y)
+	case toolCustom:
+		spec, ok := overlayByKind(a.customKind)
+		if !ok {
+			return false
 		}
-		if hitOK && a.overlayKind(pane, hit.ID) == OverlayFibonacci && hit.Part >= 0 {
-			a.panes[pane].overlays.Select(hit.ID)
-			a.draftOn = false
-			a.startDrag(pane, hit.ID, hit.Part)
-			return true
+		if spec.Anchors <= 1 {
+			return a.placeOne(pane, a.customKind, hit, hitOK, x, y)
 		}
-		if hitOK {
-			a.panes[pane].overlays.Select(hit.ID)
-			a.draftOn = false
-			return true
-		}
-		a.draft = a.pointAt(pane, x, y)
-		a.draftOn = true
-		a.draftPane = pane
-		a.dragOn = false
-		return true
+		return a.placeTwo(pane, a.customKind, hit, hitOK, x, y)
 	default:
 		return false
 	}
+}
+
+func (a *Chart) placeOne(pane int, kind string, hit Hit, hitOK bool, x, y float64) bool {
+	if hitOK && a.overlayKind(pane, hit.ID) == kind {
+		a.panes[pane].overlays.Select(hit.ID)
+		a.startDrag(pane, hit.ID, HitBody)
+		return true
+	}
+	o := a.panes[pane].overlays.Add(kind, a.pointAt(pane, x, y))
+	a.startDrag(pane, o.ID, HitBody)
+	if kind == OverlayHLine {
+		a.dragNewHLine = true
+	}
+	return true
+}
+
+func (a *Chart) placeTwo(pane int, kind string, hit Hit, hitOK bool, x, y float64) bool {
+	if a.draftOn && a.draftPane == pane {
+		a.panes[pane].overlays.Add(kind, a.draft, a.pointAt(pane, x, y))
+		a.draftOn = false
+		a.dragOn = false
+		return true
+	}
+	if hitOK && a.overlayKind(pane, hit.ID) == kind && hit.Part >= 0 {
+		a.panes[pane].overlays.Select(hit.ID)
+		a.draftOn = false
+		a.startDrag(pane, hit.ID, hit.Part)
+		return true
+	}
+	if hitOK {
+		a.panes[pane].overlays.Select(hit.ID)
+		a.draftOn = false
+		return true
+	}
+	a.draft = a.pointAt(pane, x, y)
+	a.draftOn = true
+	a.draftPane = pane
+	a.dragOn = false
+	return true
 }
 
 func (a *Chart) startDrag(pane int, id string, part int) {
@@ -678,6 +737,10 @@ func (a *Chart) pointerMove(pane int, ev ui.InputEvent) bool {
 	}
 	x, y, _ := a.plotLocal(pane, ev)
 	if a.dragPart < 0 {
+		kind := a.overlayKind(pane, a.dragID)
+		if kind != OverlayHLine {
+			return a.panes[pane].overlays.SetPoint(a.dragID, 0, a.pointAt(pane, x, y))
+		}
 		if a.dragNewHLine {
 			return a.panes[pane].overlays.SetPrice(a.dragID, a.pointAt(pane, x, y).Price)
 		}
@@ -722,6 +785,9 @@ func (a *Chart) overlayKind(pane int, id string) string {
 func (a *Chart) draftRubberKind() string {
 	if a.tool == toolFib {
 		return OverlayFibonacci
+	}
+	if a.tool == toolCustom {
+		return a.customKind
 	}
 	return ""
 }
@@ -805,8 +871,7 @@ func (a *Chart) pointAt(pane int, x, y float64) Point {
 }
 
 func (a *Chart) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime bool) {
-	macdOn, kdjOn := a.subPanes()
-	panes := SplitStack(r, showTime, macdOn, kdjOn)
+	panes := a.layoutPanes(r, showTime)
 	if i >= len(a.painted) {
 		next := make([]Panes, i+1)
 		copy(next, a.painted)
@@ -842,8 +907,7 @@ func (a *Chart) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime
 // drawings belong to the primary symbol. The second symbol is the
 // close line painted by PaintCompare.
 func (a *Chart) paintCompare(p *ui.Painter, r ui.Rect, t *ui.Theme) {
-	macdOn, kdjOn := a.subPanes()
-	panes := SplitStack(r, true, macdOn, kdjOn)
+	panes := a.layoutPanes(r, true)
 	a.painted = []Panes{panes}
 	a.plotW = float64(panes.Price.W)
 	if !a.fitted && panes.Price.W > 1 {

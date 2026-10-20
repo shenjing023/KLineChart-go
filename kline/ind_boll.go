@@ -8,7 +8,7 @@ import (
 )
 
 func init() {
-	Register(Spec{
+	mustRegister(Spec{
 		Name: "BOLL",
 		Kind: PaneMain,
 		New:  func() Indicator { return NewBOLL(20, 2) },
@@ -46,6 +46,13 @@ func NewBOLL(period int, mult float64) *BOLL {
 
 func (b *BOLL) Name() string     { return "BOLL" }
 func (b *BOLL) PaneKind() string { return PaneMain }
+
+// Series and LineColors implement LinePlot.
+func (b *BOLL) Series() [][]float64 { return [][]float64{b.Mid, b.Up, b.Low} }
+
+func (b *BOLL) LineColors() []ui.Color {
+	return []ui.Color{b.MidColor, b.UpColor, b.LowColor}
+}
 
 // SetColors replaces the middle, upper, and lower lines.
 func (b *BOLL) SetColors(mid, up, low ui.Color) {

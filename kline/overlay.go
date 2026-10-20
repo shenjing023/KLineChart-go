@@ -1,6 +1,7 @@
 package kline
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -9,6 +10,61 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/chart"
 )
+
+// ErrDuplicateOverlay is returned when RegisterOverlay reuses a kind.
+var ErrDuplicateOverlay = errors.New("kline: duplicate overlay")
+
+// OverlayDrawFunc paints one overlay inside the price plot.
+type OverlayDrawFunc func(p *ui.Painter, plot ui.Rect, o Overlay, vp Viewport, scale chart.Linear, cs []Candle, style Style)
+
+// OverlayHitFunc reports the endpoint index under the pointer, or
+// HitBody when the span is hit. Coordinates are price-plot DIPs.
+type OverlayHitFunc func(o Overlay, x, y, plotW, plotH float64, vp Viewport, scale chart.Linear, cs []Candle) (part int, ok bool)
+
+// OverlayRubberFunc paints the preview between the first click and the pointer.
+type OverlayRubberFunc func(p *ui.Painter, plot ui.Rect, rubber Rubber, vp Viewport, scale chart.Linear, cs []Candle, style Style)
+
+// OverlaySpec is a drawing tool a host can register. Kind is the name
+// passed to SetTool. Anchors is 1 (place on click, drag to move) or 2
+// (two clicks, drag an endpoint). Built-in kinds are reserved.
+type OverlaySpec struct {
+	Kind    string
+	Anchors int
+	Draw    OverlayDrawFunc
+	Hit     OverlayHitFunc
+	Rubber  OverlayRubberFunc
+}
+
+var overlayReg []OverlaySpec
+
+// RegisterOverlay adds a drawing tool. A repeated or reserved kind
+// returns an error and does not replace the built-in tools.
+func RegisterOverlay(spec OverlaySpec) error {
+	if spec.Kind == "" || spec.Draw == nil || spec.Hit == nil {
+		return fmt.Errorf("kline: overlay %q needs a kind, draw, and hit", spec.Kind)
+	}
+	if spec.Anchors != 1 && spec.Anchors != 2 {
+		return fmt.Errorf("kline: overlay %q anchors must be 1 or 2", spec.Kind)
+	}
+	switch spec.Kind {
+	case OverlayHLine, OverlaySegment, OverlayFibonacci, ToolPan, ToolFib:
+		return fmt.Errorf("kline: overlay kind %q is reserved", spec.Kind)
+	}
+	if _, ok := overlayByKind(spec.Kind); ok {
+		return fmt.Errorf("%w: %s", ErrDuplicateOverlay, spec.Kind)
+	}
+	overlayReg = append(overlayReg, spec)
+	return nil
+}
+
+func overlayByKind(kind string) (OverlaySpec, bool) {
+	for _, spec := range overlayReg {
+		if spec.Kind == kind {
+			return spec, true
+		}
+	}
+	return OverlaySpec{}, false
+}
 
 const (
 	// OverlayHLine is a horizontal price line. It has one point; only
@@ -249,6 +305,9 @@ func HitOverlay(o Overlay, x, y, plotW, plotH float64, vp Viewport, scale chart.
 	case OverlayFibonacci:
 		return hitFibonacci(o, x, y, plotW, plotH, vp, scale, cs)
 	default:
+		if spec, ok := overlayByKind(o.Kind); ok && spec.Hit != nil {
+			return spec.Hit(o, x, y, plotW, plotH, vp, scale, cs)
+		}
 		return 0, false
 	}
 }
@@ -278,6 +337,10 @@ func DrawOverlays(p *ui.Painter, plot ui.Rect, items []Overlay, vp Viewport, sca
 				drawSegment(p, plot, o, vp, scale, cs, style)
 			case OverlayFibonacci:
 				drawFibonacci(p, plot, o, vp, scale, cs, style)
+			default:
+				if spec, ok := overlayByKind(o.Kind); ok && spec.Draw != nil {
+					spec.Draw(p, plot, o, vp, scale, cs, style)
+				}
 			}
 		}
 		if rubber != nil {

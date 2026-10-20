@@ -52,6 +52,9 @@ type ChartOptions struct {
 	// slice turns every indicator off. Unknown names are ignored.
 	Indicators []string
 	Magnet     MagnetMode
+	// HideHeader skips the per-symbol OHLCV line View normally paints.
+	// Readout still returns that text for a host that draws its own bar.
+	HideHeader bool
 }
 
 // NewChart loads the initial window and returns a chart the host can
@@ -106,6 +109,10 @@ func NewChart(opts ChartOptions) *Chart {
 		style:      opts.Style,
 		styleSet:   styleSpecified(opts.Style),
 		limitPct:   opts.Style.LimitPct,
+		hideHeader: opts.HideHeader,
+	}
+	if a.styleSet {
+		a.style = completeStyle(a.style)
 	}
 	_ = a.setPeriod(period)
 	return a
@@ -117,14 +124,30 @@ func styleSpecified(s Style) bool {
 	return s != Style{}
 }
 
-// SetStyle replaces the theme colors. HollowUp and LimitPct on s become
-// the live hollow switch and the limit threshold. A later SetHollow or
-// SetLimitPct updates those two without clearing the rest of the override.
+// SetStyle replaces the theme colors. A style that does not set Plot,
+// Grid, or Text is filled from DarkDefault, so setting only Up does not
+// clear the grid. HollowUp and LimitPct on s become the live hollow
+// switch and the limit threshold. A later SetHollow or SetLimitPct
+// updates those two without clearing the rest of the override.
 func (a *Chart) SetStyle(s Style) {
+	s = completeStyle(s)
 	a.style = s
 	a.styleSet = true
 	a.hollowUp = s.HollowUp
 	a.limitPct = s.LimitPct
+}
+
+// EditStyle starts from the theme palette, keeps the live hollow switch
+// and limit percent, runs edit, and installs the result. Changing one
+// color does not clear the rest of the palette. A nil theme is dark.
+func (a *Chart) EditStyle(theme *ui.Theme, edit func(*Style)) {
+	s := StyleFrom(theme)
+	s.HollowUp = a.hollowUp
+	s.LimitPct = a.limitPct
+	if edit != nil {
+		edit(&s)
+	}
+	a.SetStyle(s)
 }
 
 // SetLimitPct sets the close-to-close fraction that paints LimitUp and
@@ -206,6 +229,84 @@ func (a *Chart) Hollow() bool { return a.hollowUp }
 // value SetHollow writes.
 func (a *Chart) HollowEnabled() *bool { return &a.hollowUp }
 
+// SetIndicators turns on exactly the named indicators and turns the
+// others off. Nil and an empty slice turn every indicator off. An
+// unknown name returns ErrUnknownIndicator and changes nothing.
+// Volume is not an indicator and has no name here.
+func (a *Chart) SetIndicators(names []string) error {
+	want := make(map[string]bool, len(names))
+	for _, name := range names {
+		if a.IndicatorEnabled(name) == nil {
+			return fmt.Errorf("%w: %s", ErrUnknownIndicator, name)
+		}
+		want[name] = true
+	}
+	for i := range a.slots {
+		a.slots[i].on = want[a.slots[i].spec.Name]
+	}
+	return nil
+}
+
+// SyncIndicators reloads the registry. Specs registered after NewChart
+// show up here, off, until SetIndicator turns them on. Existing toggles
+// are kept. Each symbol recalculates.
+func (a *Chart) SyncIndicators() {
+	reg := orderedSpecs(Registry())
+	on := make(map[string]bool, len(a.slots))
+	for _, slot := range a.slots {
+		on[slot.spec.Name] = slot.on
+	}
+	slots := make([]indicatorSlot, len(reg))
+	for i, spec := range reg {
+		slots[i] = indicatorSlot{spec: spec, on: on[spec.Name]}
+	}
+	a.slots = slots
+	for i, s := range a.panes {
+		a.panes[i] = a.mount(s, s.candles, s.more)
+	}
+}
+
+// Crosshair is the bar under the pointer. ok is false when the pointer
+// is outside every plot. symbol is the pane under the pointer; in
+// overlay mode that is the primary symbol.
+func (a *Chart) Crosshair() (symbol string, index int, ok bool) {
+	if a.crossIndex < 0 {
+		return "", -1, false
+	}
+	if a.crossPane >= 0 && a.crossPane < len(a.panes) {
+		symbol = a.panes[a.crossPane].name
+	}
+	return symbol, a.crossIndex, true
+}
+
+// Bar returns the candle at index for symbol.
+func (a *Chart) Bar(symbol string, index int) (Candle, bool) {
+	for _, s := range a.panes {
+		if s.name != symbol || index < 0 || index >= len(s.candles) {
+			continue
+		}
+		return s.candles[index], true
+	}
+	return Candle{}, false
+}
+
+// Visible is the inclusive bar range currently on screen. last < first
+// means the plot has not been laid out yet.
+func (a *Chart) Visible() (first, last int) {
+	return a.vp.Visible(a.bars(), a.plotW)
+}
+
+// Readout is the header line for symbol, including the hovered bar and
+// the indicators that are on. It is empty for an unknown symbol.
+func (a *Chart) Readout(symbol string) string {
+	for i, s := range a.panes {
+		if s.name == symbol {
+			return a.readout(i)
+		}
+	}
+	return ""
+}
+
 // SetIndicator turns a registry indicator on or off for every symbol.
 // Volume is not an indicator and has no name here.
 func (a *Chart) SetIndicator(name string, on bool) error {
@@ -256,10 +357,12 @@ func (a *Chart) SetMagnet(mode MagnetMode) { a.magnet = mode }
 // Magnet is the current snap mode.
 func (a *Chart) Magnet() MagnetMode { return a.magnet }
 
-// SetTool selects pan, hline, segment, or fib. A change clears an
-// in-progress drawing. Unknown names return ErrUnknownTool.
+// SetTool selects pan, hline, segment, fib, or a kind passed to
+// RegisterOverlay. A change clears an in-progress drawing. Unknown
+// names return ErrUnknownTool and leave the current tool in place.
 func (a *Chart) SetTool(name string) error {
 	var tool int
+	custom := ""
 	switch name {
 	case ToolPan:
 		tool = toolPan
@@ -270,18 +373,25 @@ func (a *Chart) SetTool(name string) error {
 	case ToolFib:
 		tool = toolFib
 	default:
-		return fmt.Errorf("%w: %s", ErrUnknownTool, name)
+		if _, ok := overlayByKind(name); !ok {
+			return fmt.Errorf("%w: %s", ErrUnknownTool, name)
+		}
+		tool = toolCustom
+		custom = name
 	}
-	if a.tool == tool {
+	if a.tool == tool && a.customKind == custom {
 		return nil
 	}
 	a.tool = tool
+	a.customKind = custom
 	a.draftOn = false
 	a.dragOn = false
+	a.dragNewHLine = false
 	return nil
 }
 
-// Tool is ToolPan, ToolHLine, ToolSegment, or ToolFib.
+// Tool is ToolPan, ToolHLine, ToolSegment, ToolFib, or the custom
+// kind selected with SetTool.
 func (a *Chart) Tool() string {
 	switch a.tool {
 	case toolHLine:
@@ -290,6 +400,11 @@ func (a *Chart) Tool() string {
 		return ToolSegment
 	case toolFib:
 		return ToolFib
+	case toolCustom:
+		if a.customKind != "" {
+			return a.customKind
+		}
+		return ToolPan
 	default:
 		return ToolPan
 	}

@@ -125,3 +125,49 @@ func (s Style) CandleBodyColor(c Candle, prevClose, limitPct float64) ui.Color {
 	}
 	return s.Down
 }
+
+// completeStyle fills a partial palette from DarkDefault. A style that
+// sets Plot, Grid, or Text is used as given. A style that only overrides
+// a candle color would otherwise paint with zero grid and plot colors.
+func completeStyle(s Style) Style {
+	if s.Plot.A != 0 || s.Grid.A != 0 || s.Text.A != 0 {
+		return s
+	}
+	base := DarkDefault()
+	base.HollowUp = s.HollowUp
+	base.LimitPct = s.LimitPct
+	base.Up = pickColor(base.Up, s.Up)
+	base.Down = pickColor(base.Down, s.Down)
+	base.LimitUp = pickColor(base.LimitUp, s.LimitUp)
+	base.LimitDown = pickColor(base.LimitDown, s.LimitDown)
+	base.MA5 = pickColor(base.MA5, s.MA5)
+	base.MA20 = pickColor(base.MA20, s.MA20)
+	base.MACDDIF = pickColor(base.MACDDIF, s.MACDDIF)
+	base.MACDDEA = pickColor(base.MACDDEA, s.MACDDEA)
+	base.MACDZero = pickColor(base.MACDZero, s.MACDZero)
+	base.BOLLMid = pickColor(base.BOLLMid, s.BOLLMid)
+	base.BOLLUp = pickColor(base.BOLLUp, s.BOLLUp)
+	base.BOLLLow = pickColor(base.BOLLLow, s.BOLLLow)
+	base.KDJK = pickColor(base.KDJK, s.KDJK)
+	base.KDJD = pickColor(base.KDJD, s.KDJD)
+	base.KDJJ = pickColor(base.KDJJ, s.KDJJ)
+	base.Grid = pickColor(base.Grid, s.Grid)
+	base.Cross = pickColor(base.Cross, s.Cross)
+	base.Text = pickColor(base.Text, s.Text)
+	base.Muted = pickColor(base.Muted, s.Muted)
+	base.Plot = pickColor(base.Plot, s.Plot)
+	base.VolumeBg = pickColor(base.VolumeBg, s.VolumeBg)
+	base.LabelFill = pickColor(base.LabelFill, s.LabelFill)
+	base.LabelText = pickColor(base.LabelText, s.LabelText)
+	base.Overlay = pickColor(base.Overlay, s.Overlay)
+	base.OverlayHot = pickColor(base.OverlayHot, s.OverlayHot)
+	base.Compare = pickColor(base.Compare, s.Compare)
+	return base
+}
+
+func pickColor(base, override ui.Color) ui.Color {
+	if override.A == 0 {
+		return base
+	}
+	return override
+}
