@@ -93,7 +93,21 @@ type hostLine struct {
 	color  ui.Color
 }
 
-func (h *hostLine) Name() string     { return "HOST" }
+func (h *hostLine) Name() string { return "HOST" }
+
+// namedLine is a hostLine whose Name matches a registered spec. The
+// registry tests build every spec and require that name.
+type namedLine struct {
+	hostLine
+	name string
+}
+
+func (n *namedLine) Name() string {
+	if n.name == "" {
+		return n.hostLine.Name()
+	}
+	return n.name
+}
 func (h *hostLine) PaneKind() string { return kline.PaneMain }
 func (h *hostLine) Calc(cs []kline.Candle) {
 	h.values = make([]float64, len(cs))
@@ -385,7 +399,9 @@ func TestSyncIndicatorsPicksUpLateRegistration(t *testing.T) {
 	err := kline.Register(kline.Spec{
 		Name: "HOSTLATE",
 		Kind: kline.PaneMain,
-		New:  func() kline.Indicator { return &hostLine{color: ui.RGB(255, 140, 0)} },
+		New: func() kline.Indicator {
+			return &namedLine{hostLine: hostLine{color: ui.RGB(255, 140, 0)}, name: "HOSTLATE"}
+		},
 	})
 	if err != nil && !errors.Is(err, kline.ErrDuplicateIndicator) {
 		t.Fatal(err)

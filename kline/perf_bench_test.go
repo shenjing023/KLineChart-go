@@ -94,34 +94,60 @@ func benchIndicators(cs []Candle) []Indicator {
 	return []Indicator{ma, boll, macd, kdj}
 }
 
+// benchBarCounts is the matrix of series lengths. Generate's seed fixes
+// the walk, so a given length is the same bars on every run.
+var benchBarCounts = []struct {
+	name string
+	n    int
+}{
+	{"1k", 1000},
+	{"8k", 8000},
+	{"20k", 20000},
+}
+
+// benchIndicatorNames matches the indicators the frame benches paint.
+// Overlay skips KDJ, as the 8k overlay pan bench did.
+func benchIndicatorNames(layout string) []string {
+	if layout == LayoutOverlay {
+		return []string{"MA", "MACD", "BOLL"}
+	}
+	return []string{"MA", "MACD", "BOLL", "KDJ"}
+}
+
 // BenchmarkCompareScales is the overlay price-scale work done on pan and
 // zoom. It stays off the UI so allocation changes in the scale itself
 // show up directly.
 func BenchmarkCompareScales(b *testing.B) {
-	const n = 8000
-	primary := benchSeries(n, 1)
-	compare := benchSeries(n, 2)
-	inds := benchIndicators(primary)
-	vp := Viewport{BarWidth: DefaultBarWidth, Offset: float64(n) - 140}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		CompareScales(primary, compare, inds, vp, 960)
+	for _, size := range benchBarCounts {
+		b.Run(size.name, func(b *testing.B) {
+			primary := benchSeries(size.n, 1)
+			compare := benchSeries(size.n, 2)
+			inds := benchIndicators(primary)
+			vp := Viewport{BarWidth: DefaultBarWidth, Offset: float64(size.n) - 140}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				CompareScales(primary, compare, inds, vp, 960)
+			}
+		})
 	}
 }
 
 // BenchmarkIndicatorCalc is a data-change cost, not a pan cost. Indicators
 // keep their series until candles are replaced.
 func BenchmarkIndicatorCalc(b *testing.B) {
-	const n = 8000
-	cs := benchSeries(n, 1)
-	inds := benchIndicators(cs)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for _, ind := range inds {
-			ind.Calc(cs)
-		}
+	for _, size := range benchBarCounts {
+		b.Run(size.name, func(b *testing.B) {
+			cs := benchSeries(size.n, 1)
+			inds := benchIndicators(cs)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				for _, ind := range inds {
+					ind.Calc(cs)
+				}
+			}
+		})
 	}
 }
 
@@ -137,13 +163,14 @@ func mountBenchBars(b *testing.B, c *Chart, n int) {
 	c.plotW = 900
 }
 
-// BenchmarkPanFrames paints a chart while the viewport moves. The series
-// is larger than the plot, so a pan does not walk every bar.
-func BenchmarkPanFrames(b *testing.B) {
-	const n = 8000
+// benchChart mounts n bars and paints one frame at 960×720 so plotW is
+// the width later gestures use.
+func benchChart(b *testing.B, n int, layout string) (*Chart, *ui.Tester) {
+	b.Helper()
 	c := NewChart(ChartOptions{
 		Symbols:    []string{"ALPHA", "BETA"},
-		Indicators: []string{"MA", "MACD", "BOLL", "KDJ"},
+		Layout:     layout,
+		Indicators: benchIndicatorNames(layout),
 	})
 	mountBenchBars(b, c, n)
 	tt := ui.NewTester(c.View, 960, 720)
@@ -151,29 +178,164 @@ func BenchmarkPanFrames(b *testing.B) {
 	if c.plotW < 2 || c.Bars() != n {
 		b.Fatalf("plot %v bars %d", c.plotW, c.Bars())
 	}
+	return c, tt
+}
+
+// benchPanFrames paints one frame per pan. Direction alternates by 12 DIPs
+// so the window stays on the same bars instead of walking into the clamp.
+// A pan does not walk bars outside the plot.
+func benchPanFrames(b *testing.B, n int, layout string) {
+	c, tt := benchChart(b, n, layout)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		c.vp.Pan(12, c.plotW, c.Bars())
+		dx := 12.0
+		if i%2 == 1 {
+			dx = -12
+		}
+		c.vp.Pan(dx, c.plotW, c.Bars())
 		tt.Frame()
+	}
+}
+
+// BenchmarkPanFrames is the stack layout: two price plots, volume, and
+// the open sub-panes.
+func BenchmarkPanFrames(b *testing.B) {
+	for _, size := range benchBarCounts {
+		b.Run("stack_"+size.name, func(b *testing.B) {
+			benchPanFrames(b, size.n, LayoutStack)
+		})
 	}
 }
 
 // BenchmarkOverlayPanFrames is the same pan on the indexed two-symbol plot.
 func BenchmarkOverlayPanFrames(b *testing.B) {
-	const n = 8000
+	for _, size := range benchBarCounts {
+		b.Run(size.name, func(b *testing.B) {
+			benchPanFrames(b, size.n, LayoutOverlay)
+		})
+	}
+}
+
+// BenchmarkZoomFrames changes bar width by one wheel notch and paints.
+// The notch alternates so width stays inside the 3–28 DIP clamp.
+func BenchmarkZoomFrames(b *testing.B) {
+	for _, layout := range []struct {
+		name, value string
+	}{
+		{"stack", LayoutStack},
+		{"overlay", LayoutOverlay},
+	} {
+		for _, size := range benchBarCounts {
+			b.Run(layout.name+"_"+size.name, func(b *testing.B) {
+				c, tt := benchChart(b, size.n, layout.value)
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					dy := 40.0
+					if i%2 == 1 {
+						dy = -40
+					}
+					c.vp.Zoom(dy, c.plotW/2, c.plotW, c.Bars())
+					tt.Frame()
+				}
+			})
+		}
+	}
+}
+
+// BenchmarkCrosshairFrames moves the pointer between two bars. Move
+// settles the frame the pointer event paints and the follow-up frame
+// the crosshair requests when the index changes.
+func BenchmarkCrosshairFrames(b *testing.B) {
+	for _, layout := range []struct {
+		name, value, label string
+	}{
+		{"stack", LayoutStack, "ALPHA chart"},
+		{"overlay", LayoutOverlay, "Compare chart"},
+	} {
+		for _, size := range benchBarCounts {
+			b.Run(layout.name+"_"+size.name, func(b *testing.B) {
+				_, tt := benchChart(b, size.n, layout.value)
+				box, ok := tt.Find(layout.label)
+				if !ok || box.W < 240 {
+					b.Fatalf("plot %q: %+v", layout.label, box)
+				}
+				y := box.Y + 40
+				x0, x1 := box.X+80, box.X+200
+				tt.Move(x0, y)
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					x := x1
+					if i%2 == 1 {
+						x = x0
+					}
+					tt.Move(x, y)
+				}
+			})
+		}
+	}
+}
+
+// BenchmarkLivePushFrames revises ALPHA's last bar through StubLiveSource
+// and paints one frame. The open time stays the same, so the series length
+// does not grow during the run.
+func BenchmarkLivePushFrames(b *testing.B) {
+	for _, layout := range []struct {
+		name, value string
+	}{
+		{"stack", LayoutStack},
+		{"overlay", LayoutOverlay},
+	} {
+		for _, size := range benchBarCounts {
+			b.Run(layout.name+"_"+size.name, func(b *testing.B) {
+				benchLivePushFrames(b, size.n, layout.value)
+			})
+		}
+	}
+}
+
+func benchLivePushFrames(b *testing.B, n int, layout string) {
+	period := Period{Span: 1, Unit: UnitHour}
+	src := &StubLiveSource{}
+	if err := src.SetBars("ALPHA", period, benchSeries(n, 1)); err != nil {
+		b.Fatal(err)
+	}
+	if err := src.SetBars("BETA", period, benchSeries(n, 2)); err != nil {
+		b.Fatal(err)
+	}
 	c := NewChart(ChartOptions{
+		Source:     src,
 		Symbols:    []string{"ALPHA", "BETA"},
-		Layout:     LayoutOverlay,
-		Indicators: []string{"MA", "MACD", "BOLL"},
+		Period:     period,
+		Layout:     layout,
+		Indicators: benchIndicatorNames(layout),
 	})
 	mountBenchBars(b, c, n)
 	tt := ui.NewTester(c.View, 960, 720)
 	tt.Frame()
+	if c.plotW < 2 || c.Bars() != n || len(c.panes[0].candles) == 0 {
+		b.Fatalf("plot %v bars %d", c.plotW, c.Bars())
+	}
+	revised := c.panes[0].candles[len(c.panes[0].candles)-1]
+	revised.Close = revised.Open + 0.35
+	if revised.High < revised.Close {
+		revised.High = revised.Close
+	}
+	if revised.Low > revised.Close {
+		revised.Low = revised.Close
+	}
+	src.Push("ALPHA", period, revised)
+	tt.Frame()
+	last := c.panes[0].candles[len(c.panes[0].candles)-1]
+	if c.Bars() != n || last.Close != revised.Close {
+		b.Fatalf("live revise bars %d close %v, want %d and %v", c.Bars(), last.Close, n, revised.Close)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		c.vp.Pan(12, c.plotW, c.Bars())
+		src.Push("ALPHA", period, revised)
 		tt.Frame()
 	}
 }
