@@ -59,6 +59,12 @@ type SubPlot interface {
 // name that is already in the list.
 var ErrDuplicateIndicator = errors.New("kline: duplicate indicator")
 
+// ErrIndicatorKind is returned when Spec.Kind is not the PaneKind of
+// the indicator New returns. Layout follows the instance, so a spec
+// registered as a sub-pane whose constructor returns a main-pane
+// indicator would draw on the wrong plot. Register refuses that.
+var ErrIndicatorKind = errors.New("kline: indicator kind does not match its constructor")
+
 // Spec is one entry in the indicator list. New returns a fresh
 // indicator for one symbol.
 type Spec struct {
@@ -70,16 +76,24 @@ type Spec struct {
 var registry []Spec
 
 // Register appends an indicator. Name, Kind, and New are required.
-// Kind is PaneMain or PaneSub. A repeated name returns
-// ErrDuplicateIndicator and leaves the list unchanged. Call it from
-// an init function, before NewChart. A chart that already exists
-// picks the spec up from SyncIndicators.
+// Kind is PaneMain or PaneSub, and New().PaneKind must return that
+// same kind. A mismatch returns ErrIndicatorKind and does not
+// register. A repeated name returns ErrDuplicateIndicator and leaves
+// the list unchanged. Call it from an init function, before NewChart.
+// A chart that already exists picks the spec up from SyncIndicators.
 func Register(spec Spec) error {
 	if spec.Name == "" || spec.New == nil {
 		return fmt.Errorf("kline: indicator %q needs a name and constructor", spec.Name)
 	}
 	if spec.Kind != PaneMain && spec.Kind != PaneSub {
 		return fmt.Errorf("kline: indicator %q kind %q", spec.Name, spec.Kind)
+	}
+	ind := spec.New()
+	if ind == nil {
+		return fmt.Errorf("kline: indicator %q constructor returned nil", spec.Name)
+	}
+	if got := ind.PaneKind(); got != spec.Kind {
+		return fmt.Errorf("%w: %s registered %s, constructor returned %s", ErrIndicatorKind, spec.Name, spec.Kind, got)
 	}
 	for _, have := range registry {
 		if have.Name == spec.Name {

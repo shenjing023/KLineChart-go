@@ -165,7 +165,7 @@ func init() {
 }
 ```
 
-`Register` returns `ErrDuplicateIndicator` when the name is already in the list. MACD and KDJ keep their existing rects. A host sub-pane is an extra band and does not move those two.
+`Register` returns `ErrDuplicateIndicator` when the name is already in the list. `New().PaneKind` must equal `Spec.Kind`; a mismatch returns `ErrIndicatorKind` and is not registered. Layout uses the instance kind, which is then the same value the spec declared. MACD and KDJ keep their existing rects. A host sub-pane is an extra band and does not move those two.
 
 ### Overlay
 
