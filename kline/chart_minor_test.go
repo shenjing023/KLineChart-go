@@ -112,6 +112,37 @@ func TestClickAfterIndicatorChangeUsesNewPriceRect(t *testing.T) {
 	}
 }
 
+type kindLog struct {
+	DataSource
+	kinds []string
+}
+
+func (k *kindLog) GetBars(req BarRequest) ([]Candle, bool, error) {
+	k.kinds = append(k.kinds, req.Kind)
+	return k.DataSource.GetBars(req)
+}
+
+func TestChartNeverRequestsBackward(t *testing.T) {
+	src := &kindLog{DataSource: &SyntheticSource{}}
+	a := NewChart(ChartOptions{Source: src, Symbols: []string{"ALPHA", "BETA"}})
+	tt := ui.NewTester(a.View, 800, 600)
+	a.vp.Offset = 1
+	tt.Frame()
+	sawForward := false
+	for _, kind := range src.kinds {
+		switch kind {
+		case KindInit:
+		case KindForward:
+			sawForward = true
+		default:
+			t.Fatalf("chart sent kind %q", kind)
+		}
+	}
+	if !sawForward {
+		t.Fatal("panning to the left edge did not request forward bars")
+	}
+}
+
 func TestEscapeAndRightClickCancelDraft(t *testing.T) {
 	a := NewChart(ChartOptions{Symbols: []string{"ALPHA"}, Indicators: []string{}})
 	tt := ui.NewTester(a.View, 900, 640)

@@ -13,7 +13,9 @@ const (
 	UnitDay    = "day"
 
 	// KindInit loads the latest window. KindForward loads bars strictly
-	// before Anchor. KindBackward is reserved; SyntheticSource rejects it.
+	// before Anchor. KindBackward is reserved: the chart never sends it,
+	// and SyntheticSource and StubLiveSource reject it. A host source
+	// should reject it too, with ErrUnsupportedKind.
 	KindInit     = "init"
 	KindForward  = "forward"
 	KindBackward = "backward"
@@ -81,10 +83,14 @@ func (p Period) String() string {
 // BarRequest asks a DataSource for one window of bars.
 // Anchor is the open time of the earliest loaded bar for forward, and of
 // the latest loaded bar for backward. Init ignores a zero Anchor.
+// Kind is KindInit or KindForward. The chart does not send KindBackward;
+// that value is reserved so a host can tell a future request apart from
+// a typo. It is a string so an older source can still switch on it.
 type BarRequest struct {
 	Symbol string
 	Period Period
-	Kind   string
+	// Kind is KindInit or KindForward. KindBackward is never sent.
+	Kind string
 	Anchor time.Time
 	Limit  int
 }

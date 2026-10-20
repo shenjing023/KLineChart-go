@@ -200,7 +200,7 @@ _ = chart.SetTool("mark")
 
 ### Data source
 
-History is `DataSource.GetBars`, in ascending open time. A feed that can push also implements `LiveSource`. The chart subscribes when `SetSource` or `SetPeriod` sees that interface, and ignores a plain `DataSource`. Older bars are prepended only when every pane that already has bars accepts the same count; otherwise the shared offset stays put and each pane keeps the `more` flag the source reported. A forward `GetBars` error leaves the panes unchanged and is not retried on the next frame. `SyntheticSource` is not a live feed. `StubLiveSource` is the in-memory double. This repo does not open a connection. `kline/host_embed_test.go` has a complete feed: init, forward, subscribe, and one pushed bar.
+History is `DataSource.GetBars`, in ascending open time. The chart sends `KindInit` and `KindForward` only. `KindBackward` is reserved and is never requested. A feed that can push also implements `LiveSource`. The chart subscribes when `SetSource` or `SetPeriod` sees that interface, and ignores a plain `DataSource`. Older bars are prepended only when every pane that already has bars accepts the same count; otherwise the shared offset stays put and each pane keeps the `more` flag the source reported. A forward `GetBars` error leaves the panes unchanged and is not retried on the next frame. `SyntheticSource` is not a live feed. `StubLiveSource` is the in-memory double. This repo does not open a connection. `kline/host_embed_test.go` has a complete feed: init, forward, subscribe, and one pushed bar.
 
 Every symbol shares one bar index: bar `i` is the same open time on each pane. That is what lets one viewport, one crosshair, and the overlay base work across symbols, so the chart enforces it wherever bars arrive:
 
@@ -254,7 +254,7 @@ Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot.
 能做：
 
 - 通过 `kline.DataSource.GetBars` 取数。当前只有 `SyntheticSource`（本地合成，不访问网络）。
-- `init` 取最新一段（默认 600 根）。`forward` 取锚点之前的更早 K 线，时间不重叠。`backward` 只留在接口里，合成源返回错误。
+- `init` 取最新一段（默认 600 根）。`forward` 取锚点之前的更早 K 线，时间不重叠。`backward` 只留在接口里，图表不会发出这个请求，合成源返回错误。
 - 工具条 `1h` / `4h` / `1d`。切换时 ALPHA 和 BETA 一起重新加载，再 `FitRight`。
 - 共享 `Offset < 5` 且还有更早数据时，prepend 一批并加上同样的根数，画面不跳。加载过程中不重复请求。
 
