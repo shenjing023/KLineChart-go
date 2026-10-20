@@ -128,7 +128,7 @@ type LiveSource interface {
 - [x] 两点定高低；画标准回撤水平线：0 / 0.236 / 0.382 / 0.5 / 0.618 / 0.786 / 1（可配置 ratios 常量）。
 - [x] 工具 **Fib**：两击完成；选中可拖端点；Delete/右键删除同现有。
 - [x] Hit：命中任一条水平线或端点。
-- [ ] 截图 + PR：`P7: magnet snaps + fibonacci overlay`。
+- [x] 截图 + PR：`P7: magnet snaps + fibonacci overlay`。
 
 **P7 不做：** 全套射线/平行通道/笔刷；跨 pane 共享同一 overlay。
 
