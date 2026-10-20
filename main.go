@@ -96,6 +96,9 @@ type app struct {
 	tool int
 	// layout is Stack or Overlay. Stack is the zero value.
 	layout int
+	// hollowUp draws rising candle bodies as outlines. Falling bodies
+	// stay filled. Off, both are filled.
+	hollowUp bool
 	// draft is the first point of a segment that does not have its
 	// second point yet. draftPane is the pane it belongs to.
 	draftOn   bool
@@ -335,7 +338,7 @@ func (a *app) view(c *ui.Context) {
 	// read the series, so a prepend and its offset shift land together.
 	a.ensureForward()
 	t := c.Theme()
-	style := kline.StyleFrom(t)
+	style := a.chartStyle(t)
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
 		ui.Row(c).Padding(8, 14, 0, 14).Gap(12).AlignItems(ui.Center).Wrap().Children(func() {
 			ui.Text(c, "K-line").Bold().FontSize(16)
@@ -352,6 +355,7 @@ func (a *app) view(c *ui.Context) {
 			for i := range a.slots {
 				ui.Toggle(c, &a.slots[i].on, a.slots[i].spec.Name)
 			}
+			ui.Toggle(c, &a.hollowUp, "Hollow")
 			for _, choice := range periodChoices {
 				var b ui.Element
 				if a.period == choice.period {
@@ -505,7 +509,7 @@ func (a *app) symbolHeader(c *ui.Context, i int) {
 	ui.Row(c).Padding(2, 14, 2, 14).Gap(10).AlignItems(ui.Center).Children(func() {
 		name := ui.Text(c, s.name).Bold().FontSize(13)
 		if a.layout == layoutOverlay && i == 1 {
-			name.TextColor(kline.StyleFrom(t).Compare)
+			name.TextColor(a.chartStyle(t).Compare)
 		}
 		ui.Text(c, a.readout(i)).Font("monospace").FontSize(12).NoWrap().Grow(1)
 	})
@@ -760,7 +764,7 @@ func (a *app) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime b
 		ptr = kline.Pointer{On: true, X: r.X + a.hoverX, Y: r.Y + a.hoverY}
 	}
 	s := a.panes[i]
-	style := kline.StyleFrom(t)
+	style := a.chartStyle(t)
 	active := a.active(s)
 	kline.Paint(p, panes, s.candles, active, a.vp, ptr, a.crossIndex, style)
 	var rubber *kline.Rubber
@@ -792,7 +796,7 @@ func (a *app) paintCompare(p *ui.Painter, r ui.Rect, t *ui.Theme) {
 	if len(a.panes) > 1 {
 		compare = a.panes[1].candles
 	}
-	style := kline.StyleFrom(t)
+	style := a.chartStyle(t)
 	active := a.active(primary)
 	indexed := kline.PaintCompare(p, panes, primary.candles, compare, active, a.vp, ptr, a.crossIndex, style)
 	var rubber *kline.Rubber
@@ -804,6 +808,14 @@ func (a *app) paintCompare(p *ui.Painter, r ui.Rect, t *ui.Theme) {
 		_, scale, _ = kline.CompareScales(primary.candles, compare, active, a.vp, a.plotW)
 	}
 	kline.DrawOverlays(p, panes.Price, primary.overlays.Items(), a.vp, scale, primary.candles, style, rubber)
+}
+
+// chartStyle is the window theme's chart colors, with the hollow-candle
+// switch applied. Paint paths take this instead of literal colors.
+func (a *app) chartStyle(t *ui.Theme) kline.Style {
+	s := kline.StyleFrom(t)
+	s.HollowUp = a.hollowUp
+	return s
 }
 
 func (a *app) readout(i int) string {

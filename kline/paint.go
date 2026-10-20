@@ -13,58 +13,6 @@ const (
 	bodyFrac = 0.68
 )
 
-// Style is the chart's colors. Up is a rising close (close >= open).
-type Style struct {
-	Up, Down       ui.Color
-	MA5, MA20      ui.Color
-	Grid, Cross    ui.Color
-	Text, Muted    ui.Color
-	Plot, VolumeBg ui.Color
-	LabelFill      ui.Color
-	LabelText      ui.Color
-	// Overlay is a drawing that is not selected. OverlayHot is the
-	// selected one, including its handles.
-	Overlay, OverlayHot ui.Color
-	// Compare is the second series in overlay mode, drawn as a close
-	// line on the indexed price plot.
-	Compare ui.Color
-}
-
-// StyleFrom builds colors that stay readable on the window theme.
-// Rising bars are green and falling bars are red, matching KLineChart's
-// default, on both light and dark themes.
-func StyleFrom(t *ui.Theme) Style {
-	if t == nil {
-		t = ui.DarkTheme()
-	}
-	fill, labelText := t.Inverse, t.InverseText
-	if fill == (ui.Color{}) {
-		fill = t.Text
-	}
-	if labelText == (ui.Color{}) {
-		labelText = t.Background
-	}
-	return Style{
-		Up:         ui.RGB(38, 166, 154),
-		Down:       ui.RGB(239, 83, 80),
-		MA5:        t.Accent,
-		MA20:       t.Warning,
-		Grid:       t.Border,
-		Cross:      t.TextMuted,
-		Text:       t.Text,
-		Muted:      t.TextMuted,
-		Plot:       t.Background,
-		VolumeBg:   t.Surface,
-		LabelFill:  fill,
-		LabelText:  labelText,
-		Overlay:    ui.RGB(217, 70, 239),
-		OverlayHot: ui.RGB(255, 214, 0),
-		// Pink, away from the candle green and red, the blue MA accent,
-		// and the magenta drawing color.
-		Compare: ui.RGB(219, 39, 119),
-	}
-}
-
 // MainScale is the price plot's Y domain: the visible bars, widened by
 // any main-pane indicator lines, then rounded to tick marks. Hit testing
 // and overlay drawing use this so a price maps to the pixel Paint used.
@@ -122,7 +70,7 @@ func Paint(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewpor
 		case PaneSub:
 			if sub == nil && panes.MACD.H > 1 {
 				if macd, ok := ind.(*MACD); ok {
-					macd.SetColors(style.MA5, style.MA20, style.Up, style.Down, style.Grid)
+					macd.SetColors(style.MACDDIF, style.MACDDEA, style.Up, style.Down, style.MACDZero)
 				}
 				sub = ind
 			}
@@ -268,7 +216,14 @@ func drawCandles(p *ui.Painter, plot ui.Rect, cs []Candle, vp Viewport, yScale c
 			h = 1
 			top = (yOpen+yClose)/2 - 0.5
 		}
-		p.Fill(ui.Rect{X: cx - bodyW/2, Y: top, W: bodyW, H: h}, color, 0)
+		body := ui.Rect{X: cx - bodyW/2, Y: top, W: bodyW, H: h}
+		// A-share hollow: a rising body is an outline, a falling body stays
+		// filled. The wick is already drawn through the body.
+		if up && style.HollowUp {
+			p.Stroke(body, color, 0, 1)
+			continue
+		}
+		p.Fill(body, color, 0)
 	}
 }
 

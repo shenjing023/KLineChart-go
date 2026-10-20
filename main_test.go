@@ -818,6 +818,49 @@ func TestOverlayHLineStoresPrimaryPrice(t *testing.T) {
 	}
 }
 
+func TestHollowToggleThinsRisingBodies(t *testing.T) {
+	a := newApp()
+	// Wide bars make the hollow interior larger than the outline, which
+	// is the contrast the toggle is for. The default width is only 8 DIPs.
+	a.vp.BarWidth = kline.MaxBarWidth
+	tt := ui.NewTester(a.view, 1100, 1000)
+	if !tt.HasText("Hollow") {
+		t.Fatalf("toolbar texts %q", tt.Texts())
+	}
+	if a.hollowUp {
+		t.Fatal("hollow rising candles start off")
+	}
+	up := ui.RGB(38, 166, 154)
+	down := ui.RGB(239, 83, 80)
+	price := a.painted[0].Price
+	solidUp := countNear(tt.Image(), price, up)
+	solidDown := countNear(tt.Image(), price, down)
+	if err := tt.Click("Hollow"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.hollowUp {
+		t.Fatal("Hollow toggle did not stick")
+	}
+	hollowUp := countNear(tt.Image(), price, up)
+	hollowDown := countNear(tt.Image(), price, down)
+	if solidUp < 80 || solidDown < 40 {
+		t.Fatalf("solid candle pixels up %d down %d", solidUp, solidDown)
+	}
+	if hollowUp*2 >= solidUp {
+		t.Fatalf("hollow rising pixels %d, solid %d", hollowUp, solidUp)
+	}
+	// Falling bodies stay filled, so the red count stays in the same range.
+	if hollowDown*2 < solidDown || solidDown*2 < hollowDown {
+		t.Fatalf("falling pixels changed hollow %d solid %d", hollowDown, solidDown)
+	}
+	if err := tt.Click("Hollow"); err != nil {
+		t.Fatal(err)
+	}
+	if a.hollowUp {
+		t.Fatal("second click should fill rising bodies again")
+	}
+}
+
 func TestRenderFrames(t *testing.T) {
 	dir := os.Getenv("KLINE_FRAMES")
 	if dir == "" {
@@ -884,6 +927,38 @@ func TestRenderFrames(t *testing.T) {
 	writePNG(t, dir+"/p3-overlay-crosshair.png", ovt.Image())
 	if ov.crossIndex < 0 || !strings.Contains(ov.readout(0), "Hover") || !strings.Contains(ov.readout(1), "Hover") {
 		t.Fatalf("overlay crosshair readouts %q %q", ov.readout(0), ov.readout(1))
+	}
+
+	// Wide bars make a hollow body readable next to a filled one.
+	p4 := newApp()
+	p4.vp.BarWidth = 16
+	p4t := ui.NewTester(p4.view, 1100, 1000)
+	p4t.SetDark(false)
+	p4t.Move(10, 10)
+	writePNG(t, dir+"/p4-light.png", p4t.Image())
+	p4t.SetDark(true)
+	writePNG(t, dir+"/p4-dark.png", p4t.Image())
+	if err := p4t.Click("Hollow"); err != nil {
+		t.Fatal(err)
+	}
+	writePNG(t, dir+"/p4-dark-hollow.png", p4t.Image())
+	p4t.SetDark(false)
+	writePNG(t, dir+"/p4-light-hollow.png", p4t.Image())
+	if !p4.hollowUp {
+		t.Fatal("hollow frame was painted solid")
+	}
+}
+
+func TestThemeChangesPlotBackground(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 800)
+	tt.SetDark(false)
+	price := a.painted[0].Price
+	light := countNear(tt.Image(), price, kline.LightDefault().Plot)
+	tt.SetDark(true)
+	dark := countNear(tt.Image(), price, kline.DarkDefault().Plot)
+	if light < 200 || dark < 200 {
+		t.Fatalf("plot pixels light %d dark %d in %+v", light, dark, price)
 	}
 }
 

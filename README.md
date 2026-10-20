@@ -11,10 +11,11 @@ It is a demo of the interaction in [KLineChart](https://github.com/klinecharts/K
 - Overlay keeps one volume strip and one MACD sub-pane, both for ALPHA. BETA's volume and MACD are not drawn. BETA's header is the bar's OHLCV and index, not BETA's MA or MACD.
 - The panes share one horizontal viewport in both layouts. Dragging or scrolling pans and zooms that viewport, so the same bar indexes stay aligned.
 - One crosshair. In Stack, moving the pointer in either pane selects one bar index and draws that vertical line through that symbol's price plot, volume strip, and MACD sub-pane, and through the other symbol as well. The symbol under the pointer also draws the horizontal line. Each header shows that symbol's own OHLCV, and the MA and MACD values when those indicators are on. The time axis is drawn once, under the lower symbol. In Overlay the same index drives both headers, and the vertical line runs through the one price plot, the ALPHA volume strip, and the ALPHA MACD sub-pane.
-- Candles with wicks. Green when close is at or above open, red otherwise (KLineChart's default).
+- Candles with wicks. Green when close is at or above open, red otherwise (KLineChart's default). **Hollow** draws a rising body as an outline and keeps a falling body filled. Off, both bodies are filled. Volume bars and the MACD histogram stay filled either way.
 - MA5 and MA20 on each price plot. The **MA** toggle turns both lines off together. It starts on.
 - MACD(12, 26, 9) in a sub-pane under each volume strip: DIF, DEA, and a histogram of `2*(DIF-DEA)`, on that pane's own Y scale. The **MACD** toggle starts on. Turning it off removes the sub-pane and the MACD readout.
 - Volume is the built-in VOL strip between price and MACD. It is not a separate indicator and has no toggle.
+- Colors come from `kline.Style`, built from the window theme by `StyleFrom`. Light and dark each get their own plot, grid, crosshair, and MA / MACD colors. Rising stays green and falling stays red on both. `DarkDefault` and `LightDefault` are those two styles.
 - In Stack, the price scale of each pane follows that symbol's visible bars. In Overlay, the one price scale follows the indexed range of both series, including ALPHA's moving averages when MA is on.
 - **Reset view** returns both panes to the latest bars at the default width.
 - **1h / 4h / 1d** reload both panes from the data source and fit the latest bars. The default **1h** series is the same walk as before (ALPHA seed 42, BETA seed 99).
@@ -59,7 +60,7 @@ Native UI draws with Direct3D 11 on Windows, Metal on macOS, and OpenGL on Linux
 ## Layout
 
 - `main.go` — window, one readout per symbol, the shared viewport and crosshair index, and the period, layout, and indicator toggles.
-- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, `DataSource` (`Period`, `BarRequest`, `SyntheticSource`), the indicator list (`MA`, `MACD`), overlays (`Layer`, horizontal price line, segment), and overlay compare (`NormalizeClose`, `IndexBase`, `PaintCompare`). Volume is drawn by `Paint`, not by an indicator. Each symbol keeps its own `Layer`.
+- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, `Style` (`style.go`: `StyleFrom`, `DarkDefault`, `LightDefault`), `DataSource` (`Period`, `BarRequest`, `SyntheticSource`), the indicator list (`MA`, `MACD`), overlays (`Layer`, horizontal price line, segment), and overlay compare (`NormalizeClose`, `IndexBase`, `PaintCompare`). Volume is drawn by `Paint`, not by an indicator. Each symbol keeps its own `Layer`.
 
 Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot. Dragging right decreases `offset` for all panes. The wheel keeps the bar under the pointer fixed while the width changes, and the other pane uses that same width. In Stack, each pane's Y axis is its own `chart.Linear` over that symbol's visible high/low. In Overlay, both series share one index scale: `close[i] / close[base] * 100`, and ALPHA's OHLC uses that same divisor. `Paint` takes the shared bar index so a pane draws the vertical line even when the pointer is on the other one.
 
@@ -140,6 +141,26 @@ Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot.
 - BETA 的量柱或 MACD 副图
 - 两条都画成蜡烛
 - P4 样式外置、明暗主题、空心阳线
+
+## P4
+
+本阶段把颜色收到 `kline.Style`，并加了空心阳线。画线、指标算法、Stack / Overlay 的布局都没有改。
+
+能做：
+
+- `kline.Style` 在 `kline/style.go`。里面有涨跌色、网格、十字线、MA5 / MA20，以及 MACD 的 DIF、DEA 和零轴。柱状图（量柱和 MACD 柱）用同一套涨跌色。
+- `StyleFrom(theme)` 按当前 MyGo 主题填这些颜色。`DarkDefault` 和 `LightDefault` 分别是暗色和亮色主题的结果。传入 nil 等于 `DarkDefault`。
+- 明暗两套的绘图区、网格、十字线、坐标字，以及 MA / MACD 线，跟着主题的背景、边框、弱化文字、Accent、Warning 走。涨跌色两套都是绿涨红跌，不随明暗对调。
+- 工具条 **Hollow**。打开后，收盘不低于开盘的 K 线只画框，收盘更低的仍是实心。关掉后两种实体都填满。Overlay 里的 ALPHA 蜡烛走同一条绘制，所以这个开关在两种布局里都生效。
+- 画线颜色、比较折线的颜色也在 `Style` 里，绘制时从这里取，不再在各个绘制函数里写死。
+
+明确不做：
+
+- 调色板编辑器，或给每个 symbol 单独指定颜色
+- 把量柱或 MACD 柱也改成空心
+- 美国线、平均 K 线、面积图
+- 导出图片的 API
+- 本方案没有 P5
 
 ## Out of scope
 
