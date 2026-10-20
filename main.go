@@ -5,6 +5,7 @@ package main
 
 import (
 	"log"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -18,6 +19,7 @@ func main() {
 		Layout:     kline.LayoutStack,
 		Indicators: []string{"MA", "MACD"},
 	})
+	seedDemoMarkers(chart)
 	mygo.App.WhenReady(func() {
 		mygo.NewWindow(mygo.WindowOptions{
 			Title:     "K-line",
@@ -67,6 +69,8 @@ func demoView(c *ui.Context, chart *kline.Chart) {
 				if b.Clicked() {
 					st.Up = preset.up
 					st.Down = preset.down
+					st.Buy = preset.up
+					st.Sell = preset.down
 					st.LimitUp = preset.limitUp
 					st.LimitDown = preset.limitDown
 					chart.SetStyle(st)
@@ -186,10 +190,11 @@ var layoutChoices = []struct {
 	{"Overlay", kline.LayoutOverlay},
 }
 
-// colorPresets recolor candle bodies. Classic is the default green-up
-// red-down pair. US swaps them. Contrast is a high-contrast pair that
-// stays off the plot background. Limit colors are the brighter step of
-// the same pair. Hollow and the limit percent are left as they are.
+// colorPresets recolor candle bodies and the trade markers. Classic is
+// the default green-up red-down pair. US swaps them. Contrast is a
+// high-contrast pair that stays off the plot background. Limit colors
+// are the brighter step of the same pair. Hollow and the limit percent
+// are left as they are.
 var colorPresets = []struct {
 	label                        string
 	up, down, limitUp, limitDown ui.Color
@@ -197,4 +202,27 @@ var colorPresets = []struct {
 	{"Classic", ui.RGB(38, 166, 154), ui.RGB(239, 83, 80), ui.RGB(0, 230, 118), ui.RGB(255, 59, 48)},
 	{"US", ui.RGB(239, 83, 80), ui.RGB(38, 166, 154), ui.RGB(255, 59, 48), ui.RGB(0, 230, 118)},
 	{"Contrast", ui.RGB(255, 214, 0), ui.RGB(56, 189, 248), ui.RGB(255, 255, 255), ui.RGB(168, 85, 247)},
+}
+
+// seedDemoMarkers places a few trades on the bars the window opens on,
+// so the demo shows buy and sell arrows without a host feed.
+func seedDemoMarkers(chart *kline.Chart) {
+	for _, symbol := range chart.Symbols() {
+		n := chart.Bars()
+		if n < 20 {
+			continue
+		}
+		buy, okB := chart.Bar(symbol, n-15)
+		sell, okS := chart.Bar(symbol, n-9)
+		both, okBoth := chart.Bar(symbol, n-6)
+		if !okB || !okS || !okBoth {
+			continue
+		}
+		_ = chart.SetMarkers(symbol, []kline.Marker{
+			{Time: buy.Time, Side: kline.SideBuy, Qty: 1},
+			{Time: sell.Time, Side: kline.SideSell, Price: sell.Close},
+			{Time: both.Time, Side: kline.SideBuy, Label: "B"},
+			{Time: both.Time.Add(20 * time.Minute), Side: kline.SideSell, Label: "S", Qty: 2},
+		})
+	}
 }

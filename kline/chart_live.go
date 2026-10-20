@@ -135,6 +135,7 @@ func (a *Chart) applyLiveBar(symbol string, bar Candle) {
 	}
 	for j := range a.panes {
 		a.recalc(&a.panes[j])
+		a.reindexMarks(&a.panes[j])
 	}
 	if pinned && a.plotW > 1 {
 		a.vp.FitRight(a.bars(), a.plotW)

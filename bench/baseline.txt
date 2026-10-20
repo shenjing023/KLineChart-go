@@ -182,5 +182,11 @@ BenchmarkLivePushFrames/overlay_20k-4  	     686	   1731653 ns/op	 2557455 B/op	
 BenchmarkLivePushFrames/overlay_20k-4  	     644	   1868527 ns/op	 2557454 B/op	     405 allocs/op
 BenchmarkLivePushFrames/overlay_20k-4  	     624	   1818326 ns/op	 2557455 B/op	     405 allocs/op
 BenchmarkLivePushFrames/overlay_20k-4  	     708	   1633795 ns/op	 2557458 B/op	     405 allocs/op
+BenchmarkMarkerPanFrames/8k-4          	    1143	   1115619 ns/op	  173381 B/op	     758 allocs/op
+BenchmarkMarkerPanFrames/8k-4          	    1182	   1057700 ns/op	  173380 B/op	     758 allocs/op
+BenchmarkMarkerPanFrames/8k-4          	    1106	   1046475 ns/op	  173380 B/op	     758 allocs/op
+BenchmarkMarkerPanFrames/8k-4          	    1171	   1010417 ns/op	  173380 B/op	     758 allocs/op
+BenchmarkMarkerPanFrames/8k-4          	    1171	   1002676 ns/op	  173381 B/op	     758 allocs/op
+BenchmarkMarkerPanFrames/8k-4          	    1162	    999149 ns/op	  173380 B/op	     758 allocs/op
 PASS
 ok  	github.com/shenjing023/KLineChart-go/kline	250.538s

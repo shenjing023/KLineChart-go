@@ -60,6 +60,9 @@ type series struct {
 	// overlays are this pane's drawings. They are not shared with the
 	// other symbol: a line placed here is not drawn on the other pane.
 	overlays Layer
+	// marks are this pane's trade markers, keyed by bar time. They stay
+	// with the symbol across a period change and a forward prepend.
+	marks []tradeMark
 }
 
 // indicatorSlot is one entry in the app's indicator list. on is the
@@ -182,6 +185,9 @@ type Chart struct {
 	// pending is a press that arrived before any price rect existed.
 	// The next paint applies it once the plot size is known.
 	pending deferredPointer
+	// markPath is reused for every trade-marker triangle so a pan
+	// frame does not allocate a path per marker.
+	markPath ui.Path
 }
 
 // paneFrame is one chart box from the last paint.
@@ -484,6 +490,7 @@ func (a *Chart) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime
 		rubber = &Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}
 	}
 	DrawOverlays(p, panes.Price, s.overlays.live(), a.vp, scale, s.candles, style, rubber)
+	a.drawMarkers(p, panes.Price, i, s.candles, a.vp, scale, style, 1)
 	a.applyDeferred(i)
 }
 
@@ -507,12 +514,22 @@ func (a *Chart) paintCompare(p *ui.Painter, r ui.Rect, t *ui.Theme) {
 	primary, compare := a.overlayPair()
 	style := a.chartStyle(t)
 	active := a.active(&a.panes[0])
-	scale, _ := drawCompare(p, panes, primary, compare, active, a.vp, ptr, a.crossIndex, style, a.labels())
+	scale, indexed := drawCompare(p, panes, primary, compare, active, a.vp, ptr, a.crossIndex, style, a.labels())
 	var rubber *Rubber
 	if a.draftOn && a.draftPane == 0 && a.crossPane == 0 {
 		rubber = &Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}
 	}
 	DrawOverlays(p, panes.Price, a.panes[0].overlays.live(), a.vp, scale, primary, style, rubber)
+	a.drawMarkers(p, panes.Price, 0, primary, a.vp, scale, style, 1)
+	if indexed && len(a.panes) > 1 {
+		// Compare prices are indexed to the primary base close. The
+		// marker scale is the raw scale, so convert by that ratio.
+		base := a.compareBase()
+		compare := a.panes[1].candles
+		if indexable(primary, base) && indexable(compare, base) {
+			a.drawMarkers(p, panes.Price, 1, compare, a.vp, scale, style, primary[base].Close/compare[base].Close)
+		}
+	}
 	a.applyDeferred(0)
 }
 
@@ -546,6 +563,9 @@ func (a *Chart) readout(i int) string {
 	}
 	labels := a.labels()
 	line := label + "  " + formatBar(s.candles[idx], math.NaN(), math.NaN(), labels)
+	if note := markerReadout(s.marks, idx, s.candles[idx], labels); note != "" {
+		line += "  " + note
+	}
 	if a.layout == layoutOverlay {
 		// Symbols after the second are not on the overlay plot.
 		if i > 1 {

@@ -146,6 +146,12 @@ func firstTimeDiff(a, b []Candle) (time.Time, bool) {
 // The live subscription follows the new period and source.
 func (a *Chart) install(p Period, next []series) error {
 	for i := range next {
+		for _, old := range a.panes {
+			if old.name == next[i].name {
+				next[i].marks = old.marks
+				break
+			}
+		}
 		next[i] = a.mount(next[i], next[i].candles, next[i].more)
 	}
 	a.period = p
@@ -344,6 +350,7 @@ func (a *Chart) mount(s series, bars []Candle, more bool) series {
 	s.candles = bars
 	s.more = more
 	a.recalc(&s)
+	a.reindexMarks(&s)
 	return s
 }
 
