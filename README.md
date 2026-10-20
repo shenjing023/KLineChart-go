@@ -60,7 +60,7 @@ Native UI draws with Direct3D 11 on Windows, Metal on macOS, and OpenGL on Linux
 ## Layout
 
 - `main.go` — window, one readout per symbol, the shared viewport and crosshair index, and the period, layout, and indicator toggles.
-- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, `Style` (`style.go`: `StyleFrom`, `DarkDefault`, `LightDefault`), `DataSource` (`Period`, `BarRequest`, `SyntheticSource`), the indicator list (`MA`, `MACD`), overlays (`Layer`, horizontal price line, segment), and overlay compare (`NormalizeClose`, `IndexBase`, `PaintCompare`). Volume is drawn by `Paint`, not by an indicator. Each symbol keeps its own `Layer`.
+- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, `Style` (`style.go`: `StyleFrom`, `DarkDefault`, `LightDefault`), `DataSource` (`Period`, `BarRequest`, `SyntheticSource`), optional `LiveSource` and the in-memory `StubLiveSource`, the indicator list (`MA`, `MACD`), overlays (`Layer`, horizontal price line, segment), and overlay compare (`NormalizeClose`, `IndexBase`, `PaintCompare`). Volume is drawn by `Paint`, not by an indicator. Each symbol keeps its own `Layer`.
 
 Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot. Dragging right decreases `offset` for all panes. The wheel keeps the bar under the pointer fixed while the width changes, and the other pane uses that same width. In Stack, each pane's Y axis is its own `chart.Linear` over that symbol's visible high/low. In Overlay, both series share one index scale: `close[i] / close[base] * 100`, and ALPHA's OHLC uses that same divisor. `Paint` takes the shared bar index so a pane draws the vertical line even when the pointer is on the other one.
 
@@ -160,13 +160,48 @@ Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot.
 - 把量柱或 MACD 柱也改成空心
 - 美国线、平均 K 线、面积图
 - 导出图片的 API
-- 本方案没有 P5
+- 行情订阅（接口在下一节；本阶段没有）
+
+## P5
+
+本阶段只定实时 K 线的契约，并给测试一个内存 stub。窗口仍用 `SyntheticSource` 演示，不连任何行情服务器。
+
+能做：
+
+- `kline.LiveSource` 在 `DataSource` 上增加 `SubscribeBar` / `UnsubscribeBar`。`GetBars` 仍负责历史。`BarHandler` 收到一根 K 线：新的开盘时间，或最后一根的修订。
+- 图表在 `setPeriod` 里对数据源做 type assert。源实现了 `LiveSource` 就按当前周期给每个 symbol 订阅，并在换周期或换源时退订上一个源。没有实现就只走 `GetBars`，`SyntheticSource` 属于这一类，它不会假装在推送。
+- 收到的 bar：开盘时间比最后一根新，就追加；开盘时间相同，就替换最后一根；更早的开盘时间丢掉。指标会重算。视窗正贴在右边缘时，新的一根仍留在右边；已经平移开的视窗不跳。
+- `kline.StubLiveSource` 把历史和订阅都放在内存里。`SetBars` 写入历史，`Push` 在已订阅时调用 handler，`UnsubscribeBar` 之后不再投递。测试用它，不需要网络。
+
+真实源由宿主实现，不在本仓库里。历史实现 `GetBars`；能推送时再实现 `LiveSource`。`Push` 的调用方决定在哪一个 goroutine 上进入 handler，stub 是同步调用。宿主若从别的 goroutine 推送，要自己串到 UI 线程。下面是形状，不是可运行的客户端：
+
+```go
+type feed struct{}
+
+func (f *feed) GetBars(req kline.BarRequest) ([]kline.Candle, bool, error) {
+	return nil, false, nil // history the host already has
+}
+
+func (f *feed) SubscribeBar(symbol string, period kline.Period, onBar kline.BarHandler) error {
+	return nil // host starts delivering bars to onBar
+}
+
+func (f *feed) UnsubscribeBar(symbol string, period kline.Period) error {
+	return nil
+}
+```
+
+明确不做：
+
+- HTTP、WebSocket，以及任何券商或行情客户端
+- A 股 / 港股协议、鉴权、账号
+- 在本仓库里替 dapu 接真实行情
 
 ## Out of scope
 
 - Feature parity with KLineChart beyond the list above: the rest of the overlay set, a full indicator set, log scale, or session gaps.
 - A WebView, or embedding the JavaScript chart.
-- Live market data. A real feed implements `DataSource`; this repo does not open a socket.
+- A market-data client. A host implements `DataSource` and, when it can push bars, `LiveSource`. This repo only defines that interface and an in-memory `StubLiveSource`. It does not open an HTTP or WebSocket connection.
 - Installer polish beyond `go build` and `mygo build`.
 
 ## Limitations

@@ -989,6 +989,163 @@ func assertFitRight(t *testing.T, a *app) {
 	}
 }
 
+func TestLiveBarAppendsRevisesAndRecalculates(t *testing.T) {
+	a := newApp()
+	if _, ok := a.src.(kline.LiveSource); ok {
+		t.Fatal("the demo source must not implement LiveSource")
+	}
+	stub := stubWithPanes(t, a, a.period)
+	a.src = stub
+	if err := a.setPeriod(a.period); err != nil {
+		t.Fatal(err)
+	}
+	n := len(a.panes[0].candles)
+	if maLineLen(&a.panes[0]) != n {
+		t.Fatalf("ma %d bars %d", maLineLen(&a.panes[0]), n)
+	}
+	last := a.panes[0].candles[n-1]
+	next := last
+	next.Time = last.Time.Add(time.Hour)
+	next.Close = last.Close + 5
+	stub.Push("ALPHA", a.period, next)
+	if len(a.panes[0].candles) != n+1 || a.panes[0].candles[n] != next {
+		t.Fatalf("append len %d", len(a.panes[0].candles))
+	}
+	if maLineLen(&a.panes[0]) != n+1 {
+		t.Fatal("MA was not recalculated")
+	}
+	if len(a.panes[1].candles) != n {
+		t.Fatal("BETA changed on an ALPHA push")
+	}
+	revised := next
+	revised.Close = next.Close + 1
+	stub.Push("ALPHA", a.period, revised)
+	if len(a.panes[0].candles) != n+1 || a.panes[0].candles[n].Close != revised.Close {
+		t.Fatal("revise did not replace the last bar")
+	}
+	stale := last
+	stale.Close = 0
+	stub.Push("ALPHA", a.period, stale)
+	if len(a.panes[0].candles) != n+1 || a.panes[0].candles[n].Close != revised.Close {
+		t.Fatal("a bar older than the last open time was applied")
+	}
+}
+
+func TestLiveSubscriptionFollowsPeriodAndSource(t *testing.T) {
+	a := newApp()
+	hour := a.period
+	four := kline.Period{Span: 4, Unit: kline.UnitHour}
+	syn := &kline.SyntheticSource{}
+	stub := &kline.StubLiveSource{}
+	for _, s := range a.panes {
+		if err := stub.SetBars(s.name, hour, s.candles); err != nil {
+			t.Fatal(err)
+		}
+		bars, _, err := syn.GetBars(kline.BarRequest{
+			Symbol: s.name, Period: four, Kind: kline.KindInit, Limit: sampleBars,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := stub.SetBars(s.name, four, bars); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a.src = stub
+	if err := a.setPeriod(hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.setPeriod(four); err != nil {
+		t.Fatal(err)
+	}
+	before := len(a.panes[0].candles)
+	last := a.panes[0].candles[before-1]
+	stub.Push("ALPHA", hour, kline.Candle{Time: last.Time.Add(time.Hour), Close: 1})
+	if len(a.panes[0].candles) != before {
+		t.Fatalf("1h push after a 4h switch len %d", len(a.panes[0].candles))
+	}
+	stub.Push("ALPHA", four, kline.Candle{Time: last.Time.Add(4 * time.Hour), Close: 2})
+	if len(a.panes[0].candles) != before+1 || a.panes[0].candles[before].Close != 2 {
+		t.Fatalf("4h push len %d", len(a.panes[0].candles))
+	}
+
+	a.src = syn
+	if err := a.setPeriod(hour); err != nil {
+		t.Fatal(err)
+	}
+	before = len(a.panes[0].candles)
+	last = a.panes[0].candles[before-1]
+	stub.Push("ALPHA", hour, kline.Candle{Time: last.Time.Add(time.Hour), Close: 3})
+	if len(a.panes[0].candles) != before {
+		t.Fatal("the stub still delivered after the chart left it")
+	}
+}
+
+func TestLiveBarFollowsRightEdgeOnly(t *testing.T) {
+	a := newApp()
+	stub := stubWithPanes(t, a, a.period)
+	a.src = stub
+	if err := a.setPeriod(a.period); err != nil {
+		t.Fatal(err)
+	}
+	tt := ui.NewTester(a.view, 960, 720)
+	tt.Frame()
+	if !a.fitted || a.plotW <= 1 {
+		t.Fatalf("fitted %v plotW %v", a.fitted, a.plotW)
+	}
+	before := a.bars()
+	pushBoth(stub, a, 1)
+	if a.bars() != before+1 {
+		t.Fatalf("bars %d, want %d", a.bars(), before+1)
+	}
+	fitted := kline.Viewport{BarWidth: a.vp.BarWidth}
+	fitted.FitRight(a.bars(), a.plotW)
+	if math.Abs(a.vp.Offset-fitted.Offset) > 1e-6 {
+		t.Fatalf("offset %v, fit %v", a.vp.Offset, fitted.Offset)
+	}
+	a.vp.Offset = 0
+	pushBoth(stub, a, 2)
+	if a.vp.Offset != 0 {
+		t.Fatalf("panned offset moved to %v", a.vp.Offset)
+	}
+	tt.Frame()
+	if !tt.HasText(fmt.Sprintf("%d bars", a.bars())) {
+		t.Fatalf("texts %q", tt.Texts())
+	}
+}
+
+func stubWithPanes(t *testing.T, a *app, period kline.Period) *kline.StubLiveSource {
+	t.Helper()
+	stub := &kline.StubLiveSource{}
+	for _, s := range a.panes {
+		if err := stub.SetBars(s.name, period, s.candles); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return stub
+}
+
+func pushBoth(src *kline.StubLiveSource, a *app, closeDelta float64) {
+	for _, s := range a.panes {
+		last := s.candles[len(s.candles)-1]
+		next := last
+		next.Time = last.Time.Add(time.Hour)
+		next.Close = last.Close + closeDelta
+		src.Push(s.name, a.period, next)
+	}
+}
+
+func maLineLen(s *series) int {
+	for _, ind := range s.inds {
+		ma, ok := ind.(*kline.MA)
+		if !ok || len(ma.Lines()) == 0 {
+			continue
+		}
+		return len(ma.Lines()[0])
+	}
+	return -1
+}
+
 type sourceFunc func(kline.BarRequest) ([]kline.Candle, bool, error)
 
 func (f sourceFunc) GetBars(req kline.BarRequest) ([]kline.Candle, bool, error) {

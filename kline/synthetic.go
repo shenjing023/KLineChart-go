@@ -23,6 +23,8 @@ var otherOrigin = time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 // Extra is how many bars exist before an init window. Zero means
 // defaultExtra. Negative means the init window is the whole history.
 // ALPHA and BETA use the same seeds as the original demo (42 and 99).
+// It implements DataSource only. It is not a LiveSource: nothing is
+// pushed, and a chart that type-asserts LiveSource skips it.
 type SyntheticSource struct {
 	Extra int
 }

@@ -94,3 +94,19 @@ type BarRequest struct {
 type DataSource interface {
 	GetBars(req BarRequest) (bars []Candle, more bool, err error)
 }
+
+// ErrNilBarHandler is returned when SubscribeBar is called without a handler.
+var ErrNilBarHandler = errors.New("kline: nil bar handler")
+
+// BarHandler receives one bar update. The bar is either a new open time
+// or a revision of the last bar. The caller chooses the goroutine.
+type BarHandler func(bar Candle)
+
+// LiveSource is an optional extension of DataSource. A feed that can
+// push bars implements it. GetBars is still how a chart loads history.
+// This package does not open a network connection.
+type LiveSource interface {
+	DataSource
+	SubscribeBar(symbol string, period Period, onBar BarHandler) error
+	UnsubscribeBar(symbol string, period Period) error
+}
