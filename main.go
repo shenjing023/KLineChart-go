@@ -115,6 +115,17 @@ type app struct {
 	pressPane int
 	pressX    float64
 	pressY    float64
+	// live is the LiveSource followLive subscribed, kept so a later
+	// source swap can unsubscribe that source. Nil when src is only
+	// a DataSource, which is the synthetic demo.
+	live     kline.LiveSource
+	liveSubs []liveSub
+}
+
+// liveSub is one SubscribeBar the window currently holds.
+type liveSub struct {
+	symbol string
+	period kline.Period
 }
 
 func newApp() *app {
@@ -169,7 +180,85 @@ func (a *app) setPeriod(p kline.Period) error {
 		a.vp.FitRight(a.bars(), a.plotW)
 		a.fitted = true
 	}
+	a.followLive()
 	return nil
+}
+
+// followLive subscribes when src implements LiveSource and drops any
+// previous subscription, including one on a source the window no longer
+// uses. A plain DataSource, such as SyntheticSource, is ignored. Nothing
+// here opens a connection.
+func (a *app) followLive() {
+	a.dropLive()
+	live, ok := a.src.(kline.LiveSource)
+	if !ok {
+		return
+	}
+	subs := make([]liveSub, 0, len(a.panes))
+	for _, s := range a.panes {
+		symbol := s.name
+		err := live.SubscribeBar(symbol, a.period, func(bar kline.Candle) {
+			a.applyLiveBar(symbol, bar)
+		})
+		if err != nil {
+			continue
+		}
+		subs = append(subs, liveSub{symbol: symbol, period: a.period})
+	}
+	if len(subs) == 0 {
+		return
+	}
+	a.live = live
+	a.liveSubs = subs
+}
+
+func (a *app) dropLive() {
+	if a.live == nil {
+		a.liveSubs = nil
+		return
+	}
+	for _, sub := range a.liveSubs {
+		_ = a.live.UnsubscribeBar(sub.symbol, sub.period)
+	}
+	a.live = nil
+	a.liveSubs = nil
+}
+
+// applyLiveBar appends a bar with a newer open time, or replaces the
+// last bar when the open time matches. An older open time is ignored.
+// Indicators are recalculated. A view sitting on the right edge stays
+// there; a panned view does not jump.
+func (a *app) applyLiveBar(symbol string, bar kline.Candle) {
+	for i := range a.panes {
+		if a.panes[i].name != symbol {
+			continue
+		}
+		s := a.panes[i]
+		n := len(s.candles)
+		pinned := a.pinnedRight()
+		switch {
+		case n == 0 || bar.Time.After(s.candles[n-1].Time):
+			s.candles = append(s.candles, bar)
+		case bar.Time.Equal(s.candles[n-1].Time):
+			s.candles[n-1] = bar
+		default:
+			return
+		}
+		a.panes[i] = a.mount(s, s.candles, s.more)
+		if pinned && a.plotW > 1 {
+			a.vp.FitRight(a.bars(), a.plotW)
+		}
+		return
+	}
+}
+
+func (a *app) pinnedRight() bool {
+	if !a.fitted || a.plotW <= 1 || a.bars() <= 0 {
+		return false
+	}
+	v := a.vp
+	v.FitRight(a.bars(), a.plotW)
+	return math.Abs(a.vp.Offset-v.Offset) < 1e-6
 }
 
 var periodChoices = []struct {
