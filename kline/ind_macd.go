@@ -30,17 +30,17 @@ type MACD struct {
 	DIFColor, DEAColor, Up, Down, Zero ui.Color
 }
 
-// NewMACD returns a MACD with the given periods. Draw colors match the
-// candle up/down colors and a blue/amber pair; Paint replaces them from
-// the theme before drawing.
+// NewMACD returns a MACD with the given periods. Draw colors start as
+// DarkDefault; Paint replaces them from the active Style before drawing.
 func NewMACD(short, long, signal int) *MACD {
+	s := DarkDefault()
 	return &MACD{
 		Short: short, Long: long, Signal: signal,
-		DIFColor: ui.RGB(59, 130, 246),
-		DEAColor: ui.RGB(245, 158, 11),
-		Up:       ui.RGB(38, 166, 154),
-		Down:     ui.RGB(239, 83, 80),
-		Zero:     ui.RGB(63, 63, 70),
+		DIFColor: s.MACDDIF,
+		DEAColor: s.MACDDEA,
+		Up:       s.Up,
+		Down:     s.Down,
+		Zero:     s.MACDZero,
 	}
 }
 

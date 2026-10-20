@@ -210,7 +210,7 @@ func PaintCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []
 		case PaneSub:
 			if sub == nil && panes.MACD.H > 1 {
 				if macd, ok := ind.(*MACD); ok {
-					macd.SetColors(style.MA5, style.MA20, style.Up, style.Down, style.Grid)
+					macd.SetColors(style.MACDDIF, style.MACDDEA, style.Up, style.Down, style.MACDZero)
 				}
 				sub = ind
 			}
