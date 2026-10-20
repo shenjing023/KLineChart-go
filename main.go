@@ -139,7 +139,7 @@ func demoView(c *ui.Context, chart *kline.Chart) {
 				chart.ResetView()
 			}
 		})
-		hint := "Pan drags both panes. H-Line, Segment, and Fib draw on the pane you click, and pan is off while a draw tool is selected. Delete removes the selected line. Right-click removes the line under the pointer."
+		hint := "Pan drags both panes. H-Line, Segment, and Fib draw on the pane you click, and pan is off while a draw tool is selected. Escape cancels a line that is still waiting for its second point. Delete removes the selected line. Right-click removes the line under the pointer, or cancels that unfinished line."
 		if chart.Layout() == kline.LayoutOverlay {
 			hint = "Overlay indexes both symbols to 100 at the first visible bar where both closes are positive. ALPHA stays candles. BETA is the close line. Volume and MACD are ALPHA only, and drawings stay on ALPHA. Pan and the wheel still move the shared viewport."
 		}

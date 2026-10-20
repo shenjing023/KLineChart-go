@@ -111,3 +111,41 @@ func TestClickAfterIndicatorChangeUsesNewPriceRect(t *testing.T) {
 		t.Fatalf("click in the grown price plot was refused: old %+v now %+v drawings %+v", old, a.painted[0].Price, items)
 	}
 }
+
+func TestEscapeAndRightClickCancelDraft(t *testing.T) {
+	a := NewChart(ChartOptions{Symbols: []string{"ALPHA"}, Indicators: []string{}})
+	tt := ui.NewTester(a.View, 900, 640)
+	if err := a.SetTool(ToolSegment); err != nil {
+		t.Fatal(err)
+	}
+	price := a.painted[0].Price
+	tt.ClickAt(price.X+80, price.Y+40)
+	if !a.draftOn {
+		t.Fatal("draft did not start")
+	}
+	tt.Key(0, ui.KeyEscape)
+	if a.draftOn {
+		t.Fatal("escape left the draft up")
+	}
+	if len(a.panes[0].overlays.Items()) != 0 {
+		t.Fatal("escape created a segment")
+	}
+
+	tt.ClickAt(price.X+80, price.Y+40)
+	tt.ClickAt(price.X+220, price.Y+140)
+	if a.draftOn || len(a.panes[0].overlays.Items()) != 1 {
+		t.Fatalf("finished segment: draft %v drawings %d", a.draftOn, len(a.panes[0].overlays.Items()))
+	}
+	// Away from the finished segment, which a click on the line would select.
+	tt.ClickAt(price.X+price.W-40, price.Y+24)
+	if !a.draftOn {
+		t.Fatal("second draft did not start")
+	}
+	tt.RightClickAt(price.X+price.W-30, price.Y+price.H*0.8)
+	if a.draftOn {
+		t.Fatal("right-click left the draft up")
+	}
+	if n := len(a.panes[0].overlays.Items()); n != 1 {
+		t.Fatalf("right-click during a draft left %d drawings", n)
+	}
+}

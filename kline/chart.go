@@ -1030,6 +1030,9 @@ func (a *Chart) onChartInput(pane int, ev ui.InputEvent) bool {
 		}
 		return ev.DX != 0 || ev.DY != 0
 	case ui.InputKeyDown:
+		if ev.Key == ui.KeyEscape {
+			return a.cancelDraft()
+		}
 		if ev.Key != ui.KeyDelete {
 			return false
 		}
@@ -1050,6 +1053,9 @@ func (a *Chart) onChartInput(pane int, ev ui.InputEvent) bool {
 // later release selects when the pointer did not move.
 func (a *Chart) pointerDown(pane int, ev ui.InputEvent) bool {
 	x, y, in := a.plotLocal(pane, ev)
+	if ev.Button == 1 && a.cancelDraft() {
+		return true
+	}
 	if !in {
 		// The first press can arrive before Draw has a price rect.
 		// Keep it and place it once that rect exists.
@@ -1134,6 +1140,15 @@ func (a *Chart) placeTwo(pane int, kind string, hit Hit, hitOK bool, x, y float6
 	a.draft = a.pointAt(pane, x, y)
 	a.draftOn = true
 	a.draftPane = pane
+	a.dragOn = false
+	return true
+}
+
+func (a *Chart) cancelDraft() bool {
+	if !a.draftOn {
+		return false
+	}
+	a.draftOn = false
 	a.dragOn = false
 	return true
 }
