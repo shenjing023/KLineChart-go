@@ -10,7 +10,7 @@ The demo path is in good shape. Viewport pan/zoom/clamp, SMA / MACD / BOLL / KDJ
 
 The host contract is the weak part. The chart assumes every symbol shares one bar index and one open time, then `ensureForward` advances that shared offset even when a pane did not grow. Live updates are closures with no generation, no mutex, and no frame request, so a real feed can write the chart after unsubscribe or from a background goroutine while `View` is reading it. Several setters disagree with their own comments once a host leaves the synthetic two-symbol demo: `SetPeriod` / `SetSource`, `SetIndicators(nil)`, and `IndicatorEnabled`.
 
-Nothing below was changed in code. Fix direction is in each finding and in the ordered PR list at the end.
+Nothing below was changed in code. Fix direction is in each finding and in the ordered PR list at the end. That sentence describes this review when it was written. Resolution of every finding is in [Status](#status).
 
 ## Critical (must fix)
 
@@ -195,3 +195,34 @@ Missing, in the order they can hide a regression:
 8. **Pan allocs.** Reuse the frame's scale, stop deep-copying overlays every frame, stable `BOLL.Series` header, alloc ceiling on the overlay pan benchmark.
 9. **Host formatting.** Price decimals and a `*time.Location` on `ChartOptions`, used by `FormatPrice`, `FormatBar`, and `drawCrosshair`.
 10. **Split `chart.go`.** After the behavior fixes: `chart_live.go`, `chart_input.go`, `chart_load.go`. Update the two plan docs so P5–P9 checkboxes match `main`, or mark them historical so the next agent does not re-implement them.
+
+## Status
+
+Reviewed against `main` at `6b6d26a` (PR #16), which already contains PR #15 (`1085212`). Later rows are commits on the minor-fix branch. Critical 1–2 and Important 3–8 were not reopened.
+
+| Finding | Status | Commit |
+| --- | --- | --- |
+| Critical 1. Forward alignment | fixed in #15 | `1085212` |
+| Critical 2. Live callback fence | fixed in #15 | `1085212` |
+| Important 3. Setter contract | fixed in #16 | `6b6d26a` |
+| Important 4. Shared bar index | fixed in #16 | `6b6d26a` |
+| Important 5. Overlay scale fallback | fixed in #16 | `6b6d26a` |
+| Important 6. Indicator toggle pointers | fixed in #16 | `6b6d26a` |
+| Important 7. NaN-safe `PriceDomain` | fixed in #16 | `6b6d26a` |
+| Important 8. Pan allocations | fixed in #16 | `6b6d26a` |
+| Minor. Fib tool name | fixed. `ToolFib` is now `"fibonacci"`, the same string as `OverlayFibonacci`. `SetTool("fib")` still selects it, and `"fib"` stays reserved. | `dffe2b6` |
+| Minor. `SetLayout` | fixed. Unknown strings return `ErrUnknownLayout` and leave the layout unchanged. `NewChart` still treats an empty or unknown `Layout` option as stack. | `cdd4074`, Chinese note `985c542` |
+| Minor. `SetMagnet` | fixed. Unknown modes return `ErrUnknownMagnet`. `SnapPrice` returns the pointer price unless the mode is weak or strong. `NewChart` stores off for an out-of-range option. | `cdd4074`, Chinese note `985c542` |
+| Minor. `TimeAt` end step | fixed. An index past the last bar uses the last pair's step. The right-hand gap of a 1h-then-4h series is 4h. | `666a448` |
+| Minor. Host formatting / recommended PR 9 | fixed. `ChartOptions.PriceDecimals` and `Location` feed `Readout` and the crosshair tags. Nil or negative decimals stay at two; nil location stays UTC. `FormatPrice` and `FormatBar` stay two-decimal UTC. Added `FormatPriceDigits` and `FormatBarIn`. `Paint` / `PaintCompare` signatures are unchanged and still use two decimals and UTC. Indicator `ValueAt` still uses `FormatPrice`. | `da02cf7` |
+| Minor. Transparent partial colors and `SetHollow` | fixed. `Style.Clear` (`ColorClear` bits) forces a named field transparent, including on a fully specified palette. A zero color without that bit still means unset. `SetHollow` writes `style.HollowUp` when the chart has a stored style, and `NewChart` copies `Hollow` and `LimitPct` onto that style after `completeStyle`. | `4a97e97` |
+| Minor. `applyIndicatorStyle` returns | fixed. The helper no longer returns the `*MACD` and `*KDJ` both callers ignored. Color writes are unchanged. Unexported signature only. | `4f9249d` |
+| Minor. `Spec.Kind` | fixed. `Register` calls `New` and returns `ErrIndicatorKind` when `PaneKind` disagrees with `Spec.Kind`. A nil constructor is refused. Layout still follows the instance, which now matches the spec. | `7e1ecba` |
+| Minor. Registries | fixed. Both registries use `sync.RWMutex`. `Unregister` and `UnregisterOverlay` remove a host entry. Reserved overlay kinds stay reserved. `New` runs outside the lock. Host tests unregister `HOST`, `HOSTOSC`, `HOSTLATE`, and `hostmark`. | `4f29092` |
+| Minor. First frame and stale price rect | fixed. A press before any paint is applied at the end of the first paint. A click after `SetIndicator` relayouts from the last outer box, so the price rect matches the next paint. | `76d147f` |
+| Minor. Escape and right-click | fixed. Escape and a right-click anywhere on the chart cancel an open draft and do not delete. With no draft, a right-click still deletes the overlay under the pointer. | `99161a2` |
+| Minor. `KindBackward` | not a behavior bug. `ensureForward` sends `KindForward` and init sends `KindInit`; the chart never assigns `KindBackward`. Comment and `TestChartNeverRequestsBackward` lock that. The test passes on the previous code. | `a053a45` |
+| Minor. File shape / recommended PR 10 split | fixed. Load, live, and input moved to `chart_load.go`, `chart_live.go`, and `chart_input.go`. `splitOne` / `splitBoth` / `splitMany` and the shared endpoint test in `hitSegment` / `hitFibonacci` stay as they were; the review called that repetition workable. | `0683e82` |
+| Minor. Docs drift / recommended PR 10 docs | fixed. Both plan docs are marked historical, shipped P0–P9 boxes are checked, and the file map names the chart files. Volume remains in `paint.go`. There is no `paint_price.go`, `paint_volume.go`, or `ind_vol.go`. `main.go` is the thin demo. | `2c1f3cb` |
+| Recommended PRs 1–8 | already fixed by #15 and #16. Not reimplemented. | `1085212`, `6b6d26a` |
+| Test-gap table | covered by those two PRs and the minor tests above. No extra feature work. | — |
