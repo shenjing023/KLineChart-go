@@ -55,14 +55,19 @@ type series struct {
 	candles []Candle
 	held    []Candle
 	inds    []Indicator
-	more    bool
+	// fresh[i] is set while inds[i] holds values for the current candles.
+	// An indicator that is off is not calculated, so it goes stale.
+	fresh []bool
+	more  bool
 	// overlays are this pane's drawings. They are not shared with the
 	// other symbol: a line placed here is not drawn on the other pane.
 	overlays Layer
 }
 
 // indicatorSlot is one entry in the app's indicator list. on is the
-// toolbar toggle. The list is filled from Registry at startup.
+// toolbar toggle. IndicatorEnabled hands out its address, so a slot is
+// shared by pointer and never copied. The list is filled from Registry
+// at startup.
 type indicatorSlot struct {
 	spec Spec
 	on   bool
@@ -94,7 +99,7 @@ type Chart struct {
 	loading bool
 	// slots is the indicator list. Both symbols share the toggles and
 	// keep their own calculated instances on series.inds.
-	slots []indicatorSlot
+	slots []*indicatorSlot
 	// painted is each symbol's layout from the latest frame.
 	painted []Panes
 	// tool is Pan, H-Line, Segment, Fib, or a host-registered kind.
@@ -450,7 +455,7 @@ func (a *Chart) applyLiveBar(symbol string, bar Candle) {
 		switch {
 		case bar.Time.Equal(s.candles[n-1].Time):
 			s.candles[n-1] = bar
-			a.panes[i] = a.mount(*s, s.candles, s.more)
+			a.recalc(s)
 			return
 		case !bar.Time.After(s.candles[n-1].Time):
 			return
@@ -462,7 +467,7 @@ func (a *Chart) applyLiveBar(symbol string, bar Candle) {
 		return
 	}
 	for j := range a.panes {
-		a.panes[j] = a.mount(a.panes[j], a.panes[j].candles, a.panes[j].more)
+		a.recalc(&a.panes[j])
 	}
 	if pinned && a.plotW > 1 {
 		a.vp.FitRight(a.bars(), a.plotW)
@@ -689,34 +694,56 @@ func prependBars(older, newer []Candle) []Candle {
 	return out
 }
 
-// mount stores bars on s and recalculates every indicator in the list.
+// mount stores bars on s and recalculates the indicators that are on.
 // Existing instances are kept so a prepend does not allocate a new MA
 // or MACD, only a new value slice inside Calc.
 func (a *Chart) mount(s series, bars []Candle, more bool) series {
 	s.candles = bars
 	s.more = more
-	if len(s.inds) != len(a.slots) {
-		s.inds = make([]Indicator, len(a.slots))
-		for i, slot := range a.slots {
-			s.inds[i] = slot.spec.New()
-		}
-	}
-	for _, ind := range s.inds {
-		if ind != nil {
-			ind.Calc(bars)
-		}
-	}
+	a.recalc(&s)
 	return s
 }
 
-// active is the indicators whose toolbar toggle is on.
-func (a *Chart) active(s series) []Indicator {
+// recalc runs Calc for s's indicators that are on, after its candles
+// changed. The others are marked stale, and active calculates one when
+// it is turned on.
+func (a *Chart) recalc(s *series) {
+	a.ensureInds(s)
+	for i, ind := range s.inds {
+		s.fresh[i] = false
+		if ind != nil && i < len(a.slots) && a.slots[i].on {
+			ind.Calc(s.candles)
+			s.fresh[i] = true
+		}
+	}
+}
+
+// ensureInds gives s one indicator instance per slot, in slot order.
+func (a *Chart) ensureInds(s *series) {
+	for len(s.inds) < len(a.slots) {
+		s.inds = append(s.inds, a.slots[len(s.inds)].spec.New())
+	}
+	for len(s.fresh) < len(s.inds) {
+		s.fresh = append(s.fresh, false)
+	}
+}
+
+// active is s's indicators whose toolbar toggle is on, calculated for
+// its candles. One that was off when the candles last changed is
+// calculated here, once.
+func (a *Chart) active(s *series) []Indicator {
+	a.ensureInds(s)
 	out := make([]Indicator, 0, len(a.slots))
 	for i, slot := range a.slots {
-		if !slot.on || i >= len(s.inds) || s.inds[i] == nil {
+		ind := s.inds[i]
+		if !slot.on || ind == nil {
 			continue
 		}
-		out = append(out, s.inds[i])
+		if !s.fresh[i] {
+			ind.Calc(s.candles)
+			s.fresh[i] = true
+		}
+		out = append(out, ind)
 	}
 	return out
 }
@@ -729,7 +756,7 @@ func (a *Chart) enabledSubs() []Indicator {
 		return nil
 	}
 	var out []Indicator
-	for _, ind := range a.active(a.panes[0]) {
+	for _, ind := range a.active(&a.panes[0]) {
 		if ind != nil && ind.PaneKind() == PaneSub {
 			out = append(out, ind)
 		}
@@ -1163,10 +1190,10 @@ func (a *Chart) plotLocal(pane int, ev ui.InputEvent) (x, y float64, in bool) {
 func (a *Chart) priceScale(pane int) chart.Linear {
 	if a.layout == layoutOverlay && len(a.panes) >= 1 {
 		primary, compare := a.overlayPair()
-		_, raw, _ := CompareScales(primary, compare, a.active(a.panes[0]), a.vp, a.plotW)
+		_, raw, _ := CompareScales(primary, compare, a.active(&a.panes[0]), a.vp, a.plotW)
 		return raw
 	}
-	s := a.panes[pane]
+	s := &a.panes[pane]
 	return MainScale(s.candles, a.active(s), a.vp, a.plotW)
 }
 
@@ -1247,7 +1274,7 @@ func (a *Chart) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime
 	if a.crossPane == i {
 		ptr = Pointer{On: true, X: r.X + a.hoverX, Y: r.Y + a.hoverY}
 	}
-	s := a.panes[i]
+	s := &a.panes[i]
 	style := a.chartStyle(t)
 	active := a.active(s)
 	Paint(p, panes, s.candles, active, a.vp, ptr, a.crossIndex, style)
@@ -1277,7 +1304,7 @@ func (a *Chart) paintCompare(p *ui.Painter, r ui.Rect, t *ui.Theme) {
 	}
 	primary, compare := a.overlayPair()
 	style := a.chartStyle(t)
-	active := a.active(a.panes[0])
+	active := a.active(&a.panes[0])
 	PaintCompare(p, panes, primary, compare, active, a.vp, ptr, a.crossIndex, style)
 	var rubber *Rubber
 	if a.draftOn && a.draftPane == 0 && a.crossPane == 0 {
@@ -1328,7 +1355,7 @@ func (a *Chart) readout(i int) string {
 			return line
 		}
 	}
-	for _, ind := range a.active(s) {
+	for _, ind := range a.active(&a.panes[i]) {
 		if v := ind.ValueAt(idx); v != "" {
 			line += "  " + v
 		}

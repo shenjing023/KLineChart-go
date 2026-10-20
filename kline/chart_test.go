@@ -707,7 +707,7 @@ func TestFibEndpointDrag(t *testing.T) {
 	fib := a.panes[0].overlays.Items()[0]
 	other := fib.Points[1]
 	end := fib.Points[0]
-	scale := MainScale(a.panes[0].candles, a.active(a.panes[0]), a.vp, a.plotW)
+	scale := MainScale(a.panes[0].candles, a.active(&a.panes[0]), a.vp, a.plotW)
 	winX := p0.X + float32(AnchorX(end, a.vp, a.panes[0].candles))
 	winY := p0.Y + float32(PriceToLocalY(float64(p0.H), end.Price, scale))
 	tt.Press(winX, winY)
@@ -736,7 +736,7 @@ func TestFibMagnetStrongSnapsEndpoints(t *testing.T) {
 		t.Fatal("no bar under click")
 	}
 	bar := a.panes[0].candles[idx]
-	scale := MainScale(a.panes[0].candles, a.active(a.panes[0]), a.vp, a.plotW)
+	scale := MainScale(a.panes[0].candles, a.active(&a.panes[0]), a.vp, a.plotW)
 	raw := LocalYToPrice(float64(p0.H), float64(y0-p0.Y), scale)
 	if onOHLC(raw, bar, 1e-6) {
 		y0 = p0.Y + p0.H*0.37
@@ -773,7 +773,7 @@ func TestSegmentEndpointDrag(t *testing.T) {
 	tt.ClickAt(p0.X+260, p0.Y+p0.H*0.6)
 	seg := a.panes[0].overlays.Items()[0]
 	end := seg.Points[0]
-	scale := MainScale(a.panes[0].candles, a.active(a.panes[0]), a.vp, a.plotW)
+	scale := MainScale(a.panes[0].candles, a.active(&a.panes[0]), a.vp, a.plotW)
 	winX := p0.X + float32(AnchorX(end, a.vp, a.panes[0].candles))
 	winY := p0.Y + float32(PriceToLocalY(float64(p0.H), end.Price, scale))
 	tt.Press(winX, winY)
@@ -1482,7 +1482,7 @@ func TestMagnetToolbarAndBehavior(t *testing.T) {
 		t.Fatal("no bar under click")
 	}
 	bar := a.panes[0].candles[idx]
-	scale := MainScale(a.panes[0].candles, a.active(a.panes[0]), a.vp, a.plotW)
+	scale := MainScale(a.panes[0].candles, a.active(&a.panes[0]), a.vp, a.plotW)
 	raw := LocalYToPrice(float64(p0.H), float64(y-p0.Y), scale)
 	if onOHLC(raw, bar, 1e-6) {
 		y = p0.Y + p0.H*0.37

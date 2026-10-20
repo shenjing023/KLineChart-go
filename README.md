@@ -114,7 +114,7 @@ _, _ = first, last
 
 ## Extend
 
-Register indicators and drawings before `NewChart`, usually from `init`. A chart that already exists picks up new specs from `SyncIndicators`. Built-in names and tool names stay reserved.
+Register indicators and drawings before `NewChart`, usually from `init`. A chart that already exists picks up new specs from `SyncIndicators`, which keeps every existing toggle in place: a `*bool` from `IndicatorEnabled` that a `ui.Toggle` holds stays bound. Built-in names and tool names stay reserved. `ChartOptions.Indicators` and `SetIndicators` read nil differently: nil options keep MA and MACD, and `SetIndicators(nil)` turns everything off.
 
 ### Indicator
 
@@ -201,7 +201,7 @@ Every symbol shares one bar index: bar `i` is the same open time on each pane. T
 
 Symbol names must be unique. `NewChart` with a repeated name has no panes, and `LoadError` wraps `ErrDuplicateSymbol`. An empty series pins the viewport to the left margin like any series shorter than the plot.
 
-Indicator series are cached until the candles change. Pan and zoom do not call `Calc`.
+Indicator series are cached until the candles change. Pan and zoom do not call `Calc`. An indicator that is off is not calculated when bars load, prepend, or arrive live; it is calculated once when it is turned on, if the bars changed while it was off.
 
 ## Performance
 

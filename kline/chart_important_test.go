@@ -548,7 +548,7 @@ func TestOverlayFallbackHitMatchesPaint(t *testing.T) {
 	a := NewChart(ChartOptions{Source: src, Symbols: []string{"ALPHA", "BETA"}, Layout: LayoutOverlay, Indicators: []string{}})
 	tt := ui.NewTester(a.View, 1100, 1000)
 	primary, compare := a.overlayPair()
-	inds := a.active(a.panes[0])
+	inds := a.active(&a.panes[0])
 	// No bar has a positive ALPHA close, so PaintCompare draws Paint's
 	// plot on MainScale.
 	painted := MainScale(primary, inds, a.vp, a.plotW)
@@ -615,4 +615,132 @@ func TestOverlayThreeSymbolsShareHeaderBase(t *testing.T) {
 	if !tt.HasText("GAMMA") {
 		t.Fatal("stack lost the third symbol")
 	}
+}
+
+func slotIndex(t *testing.T, a *Chart, name string) int {
+	t.Helper()
+	for i, slot := range a.slots {
+		if slot.spec.Name == name {
+			return i
+		}
+	}
+	t.Fatalf("no slot %s in %v", name, a.IndicatorNames())
+	return -1
+}
+
+func TestIndicatorEnabledSurvivesSync(t *testing.T) {
+	a := NewChart(ChartOptions{Indicators: []string{"MA"}})
+	ma, boll := a.IndicatorEnabled("MA"), a.IndicatorEnabled("BOLL")
+	if ma == nil || boll == nil || !*ma || *boll {
+		t.Fatal("setup: MA on, BOLL off")
+	}
+	maInd := a.panes[0].inds[slotIndex(t, a, "MA")]
+	// Drop the last entry, as if it had registered after NewChart, so
+	// SyncIndicators has to build a longer list.
+	last := len(a.slots) - 1
+	late := a.slots[last].spec.Name
+	a.slots = a.slots[:last]
+	for i := range a.panes {
+		a.panes[i].inds = a.panes[i].inds[:last]
+		a.panes[i].fresh = a.panes[i].fresh[:last]
+	}
+	a.SyncIndicators()
+	if len(a.slots) != last+1 || !containsName(a.IndicatorNames(), late) || a.IndicatorOn(late) {
+		t.Fatalf("sync: names %v, %s on %v", a.IndicatorNames(), late, a.IndicatorOn(late))
+	}
+	*ma = false
+	*boll = true
+	if a.IndicatorOn("MA") || !a.IndicatorOn("BOLL") {
+		t.Fatalf("pointers from before the sync are detached: MA %v BOLL %v", a.IndicatorOn("MA"), a.IndicatorOn("BOLL"))
+	}
+	if err := a.SetIndicator("MA", true); err != nil || !*ma {
+		t.Fatalf("SetIndicator after the sync did not reach the old pointer: %v %v", err, *ma)
+	}
+	if a.IndicatorEnabled("MA") != ma {
+		t.Fatal("IndicatorEnabled returned a new pointer")
+	}
+	if a.panes[0].inds[slotIndex(t, a, "MA")] != maInd {
+		t.Fatal("sync replaced a calculated indicator")
+	}
+}
+
+// calcCounter counts Calc on the indicator it wraps.
+type calcCounter struct {
+	Indicator
+	calls int
+	n     int
+}
+
+func (c *calcCounter) Calc(cs []Candle) {
+	c.calls++
+	c.n = len(cs)
+	c.Indicator.Calc(cs)
+}
+
+func TestOffIndicatorNotCalculatedUntilEnabled(t *testing.T) {
+	hour := Period{Span: 1, Unit: UnitHour}
+	stub := &StubLiveSource{}
+	for _, name := range []string{"ALPHA", "BETA"} {
+		if err := stub.SetBars(name, hour, Generate(800, symbolSeed(name))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := NewChart(ChartOptions{Source: stub, Symbols: []string{"ALPHA", "BETA"}, Period: hour, Indicators: []string{"MA"}})
+	j := slotIndex(t, a, "BOLL")
+	counters := make([]*calcCounter, len(a.panes))
+	for i := range a.panes {
+		counters[i] = &calcCounter{Indicator: a.panes[i].inds[j]}
+		a.panes[i].inds[j] = counters[i]
+	}
+	calls := func(want int) {
+		t.Helper()
+		for i, c := range counters {
+			if c.calls != want {
+				t.Fatalf("%s BOLL Calc %d times, want %d", a.panes[i].name, c.calls, want)
+			}
+		}
+	}
+	tt := ui.NewTester(a.View, 960, 720)
+	pushBoth(stub, a, 1)
+	a.vp.Offset = 2
+	tt.Frame()
+	if a.Bars() != sampleBars+1+forwardBatch {
+		t.Fatalf("setup: live bar and forward load, bars %d", a.Bars())
+	}
+	a.SyncIndicators()
+	tt.Frame()
+	calls(0)
+
+	*a.IndicatorEnabled("BOLL") = true
+	tt.Frame()
+	calls(1)
+	for i, c := range counters {
+		if c.n != len(a.panes[i].candles) {
+			t.Fatalf("BOLL calculated %d bars, pane has %d", c.n, len(a.panes[i].candles))
+		}
+	}
+	tt.Frame()
+	calls(1)
+	pushBoth(stub, a, 1)
+	calls(2)
+
+	if err := a.SetIndicator("BOLL", false); err != nil {
+		t.Fatal(err)
+	}
+	pushBoth(stub, a, 1)
+	tt.Frame()
+	calls(2)
+	if err := a.SetIndicator("BOLL", true); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	calls(3)
+	if err := a.SetIndicators([]string{"MA"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetIndicators([]string{"MA", "BOLL"}); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	calls(3)
 }

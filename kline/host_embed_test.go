@@ -390,6 +390,8 @@ func TestHostIndicatorAndSubPane(t *testing.T) {
 
 func TestSyncIndicatorsPicksUpLateRegistration(t *testing.T) {
 	c := kline.NewChart(kline.ChartOptions{Symbols: []string{"ALPHA"}, Indicators: []string{}})
+	// A ui.Toggle bound before the sync keeps driving the chart after it.
+	ma := c.IndicatorEnabled("MA")
 	had := false
 	for _, name := range c.IndicatorNames() {
 		if name == "HOSTLATE" {
@@ -418,6 +420,10 @@ func TestSyncIndicatorsPicksUpLateRegistration(t *testing.T) {
 	}
 	if !had && c.IndicatorOn("HOSTLATE") {
 		t.Fatal("a synced indicator should start off")
+	}
+	*ma = true
+	if !c.IndicatorOn("MA") || c.IndicatorEnabled("MA") != ma {
+		t.Fatal("the MA toggle bound before SyncIndicators was detached")
 	}
 	if err := c.SetIndicator("HOSTLATE", true); err != nil {
 		t.Fatal(err)

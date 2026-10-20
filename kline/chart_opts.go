@@ -67,6 +67,8 @@ type ChartOptions struct {
 	// Indicators names the registry entries that start on, for example
 	// "MA", "MACD", "BOLL", "KDJ". Nil keeps MA and MACD on. An empty
 	// slice turns every indicator off. Unknown names are ignored.
+	// SetIndicators reads nil differently: there it turns every
+	// indicator off.
 	Indicators []string
 	Magnet     MagnetMode
 	// HideHeader skips the per-symbol OHLCV line View normally paints.
@@ -114,13 +116,13 @@ func NewChart(opts ChartOptions) *Chart {
 	for _, name := range opts.Indicators {
 		selected[name] = true
 	}
-	slots := make([]indicatorSlot, len(reg))
+	slots := make([]*indicatorSlot, len(reg))
 	for i, spec := range reg {
 		on := spec.Name == "MA" || spec.Name == "MACD"
 		if explicit {
 			on = selected[spec.Name]
 		}
-		slots[i] = indicatorSlot{spec: spec, on: on}
+		slots[i] = &indicatorSlot{spec: spec, on: on}
 	}
 	panes := make([]series, len(symbols))
 	for i, name := range symbols {
@@ -327,9 +329,10 @@ func (a *Chart) Hollow() bool { return a.hollowUp }
 func (a *Chart) HollowEnabled() *bool { return &a.hollowUp }
 
 // SetIndicators turns on exactly the named indicators and turns the
-// others off. Nil and an empty slice turn every indicator off. An
-// unknown name returns ErrUnknownIndicator and changes nothing.
-// Volume is not an indicator and has no name here.
+// others off. Nil and an empty slice both turn every indicator off. That
+// differs from ChartOptions.Indicators, where nil keeps the default MA
+// and MACD. An unknown name returns ErrUnknownIndicator and changes
+// nothing. Volume is not an indicator and has no name here.
 func (a *Chart) SetIndicators(names []string) error {
 	want := make(map[string]bool, len(names))
 	for _, name := range names {
@@ -345,22 +348,41 @@ func (a *Chart) SetIndicators(names []string) error {
 }
 
 // SyncIndicators reloads the registry. Specs registered after NewChart
-// show up here, off, until SetIndicator turns them on. Existing toggles
-// are kept. Each symbol recalculates.
+// show up here, off, until SetIndicator turns them on. Existing entries
+// are kept in place: their toggles, the pointers IndicatorEnabled
+// returned, and their calculated values all stay, so nothing is
+// recalculated.
 func (a *Chart) SyncIndicators() {
 	reg := orderedSpecs(Registry())
-	on := make(map[string]bool, len(a.slots))
-	for _, slot := range a.slots {
-		on[slot.spec.Name] = slot.on
+	have := make(map[string]int, len(a.slots))
+	for i, slot := range a.slots {
+		have[slot.spec.Name] = i
 	}
-	slots := make([]indicatorSlot, len(reg))
+	slots := make([]*indicatorSlot, len(reg))
+	from := make([]int, len(reg))
 	for i, spec := range reg {
-		slots[i] = indicatorSlot{spec: spec, on: on[spec.Name]}
+		j, ok := have[spec.Name]
+		if !ok {
+			slots[i], from[i] = &indicatorSlot{spec: spec}, -1
+			continue
+		}
+		slots[i], from[i] = a.slots[j], j
+	}
+	for p := range a.panes {
+		s := &a.panes[p]
+		a.ensureInds(s)
+		inds := make([]Indicator, len(slots))
+		fresh := make([]bool, len(slots))
+		for i, j := range from {
+			if j >= 0 {
+				inds[i], fresh[i] = s.inds[j], s.fresh[j]
+				continue
+			}
+			inds[i] = slots[i].spec.New()
+		}
+		s.inds, s.fresh = inds, fresh
 	}
 	a.slots = slots
-	for i, s := range a.panes {
-		a.panes[i] = a.mount(s, s.candles, s.more)
-	}
 }
 
 // Crosshair is the bar under the pointer. ok is false when the pointer
@@ -404,8 +426,10 @@ func (a *Chart) Readout(symbol string) string {
 	return ""
 }
 
-// SetIndicator turns a registry indicator on or off for every symbol.
-// Volume is not an indicator and has no name here.
+// SetIndicator turns a registry indicator on or off for every symbol. An
+// indicator is only calculated while it is on; one turned on after the
+// bars changed is calculated when it is next drawn or read. Volume is
+// not an indicator and has no name here.
 func (a *Chart) SetIndicator(name string, on bool) error {
 	for i := range a.slots {
 		if a.slots[i].spec.Name == name {
@@ -437,7 +461,9 @@ func (a *Chart) IndicatorNames() []string {
 }
 
 // IndicatorEnabled is the flag a host ui.Toggle can bind for name.
-// Unknown names return nil. The pointer stays valid for the life of the chart.
+// Unknown names return nil. The pointer stays valid for the life of the
+// chart, including across SyncIndicators, and writing it is the same as
+// SetIndicator.
 func (a *Chart) IndicatorEnabled(name string) *bool {
 	for i := range a.slots {
 		if a.slots[i].spec.Name == name {
