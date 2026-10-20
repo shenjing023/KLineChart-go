@@ -1,6 +1,9 @@
 package kline
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/chart"
 )
@@ -30,6 +33,32 @@ type Indicator interface {
 	ValueAt(i int) string
 }
 
+// LinePlot is optional. A main-pane indicator implements it so the
+// price scale includes Series, and so both layouts can stroke those
+// lines. NaN entries are gaps. LineColors aligns with Series; a zero
+// color skips that line.
+//
+// When Series is non-nil, Paint strokes the lines and does not call
+// DrawMain. Leave DrawMain empty. Indicators that paint fills or
+// markers instead of lines leave Series nil and implement DrawMain.
+// Overlay mode does not call DrawMain; a main indicator with no
+// Series is not drawn there.
+type LinePlot interface {
+	Series() [][]float64
+	LineColors() []ui.Color
+}
+
+// SubPlot is optional. A sub-pane indicator implements it so the Y
+// axis matches the visible window. Without it the pane still opens
+// and DrawSub is called, on a 0..1 scale.
+type SubPlot interface {
+	Scale(first, last int) chart.Linear
+}
+
+// ErrDuplicateIndicator is returned when Register is called with a
+// name that is already in the list.
+var ErrDuplicateIndicator = errors.New("kline: duplicate indicator")
+
 // Spec is one entry in the indicator list. New returns a fresh
 // indicator for one symbol.
 type Spec struct {
@@ -40,10 +69,31 @@ type Spec struct {
 
 var registry []Spec
 
-// Register appends an indicator to the list the app mounts. init
-// functions in this package call it.
-func Register(spec Spec) {
+// Register appends an indicator. Name, Kind, and New are required.
+// Kind is PaneMain or PaneSub. A repeated name returns
+// ErrDuplicateIndicator and leaves the list unchanged. Call it from
+// an init function, before NewChart. A chart that already exists
+// picks the spec up from SyncIndicators.
+func Register(spec Spec) error {
+	if spec.Name == "" || spec.New == nil {
+		return fmt.Errorf("kline: indicator %q needs a name and constructor", spec.Name)
+	}
+	if spec.Kind != PaneMain && spec.Kind != PaneSub {
+		return fmt.Errorf("kline: indicator %q kind %q", spec.Name, spec.Kind)
+	}
+	for _, have := range registry {
+		if have.Name == spec.Name {
+			return fmt.Errorf("%w: %s", ErrDuplicateIndicator, spec.Name)
+		}
+	}
 	registry = append(registry, spec)
+	return nil
+}
+
+func mustRegister(spec Spec) {
+	if err := Register(spec); err != nil {
+		panic(err)
+	}
 }
 
 // Registry returns a copy of the registered indicator list.

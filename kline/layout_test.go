@@ -38,7 +38,7 @@ func TestSplitStackPlacesMACDUnderVolume(t *testing.T) {
 
 	off := SplitStack(r, true, false, false)
 	legacy := Split(r)
-	if off != legacy {
+	if off.Price != legacy.Price || off.Volume != legacy.Volume || off.MACD != legacy.MACD || off.KDJ != legacy.KDJ || off.Time != legacy.Time || off.PriceAxis != legacy.PriceAxis || off.VolumeAxis != legacy.VolumeAxis || off.MACDAxis != legacy.MACDAxis || off.KDJAxis != legacy.KDJAxis || len(off.Extra) != 0 || len(legacy.Extra) != 0 {
 		t.Fatalf("MACD off should match Split\n got %+v\nwant %+v", off, legacy)
 	}
 }

@@ -127,41 +127,92 @@ func CompareScales(primary, compare []Candle, inds []Indicator, vp Viewport, plo
 		sets = append(sets, compare)
 	}
 	base = IndexBase(first, last, sets...)
-	norm := NormalizeToIndex(primary, base)
-	if norm == nil {
+	if base < 0 || base >= len(primary) {
 		index = chart.NewLinear(0, 1)
 		return index, index, base
 	}
-	var extra [][]float64
-	if line := NormalizeClose(compare, base); line != nil {
-		extra = append(extra, line)
-	}
 	baseClose := primary[base].Close
-	for _, ind := range inds {
-		switch v := ind.(type) {
-		case *MA:
-			if v == nil || v.PaneKind() != PaneMain {
-				continue
-			}
-			for _, line := range v.Lines() {
-				extra = append(extra, scaleLine(line, baseClose))
-			}
-		case *BOLL:
-			if v == nil || v.PaneKind() != PaneMain {
-				continue
-			}
-			for _, line := range [][]float64{v.Mid, v.Up, v.Low} {
-				extra = append(extra, scaleLine(line, baseClose))
-			}
+	if baseClose <= 0 || math.IsNaN(baseClose) {
+		index = chart.NewLinear(0, 1)
+		return index, index, base
+	}
+	// Domain only reads the visible window. Copying that window keeps
+	// PriceDomain's padding and avoids a full-series normalize on pan.
+	if first > last {
+		index = chart.NewLinear(0, 1).Nice(5)
+		raw = rawScale(index, baseClose)
+		return index, raw, base
+	}
+	norm := normalizeWindow(primary, baseClose, first, last)
+	var extra [][]float64
+	if len(compare) > 0 && base < len(compare) {
+		compareClose := compare[base].Close
+		if compareClose > 0 && !math.IsNaN(compareClose) {
+			extra = append(extra, windowCloses(compare, compareClose, first, last))
 		}
 	}
-	lo, hi := PriceDomain(norm, first, last, extra...)
+	for _, ind := range inds {
+		lp, ok := ind.(LinePlot)
+		if !ok || ind == nil || ind.PaneKind() != PaneMain {
+			continue
+		}
+		for _, line := range lp.Series() {
+			extra = append(extra, windowScaled(line, baseClose, first, last))
+		}
+	}
+	lo, hi := PriceDomain(norm, 0, len(norm)-1, extra...)
 	index = chart.NewLinear(lo, hi).Nice(5)
-	raw = chart.Linear{
+	raw = rawScale(index, baseClose)
+	return index, raw, base
+}
+
+func rawScale(index chart.Linear, baseClose float64) chart.Linear {
+	return chart.Linear{
 		Lo: index.Lo * baseClose / 100,
 		Hi: index.Hi * baseClose / 100,
 	}
-	return index, raw, base
+}
+
+func normalizeWindow(cs []Candle, baseClose float64, first, last int) []Candle {
+	out := make([]Candle, last-first+1)
+	for i := first; i <= last; i++ {
+		c := cs[i]
+		c.Open = scalePrice(c.Open, baseClose)
+		c.High = scalePrice(c.High, baseClose)
+		c.Low = scalePrice(c.Low, baseClose)
+		c.Close = scalePrice(c.Close, baseClose)
+		out[i-first] = c
+	}
+	return out
+}
+
+func windowCloses(cs []Candle, baseClose float64, first, last int) []float64 {
+	out := make([]float64, last-first+1)
+	for i := first; i <= last; i++ {
+		if i < 0 || i >= len(cs) {
+			out[i-first] = math.NaN()
+			continue
+		}
+		out[i-first] = scalePrice(cs[i].Close, baseClose)
+	}
+	return out
+}
+
+func windowScaled(series []float64, baseClose float64, first, last int) []float64 {
+	out := make([]float64, last-first+1)
+	for i := first; i <= last; i++ {
+		if i < 0 || i >= len(series) {
+			out[i-first] = math.NaN()
+			continue
+		}
+		v := series[i]
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			out[i-first] = math.NaN()
+			continue
+		}
+		out[i-first] = v / baseClose * 100
+	}
+	return out
 }
 
 func commonLen(primary, compare []Candle) int {
@@ -169,21 +220,6 @@ func commonLen(primary, compare []Candle) int {
 		return len(primary)
 	}
 	return len(compare)
-}
-
-func scaleLine(series []float64, baseClose float64) []float64 {
-	if baseClose <= 0 || math.IsNaN(baseClose) {
-		return nil
-	}
-	out := make([]float64, len(series))
-	for i, v := range series {
-		if math.IsNaN(v) || math.IsInf(v, 0) {
-			out[i] = math.NaN()
-			continue
-		}
-		out[i] = v / baseClose * 100
-	}
-	return out
 }
 
 // PaintCompare draws primary as candles and compare as a close line on
@@ -197,18 +233,18 @@ func PaintCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []
 		return false
 	}
 	index, _, base := CompareScales(primary, compare, inds, vp, float64(price.W))
-	norm := NormalizeToIndex(primary, base)
-	if norm == nil {
+	if base < 0 || base >= len(primary) || primary[base].Close <= 0 || math.IsNaN(primary[base].Close) {
 		Paint(p, panes, primary, inds, vp, ptr, barIndex, style)
 		return false
 	}
+	baseClose := primary[base].Close
 
 	p.Fill(ui.Rect{X: price.X, Y: price.Y, W: price.W + panes.PriceAxis.W, H: panes.Time.Y + panes.Time.H - price.Y}, style.Plot, 0)
 	p.Fill(panes.Volume, style.VolumeBg, 0)
 
-	macdInd, kdjInd := applyIndicatorStyle(inds, panes, style)
+	applyIndicatorStyle(inds, panes, style)
 
-	first, last := vp.Visible(len(norm), float64(price.W))
+	first, last := vp.Visible(len(primary), float64(price.W))
 	volScale := chart.NewLinear(0, VolumeMax(primary, first, last)).Nice(3)
 	if volScale.Lo < 0 {
 		volScale.Lo = 0
@@ -217,72 +253,39 @@ func PaintCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []
 		volScale.Hi = volScale.Lo + 1
 	}
 
-	var macdScale chart.Linear
-	hasMACD := macdInd != nil
-	if hasMACD {
-		macdScale = macdInd.Scale(first, last)
-	}
-	var kdjScale chart.Linear
-	hasKDJ := kdjInd != nil
-	if hasKDJ {
-		kdjScale = kdjInd.Scale(first, last)
-	}
+	layers := subLayers(panes, inds, first, last)
 
-	drawGrid(p, panes, norm, vp, index, volScale, style)
-	baseClose := primary[base].Close
+	drawGrid(p, panes, primary, vp, index, volScale, style)
 	p.Clip(price, 0, func() {
-		drawCandles(p, price, norm, vp, index, first, last, style)
+		drawCandles(p, price, primary, vp, index, first, last, style, baseClose)
 		if style.Compare != (ui.Color{}) {
-			if line := NormalizeClose(compare, base); line != nil {
-				drawMA(p, price, line, vp, index, first, last, style.Compare)
-			}
+			drawIndexedClose(p, price, compare, base, vp, index, first, last, style.Compare)
 		}
 		for _, ind := range inds {
-			switch v := ind.(type) {
-			case *MA:
-				if v == nil {
+			lp, ok := ind.(LinePlot)
+			if !ok || ind == nil || ind.PaneKind() != PaneMain {
+				continue
+			}
+			colors := lp.LineColors()
+			for i, line := range lp.Series() {
+				if i >= len(colors) || colors[i] == (ui.Color{}) {
 					continue
 				}
-				for i, line := range v.Lines() {
-					color := ui.Color{}
-					if i < len(v.colors) {
-						color = v.colors[i]
-					}
-					if color == (ui.Color{}) {
-						continue
-					}
-					drawMA(p, price, scaleLine(line, baseClose), vp, index, first, last, color)
-				}
-			case *BOLL:
-				if v == nil {
-					continue
-				}
-				lines := [][]float64{v.Mid, v.Up, v.Low}
-				colors := []ui.Color{v.MidColor, v.UpColor, v.LowColor}
-				for i, line := range lines {
-					if colors[i] == (ui.Color{}) {
-						continue
-					}
-					drawMA(p, price, scaleLine(line, baseClose), vp, index, first, last, colors[i])
-				}
+				drawMAScaled(p, price, line, vp, index, first, last, colors[i], baseClose)
 			}
 		}
 	})
 	p.Clip(panes.Volume, 0, func() {
 		drawVolume(p, panes.Volume, primary, vp, volScale, first, last, style)
 	})
-	if hasMACD {
-		drawSubAxis(p, panes.MACD, panes.MACDAxis, macdScale, style)
-		p.Clip(panes.MACD, 0, func() {
-			macdInd.DrawSub(p, panes.MACD, vp)
+	for _, layer := range layers {
+		drawSubAxis(p, layer.plot, layer.axis, layer.scale, style)
+		ind := layer.ind
+		rect := layer.plot
+		p.Clip(rect, 0, func() {
+			ind.DrawSub(p, rect, vp)
 		})
 	}
-	if hasKDJ {
-		drawSubAxis(p, panes.KDJ, panes.KDJAxis, kdjScale, style)
-		p.Clip(panes.KDJ, 0, func() {
-			kdjInd.DrawSub(p, panes.KDJ, vp)
-		})
-	}
-	drawCrosshair(p, panes, norm, vp, index, macdScale, hasMACD, kdjScale, hasKDJ, ptr, barIndex, style)
+	drawCrosshair(p, panes, primary, vp, index, layers, ptr, barIndex, style)
 	return true
 }

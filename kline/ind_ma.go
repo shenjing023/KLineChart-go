@@ -9,7 +9,7 @@ import (
 )
 
 func init() {
-	Register(Spec{
+	mustRegister(Spec{
 		Name: "MA",
 		Kind: PaneMain,
 		New:  func() Indicator { return NewMA(5, 20) },
@@ -41,6 +41,12 @@ func (m *MA) PaneKind() string { return PaneMain }
 // Lines returns the calculated averages, one slice per period, parallel
 // to Periods. Nil before Calc.
 func (m *MA) Lines() [][]float64 { return m.lines }
+
+// Series and LineColors implement LinePlot. Paint strokes these lines
+// and skips DrawMain.
+func (m *MA) Series() [][]float64 { return m.lines }
+
+func (m *MA) LineColors() []ui.Color { return m.colors }
 
 // SetColors sets the line color for each period. A missing color keeps
 // the previous one. Paint calls this from the theme before DrawMain.

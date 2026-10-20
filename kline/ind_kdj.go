@@ -8,7 +8,7 @@ import (
 )
 
 func init() {
-	Register(Spec{
+	mustRegister(Spec{
 		Name: "KDJ",
 		Kind: PaneSub,
 		New:  func() Indicator { return NewKDJ(9, 3, 3) },
