@@ -388,6 +388,237 @@ func nearColor(c color.RGBA, targets []ui.Color) bool {
 	return false
 }
 
+func TestHLinePlaceDragAndDelete(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	if !tt.HasText("Pan") || !tt.HasText("H-Line") || !tt.HasText("Segment") {
+		t.Fatalf("toolbar texts %q", tt.Texts())
+	}
+	if err := tt.Click("H-Line"); err != nil {
+		t.Fatal(err)
+	}
+	if a.tool != toolHLine {
+		t.Fatalf("tool %d", a.tool)
+	}
+	price := a.painted[0].Price
+	x := price.X + 160
+	y := price.Y + price.H*0.35
+	startOff := a.vp.Offset
+	tt.Press(x, y)
+	tt.Move(x+80, y)
+	tt.Release(x+80, y)
+	if math.Abs(a.vp.Offset-startOff) > 0.01 {
+		t.Fatalf("draw mode panned: offset %v, start %v", a.vp.Offset, startOff)
+	}
+	if n := len(a.panes[0].overlays.Items()); n != 1 {
+		t.Fatalf("alpha overlays %d", n)
+	}
+	if len(a.panes[1].overlays.Items()) != 0 {
+		t.Fatal("hline should stay on the pane that was clicked")
+	}
+	line := a.panes[0].overlays.Items()[0]
+	if line.Kind != kline.OverlayHLine || !line.Selected || len(line.Points) != 1 {
+		t.Fatalf("line %+v", line)
+	}
+	placed := line.Points[0].Price
+
+	y2 := price.Y + price.H*0.7
+	tt.Press(x, y)
+	tt.Move(x, y2)
+	tt.Release(x, y2)
+	moved := a.panes[0].overlays.Items()[0].Points[0].Price
+	if moved >= placed-0.05 {
+		t.Fatalf("dragging down should lower the price: %v -> %v", placed, moved)
+	}
+
+	tt.Key(0, ui.KeyDelete)
+	if len(a.panes[0].overlays.Items()) != 0 {
+		t.Fatal("delete should remove the selected hline")
+	}
+
+	if err := tt.Click("Pan"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Press(x, y)
+	tt.Move(x+100, y)
+	tt.Release(x+100, y)
+	if a.vp.Offset >= startOff-1 {
+		t.Fatalf("pan tool should pan, offset %v start %v", a.vp.Offset, startOff)
+	}
+}
+
+func TestSegmentTwoClickPerPane(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	if err := tt.Click("Segment"); err != nil {
+		t.Fatal(err)
+	}
+	p0 := a.painted[0].Price
+	p1 := a.painted[1].Price
+	tt.ClickAt(p0.X+120, p0.Y+p0.H*0.3)
+	if !a.draftOn || a.draftPane != 0 {
+		t.Fatalf("draft on %v pane %d", a.draftOn, a.draftPane)
+	}
+	if len(a.panes[0].overlays.Items()) != 0 {
+		t.Fatal("first click should leave the segment unfinished")
+	}
+	x1 := p0.X + 280
+	y1 := p0.Y + p0.H*0.7
+	tt.Move(x1, y1)
+	if a.crossPane != 0 {
+		t.Fatalf("rubber-band hover pane %d", a.crossPane)
+	}
+	tt.ClickAt(x1, y1)
+	if a.draftOn {
+		t.Fatal("second click should finish the segment")
+	}
+	items := a.panes[0].overlays.Items()
+	if len(items) != 1 || items[0].Kind != kline.OverlaySegment || len(items[0].Points) != 2 || !items[0].Selected {
+		t.Fatalf("segment %+v", items)
+	}
+	if items[0].Points[0].BarIndex == items[0].Points[1].BarIndex {
+		t.Fatal("segment endpoints should sit on different bars")
+	}
+	if len(a.panes[1].overlays.Items()) != 0 {
+		t.Fatal("segment landed on the other pane")
+	}
+
+	tt.ClickAt(p1.X+100, p1.Y+p1.H*0.4)
+	tt.ClickAt(p1.X+220, p1.Y+p1.H*0.6)
+	if len(a.panes[0].overlays.Items()) != 1 || len(a.panes[1].overlays.Items()) != 1 {
+		t.Fatalf("per-pane counts %d %d", len(a.panes[0].overlays.Items()), len(a.panes[1].overlays.Items()))
+	}
+
+	// The segment runs between the two click prices. Its X is the bar
+	// center, within half a bar of the click, so the midpoint still hits.
+	tt.RightClickAt(p1.X+160, p1.Y+p1.H*0.5)
+	if len(a.panes[1].overlays.Items()) != 0 {
+		t.Fatal("right-click should delete the segment on that pane")
+	}
+	if len(a.panes[0].overlays.Items()) != 1 {
+		t.Fatal("right-click on beta should leave alpha's segment")
+	}
+}
+
+func TestSegmentEndpointDrag(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	if err := tt.Click("Segment"); err != nil {
+		t.Fatal(err)
+	}
+	p0 := a.painted[0].Price
+	tt.ClickAt(p0.X+100, p0.Y+p0.H*0.3)
+	tt.ClickAt(p0.X+260, p0.Y+p0.H*0.6)
+	seg := a.panes[0].overlays.Items()[0]
+	end := seg.Points[0]
+	scale := kline.MainScale(a.panes[0].candles, a.active(a.panes[0]), a.vp, a.plotW)
+	winX := p0.X + float32(kline.AnchorX(end, a.vp, a.panes[0].candles))
+	winY := p0.Y + float32(kline.PriceToLocalY(float64(p0.H), end.Price, scale))
+	tt.Press(winX, winY)
+	tt.Move(winX+40, p0.Y+p0.H*0.85)
+	tt.Release(winX+40, p0.Y+p0.H*0.85)
+	got := a.panes[0].overlays.Items()[0].Points[0]
+	if got.Price >= end.Price-0.05 {
+		t.Fatalf("dragging an endpoint down should lower its price: %v -> %v", end.Price, got.Price)
+	}
+	if got.BarIndex == end.BarIndex && math.Abs(got.Price-end.Price) < 0.05 {
+		t.Fatal("endpoint did not move")
+	}
+}
+
+func TestPeriodSwitchClearsOverlays(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	if err := tt.Click("H-Line"); err != nil {
+		t.Fatal(err)
+	}
+	price := a.painted[0].Price
+	tt.ClickAt(price.X+120, price.Y+price.H*0.4)
+	if len(a.panes[0].overlays.Items()) != 1 {
+		t.Fatal("hline was not placed")
+	}
+	if err := tt.Click("4h"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.panes[0].overlays.Items()) != 0 || len(a.panes[1].overlays.Items()) != 0 {
+		t.Fatal("reloading a period should drop drawings on both panes")
+	}
+}
+
+func TestForwardKeepsOverlayOnItsBar(t *testing.T) {
+	a := newApp()
+	_ = ui.NewTester(a.view, 960, 720)
+	cs := a.panes[0].candles
+	when := cs[10].Time
+	a.panes[0].overlays.Add(kline.OverlayHLine, kline.Point{BarIndex: 10, Time: when, Price: cs[10].Close})
+	a.fitted = true
+	a.vp.Offset = 2
+	a.ensureForward()
+	pt := a.panes[0].overlays.Items()[0].Points[0]
+	idx, ok := pt.Index(a.panes[0].candles)
+	if !ok || !a.panes[0].candles[idx].Time.Equal(when) {
+		t.Fatalf("overlay left its bar: idx %d ok %v", idx, ok)
+	}
+}
+
+func TestOverlayPixels(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	if err := tt.Click("H-Line"); err != nil {
+		t.Fatal(err)
+	}
+	price := a.painted[0].Price
+	tt.ClickAt(price.X+140, price.Y+price.H*0.45)
+	if err := tt.Click("Segment"); err != nil {
+		t.Fatal(err)
+	}
+	tt.ClickAt(price.X+90, price.Y+price.H*0.25)
+	tt.ClickAt(price.X+300, price.Y+price.H*0.72)
+	img := tt.Image()
+	// Magenta is the unselected hline. It is not the MA accent, so the
+	// count is the drawing and not the indicator.
+	line := countNear(img, price, ui.RGB(217, 70, 239))
+	hot := countNear(img, price, ui.RGB(255, 214, 0))
+	if line < 30 {
+		t.Fatalf("hline pixels %d in %+v", line, price)
+	}
+	if hot < 15 {
+		t.Fatalf("selected segment pixels %d in %+v", hot, price)
+	}
+}
+
+func countNear(img *image.RGBA, r ui.Rect, target ui.Color) int {
+	if img == nil {
+		return 0
+	}
+	b := img.Bounds()
+	x0 := int(r.X)
+	y0 := int(r.Y)
+	x1 := int(r.X + r.W)
+	y1 := int(r.Y + r.H)
+	if x0 < b.Min.X {
+		x0 = b.Min.X
+	}
+	if y0 < b.Min.Y {
+		y0 = b.Min.Y
+	}
+	if x1 > b.Max.X {
+		x1 = b.Max.X
+	}
+	if y1 > b.Max.Y {
+		y1 = b.Max.Y
+	}
+	n := 0
+	for y := y0; y < y1; y++ {
+		for x := x0; x < x1; x++ {
+			if nearColor(img.RGBAAt(x, y), []ui.Color{target}) {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 func TestRenderFrames(t *testing.T) {
 	dir := os.Getenv("KLINE_FRAMES")
 	if dir == "" {
@@ -409,6 +640,30 @@ func TestRenderFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 	writePNG(t, dir+"/p1-1d.png", tt.Image())
+
+	if err := tt.Click("1h"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("H-Line"); err != nil {
+		t.Fatal(err)
+	}
+	alpha := a.painted[0].Price
+	beta := a.painted[1].Price
+	tt.ClickAt(alpha.X+180, alpha.Y+alpha.H*0.42)
+	if err := tt.Click("Segment"); err != nil {
+		t.Fatal(err)
+	}
+	tt.ClickAt(alpha.X+80, alpha.Y+alpha.H*0.22)
+	tt.Move(alpha.X+320, alpha.Y+alpha.H*0.78)
+	writePNG(t, dir+"/p2-rubber-band.png", tt.Image())
+	tt.ClickAt(alpha.X+320, alpha.Y+alpha.H*0.78)
+	tt.ClickAt(beta.X+140, beta.Y+beta.H*0.35)
+	tt.ClickAt(beta.X+300, beta.Y+beta.H*0.62)
+	tt.Move(10, 10)
+	writePNG(t, dir+"/p2-hline-segment.png", tt.Image())
+	if len(a.panes[0].overlays.Items()) != 2 || len(a.panes[1].overlays.Items()) != 1 {
+		t.Fatalf("frame overlays %d %d", len(a.panes[0].overlays.Items()), len(a.panes[1].overlays.Items()))
+	}
 }
 
 func assertStep(t *testing.T, a *app, step time.Duration) {

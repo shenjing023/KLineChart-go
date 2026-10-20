@@ -22,6 +22,9 @@ type Style struct {
 	Plot, VolumeBg ui.Color
 	LabelFill      ui.Color
 	LabelText      ui.Color
+	// Overlay is a drawing that is not selected. OverlayHot is the
+	// selected one, including its handles.
+	Overlay, OverlayHot ui.Color
 }
 
 // StyleFrom builds colors that stay readable on the window theme.
@@ -39,19 +42,39 @@ func StyleFrom(t *ui.Theme) Style {
 		labelText = t.Background
 	}
 	return Style{
-		Up:        ui.RGB(38, 166, 154),
-		Down:      ui.RGB(239, 83, 80),
-		MA5:       t.Accent,
-		MA20:      t.Warning,
-		Grid:      t.Border,
-		Cross:     t.TextMuted,
-		Text:      t.Text,
-		Muted:     t.TextMuted,
-		Plot:      t.Background,
-		VolumeBg:  t.Surface,
-		LabelFill: fill,
-		LabelText: labelText,
+		Up:         ui.RGB(38, 166, 154),
+		Down:       ui.RGB(239, 83, 80),
+		MA5:        t.Accent,
+		MA20:       t.Warning,
+		Grid:       t.Border,
+		Cross:      t.TextMuted,
+		Text:       t.Text,
+		Muted:      t.TextMuted,
+		Plot:       t.Background,
+		VolumeBg:   t.Surface,
+		LabelFill:  fill,
+		LabelText:  labelText,
+		Overlay:    ui.RGB(217, 70, 239),
+		OverlayHot: ui.RGB(255, 214, 0),
 	}
+}
+
+// MainScale is the price plot's Y domain: the visible bars, widened by
+// any main-pane indicator lines, then rounded to tick marks. Hit testing
+// and overlay drawing use this so a price maps to the pixel Paint used.
+func MainScale(cs []Candle, inds []Indicator, vp Viewport, plotW float64) chart.Linear {
+	var extra [][]float64
+	for _, ind := range inds {
+		if ind == nil || ind.PaneKind() != PaneMain {
+			continue
+		}
+		if ma, ok := ind.(*MA); ok {
+			extra = append(extra, ma.Lines()...)
+		}
+	}
+	first, last := vp.Visible(len(cs), plotW)
+	lo, hi := PriceDomain(cs, first, last, extra...)
+	return chart.NewLinear(lo, hi).Nice(5)
 }
 
 // Pointer is the pointer in window DIPs while it is over the chart.
@@ -80,7 +103,6 @@ func Paint(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewpor
 	p.Fill(ui.Rect{X: price.X, Y: price.Y, W: price.W + panes.PriceAxis.W, H: panes.Time.Y + panes.Time.H - price.Y}, style.Plot, 0)
 	p.Fill(panes.Volume, style.VolumeBg, 0)
 
-	var extra [][]float64
 	var sub Indicator
 	for _, ind := range inds {
 		if ind == nil {
@@ -90,7 +112,6 @@ func Paint(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewpor
 		case PaneMain:
 			if ma, ok := ind.(*MA); ok {
 				ma.SetColors([]ui.Color{style.MA5, style.MA20})
-				extra = append(extra, ma.Lines()...)
 			}
 		case PaneSub:
 			if sub == nil && panes.MACD.H > 1 {
@@ -102,12 +123,13 @@ func Paint(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewpor
 		}
 	}
 
-	first, last := vp.Visible(len(cs), float64(price.W))
-	lo, hi := PriceDomain(cs, first, last, extra...)
 	// chart.Linear maps a value to a fraction that grows upward.
 	// chart.Y turns that fraction into a window Y, with 0 at the
-	// bottom of the rect and 1 at the top.
-	yScale := chart.NewLinear(lo, hi).Nice(5)
+	// bottom of the rect and 1 at the top. MainScale is the same
+	// domain DrawOverlays uses, so a hit lands on the pixel that
+	// was painted.
+	yScale := MainScale(cs, inds, vp, float64(price.W))
+	first, last := vp.Visible(len(cs), float64(price.W))
 	volScale := chart.NewLinear(0, VolumeMax(cs, first, last)).Nice(3)
 	if volScale.Lo < 0 {
 		volScale.Lo = 0

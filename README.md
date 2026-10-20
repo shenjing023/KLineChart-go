@@ -17,6 +17,7 @@ It is a demo of the interaction in [KLineChart](https://github.com/klinecharts/K
 - **Reset view** returns both panes to the latest bars at the default width.
 - **1h / 4h / 1d** reload both panes from the data source and fit the latest bars. The default **1h** series is the same walk as before (ALPHA seed 42, BETA seed 99).
 - Dragging to the left edge loads older bars, prepends them, and shifts the shared offset by that count so the bars on screen stay put. A load already in flight does not start another.
+- **Pan / H-Line / Segment.** Pan drags the chart. H-Line places a horizontal price line with one click; dragging it changes the price. Segment takes two clicks, with a rubber band between them. A draw tool turns pan off. The selected line is highlighted. Delete removes it, and a right-click removes the line under the pointer. Drawings belong to the pane that was clicked.
 
 ## Run
 
@@ -56,7 +57,7 @@ Native UI draws with Direct3D 11 on Windows, Metal on macOS, and OpenGL on Linux
 ## Layout
 
 - `main.go` — window, one readout per symbol, the shared viewport and crosshair index, and the period and indicator toggles.
-- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, `DataSource` (`Period`, `BarRequest`, `SyntheticSource`), and the indicator list (`MA`, `MACD`). Volume is drawn by `Paint`, not by an indicator.
+- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, `DataSource` (`Period`, `BarRequest`, `SyntheticSource`), the indicator list (`MA`, `MACD`), and overlays (`Layer`, horizontal price line, segment). Volume is drawn by `Paint`, not by an indicator. Each symbol keeps its own `Layer`.
 
 Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot. Dragging right decreases `offset` for all panes. The wheel keeps the bar under the pointer fixed while the width changes, and the other pane uses that same width. Each pane's Y axis is its own `chart.Linear` over that symbol's visible high/low. `Paint` takes the shared bar index so a pane draws the vertical line even when the pointer is on the other one.
 
@@ -96,11 +97,31 @@ Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot.
 
 - BOLL、SAR 等其余指标，以及运行时 `registerIndicator` 热加载
 - 把 VOL 再包成可替换指标
-- P2 画线、P3 同轴叠加、P4 样式外置
+- P3 同轴叠加、P4 样式外置
+
+## P2
+
+本阶段在价格区画线。指标和视窗没有改交互模型，画线是挂在每个 pane 上的一层。
+
+能做：
+
+- `kline.Point` 用 `BarIndex` + `Price` 记下位置。放上去的时候同时记下那根 K 线的开盘 `Time`。之后按时间找回这根 bar，所以向左加载、前面插入更早的 K 线时，线还停在原来那根上，不会跟着序号滑走。
+- `kline.Layer` 是**一个 pane 自己的线**。ALPHA 上的线不会出现在 BETA 上，反过来也一样。两个 pane 各有各的选中。
+- **H-Line**：在价格区点一下放下一条水平价线。拖动改价格。选中时加粗，并在左端画一个方块。
+- **Segment**：点两下。第一下之后，指针和第一点之间有一条橡皮筋；第二下完成。选中时两端有方块。在 Segment 工具下拖端点，可以改那一端的 bar 和价格。
+- 工具条 **Pan / H-Line / Segment**。选了画线工具时，拖动不再平移。滚轮缩放仍然可用。切回 Pan 之后，拖动重新平移；在线上点一下（没有拖开）会选中它。
+- **Delete** 删掉当前 pane 里选中的那条。**右键**删掉指针下面的那条，只影响这个 pane。
+- 切换周期会重新加载 K 线，两个 pane 上的线一起清掉。
+
+明确不做：
+
+- 斐波那契、笔刷，以及磁吸的弱档 / 强档
+- 一条线同时画在两个 pane 上
+- P3 同轴叠加、P4 样式外置
 
 ## Out of scope
 
-- Feature parity with KLineChart beyond the list above: drawings, a full indicator set, log scale, or session gaps.
+- Feature parity with KLineChart beyond the list above: the rest of the overlay set, a full indicator set, log scale, or session gaps.
 - A WebView, or embedding the JavaScript chart.
 - Live market data. A real feed implements `DataSource`; this repo does not open a socket.
 - Installer polish beyond `go build` and `mygo build`.

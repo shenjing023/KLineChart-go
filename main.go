@@ -11,6 +11,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/chart"
 	"github.com/shenjing023/KLineChart-go/kline"
 )
 
@@ -22,6 +23,17 @@ const (
 	forwardEdge = 5
 )
 
+const (
+	toolPan = iota
+	toolHLine
+	toolSegment
+)
+
+// clickSlop is how far a pan-tool press can move, in DIPs, and still
+// count as a click that selects an overlay. It matches MyGo's drag
+// threshold.
+const clickSlop = 4
+
 // series is one symbol. Panes share one period, so a bar index is the
 // same open time on each. inds is one instance per app slot, calculated
 // for this symbol's bars.
@@ -30,6 +42,9 @@ type series struct {
 	candles []kline.Candle
 	inds    []kline.Indicator
 	more    bool
+	// overlays are this pane's drawings. They are not shared with the
+	// other symbol: a line placed here is not drawn on the other pane.
+	overlays kline.Layer
 }
 
 // indicatorSlot is one entry in the app's indicator list. on is the
@@ -67,6 +82,25 @@ type app struct {
 	slots []indicatorSlot
 	// painted is each symbol's layout from the latest frame.
 	painted []kline.Panes
+	// tool is Pan, H-Line, or Segment. Draw tools do not pan: the
+	// pointer places and moves overlays instead.
+	tool int
+	// draft is the first point of a segment that does not have its
+	// second point yet. draftPane is the pane it belongs to.
+	draftOn   bool
+	draftPane int
+	draft     kline.Point
+	// drag moves an overlay the pointer went down on.
+	dragOn   bool
+	dragPane int
+	dragID   string
+	dragPart int
+	// press is a pan-tool click, used to select on release when the
+	// pointer barely moved. A drag keeps panning and does not select.
+	pressOn   bool
+	pressPane int
+	pressX    float64
+	pressY    float64
 }
 
 func newApp() *app {
@@ -314,13 +348,26 @@ func (a *app) view(c *ui.Context) {
 					_ = a.setPeriod(choice.period)
 				}
 			}
+			for _, choice := range toolChoices {
+				var b ui.Element
+				if a.tool == choice.tool {
+					b = ui.PrimaryButton(c, choice.label)
+				} else {
+					b = ui.Button(c, choice.label)
+				}
+				if b.Clicked() {
+					a.tool = choice.tool
+					a.draftOn = false
+					a.dragOn = false
+				}
+			}
 			ui.Box(c).Grow(1)
 			if ui.Button(c, "Reset view").Clicked() {
 				a.vp.BarWidth = kline.DefaultBarWidth
 				a.fitted = false
 			}
 		})
-		ui.Text(c, "Drag or scroll either pane. Both share the time range, and the crosshair stays on the same bar.").
+		ui.Text(c, "Pan drags both panes. H-Line and Segment draw on the pane you click, and pan is off while a draw tool is selected. Delete removes the selected line. Right-click removes the line under the pointer.").
 			Padding(4, 14, 6, 14).FontSize(12).TextColor(t.TextMuted)
 
 		// Headers are built before the charts report the pointer, so they
@@ -339,9 +386,14 @@ func (a *app) view(c *ui.Context) {
 				ui.Text(c, a.readout(i)).Font("monospace").FontSize(12).NoWrap().Grow(1)
 			})
 			chart := ui.Box(c.Key(s.name)).Grow(1).WidthPercent(100).
-				Label(s.name + " chart").Cursor(ui.CursorCrosshair)
-			chart.HandleInput(a.onInput)
-			if dx, _, pressed := chart.Dragged(); pressed {
+				Label(s.name + " chart").Cursor(ui.CursorCrosshair).Focusable()
+			pane := i
+			chart.HandleInput(func(ev ui.InputEvent) bool {
+				return a.onChartInput(pane, ev)
+			})
+			// Draw tools take the pointer for placing and dragging lines.
+			// Pan is the tool that moves the shared viewport.
+			if dx, _, pressed := chart.Dragged(); pressed && a.tool == toolPan {
 				anyPress = true
 				if dx != 0 {
 					a.vp.Pan(float64(dx), a.plotW, a.bars())
@@ -356,7 +408,6 @@ func (a *app) view(c *ui.Context) {
 				}
 			}
 			showTime := i == len(a.panes)-1
-			pane := i
 			chart.Draw(func(p *ui.Painter, r ui.Rect) {
 				a.paintPane(p, r, t, pane, showTime)
 			})
@@ -374,24 +425,231 @@ func (a *app) view(c *ui.Context) {
 	})
 }
 
-// onInput takes the wheel from whichever pane the pointer is over.
+var toolChoices = []struct {
+	label string
+	tool  int
+}{
+	{"Pan", toolPan},
+	{"H-Line", toolHLine},
+	{"Segment", toolSegment},
+}
+
+// onChartInput takes the wheel, the draw tools, and Delete from one pane.
 // MyGo delivers InputScroll in DIPs. Positive DY is the direction that
 // scrolls content downward, and that zooms the bars out. Positive DX
 // scrolls toward later bars. The viewport is shared, so the other pane
-// moves with this one.
-func (a *app) onInput(ev ui.InputEvent) bool {
-	if ev.Kind != ui.InputScroll {
+// moves with this one. Drawing does not take the wheel.
+func (a *app) onChartInput(pane int, ev ui.InputEvent) bool {
+	switch ev.Kind {
+	case ui.InputScroll:
+		if ev.DY != 0 {
+			// ev.X is local to the pane. Each price plot starts at the
+			// pane's left edge, so that x is the shared zoom anchor.
+			a.vp.Zoom(float64(ev.DY), float64(ev.X), a.plotW, a.bars())
+		}
+		if ev.DX != 0 {
+			a.vp.Pan(-float64(ev.DX), a.plotW, a.bars())
+		}
+		return ev.DX != 0 || ev.DY != 0
+	case ui.InputKeyDown:
+		if ev.Key != ui.KeyDelete {
+			return false
+		}
+		return a.panes[pane].overlays.DeleteSelected()
+	case ui.InputPointerDown:
+		return a.pointerDown(pane, ev)
+	case ui.InputPointerMove:
+		return a.pointerMove(pane, ev)
+	case ui.InputPointerUp:
+		return a.pointerUp(pane, ev)
+	default:
 		return false
 	}
-	if ev.DY != 0 {
-		// ev.X is local to the pane. Each price plot starts at the
-		// pane's left edge, so that x is the shared zoom anchor.
-		a.vp.Zoom(float64(ev.DY), float64(ev.X), a.plotW, a.bars())
+}
+
+// pointerDown places or selects an overlay. The secondary button deletes
+// the overlay under it. In pan mode the press is left for Dragged, and a
+// later release selects when the pointer did not move.
+func (a *app) pointerDown(pane int, ev ui.InputEvent) bool {
+	x, y, in := a.plotLocal(pane, ev)
+	if ev.Button == 1 {
+		if !in {
+			return false
+		}
+		hit, ok := a.hit(pane, x, y)
+		if !ok {
+			return false
+		}
+		a.panes[pane].overlays.Delete(hit.ID)
+		a.dragOn = false
+		return true
 	}
-	if ev.DX != 0 {
-		a.vp.Pan(-float64(ev.DX), a.plotW, a.bars())
+	if ev.Button != 0 {
+		return false
 	}
-	return ev.DX != 0 || ev.DY != 0
+	if a.tool == toolPan {
+		if in {
+			a.pressOn = true
+			a.pressPane = pane
+			a.pressX, a.pressY = x, y
+		}
+		return false
+	}
+	if !in {
+		return false
+	}
+	hit, hitOK := a.hit(pane, x, y)
+	switch a.tool {
+	case toolHLine:
+		if hitOK && a.overlayKind(pane, hit.ID) == kline.OverlayHLine {
+			a.panes[pane].overlays.Select(hit.ID)
+			a.startDrag(pane, hit.ID, kline.HitBody)
+			return true
+		}
+		o := a.panes[pane].overlays.Add(kline.OverlayHLine, a.pointAt(pane, x, y))
+		a.startDrag(pane, o.ID, kline.HitBody)
+		return true
+	case toolSegment:
+		if a.draftOn && a.draftPane == pane {
+			a.panes[pane].overlays.Add(kline.OverlaySegment, a.draft, a.pointAt(pane, x, y))
+			a.draftOn = false
+			a.dragOn = false
+			return true
+		}
+		if hitOK && a.overlayKind(pane, hit.ID) == kline.OverlaySegment && hit.Part >= 0 {
+			a.panes[pane].overlays.Select(hit.ID)
+			a.draftOn = false
+			a.startDrag(pane, hit.ID, hit.Part)
+			return true
+		}
+		if hitOK {
+			a.panes[pane].overlays.Select(hit.ID)
+			a.draftOn = false
+			return true
+		}
+		a.draft = a.pointAt(pane, x, y)
+		a.draftOn = true
+		a.draftPane = pane
+		a.dragOn = false
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *app) startDrag(pane int, id string, part int) {
+	a.dragOn = true
+	a.dragPane = pane
+	a.dragID = id
+	a.dragPart = part
+}
+
+func (a *app) pointerMove(pane int, ev ui.InputEvent) bool {
+	if !a.dragOn || pane != a.dragPane || ev.Button != 0 {
+		return false
+	}
+	x, y, _ := a.plotLocal(pane, ev)
+	if a.dragPart < 0 {
+		price := a.painted[pane].Price
+		scale := a.priceScale(pane)
+		return a.panes[pane].overlays.SetPrice(a.dragID, kline.LocalYToPrice(float64(price.H), y, scale))
+	}
+	return a.panes[pane].overlays.SetPoint(a.dragID, a.dragPart, a.pointAt(pane, x, y))
+}
+
+func (a *app) pointerUp(pane int, ev ui.InputEvent) bool {
+	if a.dragOn && pane == a.dragPane && ev.Button == 0 {
+		a.dragOn = false
+		return true
+	}
+	if a.tool == toolPan && a.pressOn && pane == a.pressPane && ev.Button == 0 {
+		x, y, in := a.plotLocal(pane, ev)
+		dx, dy := x-a.pressX, y-a.pressY
+		a.pressOn = false
+		if !in || dx*dx+dy*dy > clickSlop*clickSlop {
+			return false
+		}
+		if hit, ok := a.hit(pane, x, y); ok {
+			a.panes[pane].overlays.Select(hit.ID)
+		} else {
+			a.panes[pane].overlays.Select("")
+		}
+		return true
+	}
+	return false
+}
+
+func (a *app) overlayKind(pane int, id string) string {
+	o := a.panes[pane].overlays.ByID(id)
+	if o == nil {
+		return ""
+	}
+	return o.Kind
+}
+
+func (a *app) hit(pane int, x, y float64) (kline.Hit, bool) {
+	if pane < 0 || pane >= len(a.panes) || pane >= len(a.painted) {
+		return kline.Hit{}, false
+	}
+	price := a.painted[pane].Price
+	return a.panes[pane].overlays.Hit(x, y, float64(price.W), float64(price.H), a.vp, a.priceScale(pane), a.panes[pane].candles)
+}
+
+// plotLocal converts a pointer event to price-plot DIPs. The price plot
+// starts at the chart box's top-left, so the event's local axes match it.
+// in is false over the volume strip, the MACD pane, and the axes.
+func (a *app) plotLocal(pane int, ev ui.InputEvent) (x, y float64, in bool) {
+	if pane < 0 || pane >= len(a.painted) {
+		return 0, 0, false
+	}
+	price := a.painted[pane].Price
+	x, y = float64(ev.X), float64(ev.Y)
+	in = price.H > 1 && x >= 0 && x <= float64(price.W) && y >= 0 && y <= float64(price.H)
+	return x, y, in
+}
+
+func (a *app) priceScale(pane int) chart.Linear {
+	s := a.panes[pane]
+	return kline.MainScale(s.candles, a.active(s), a.vp, a.plotW)
+}
+
+// pointAt snaps the pointer to a bar index and a price. Time is that
+// bar's open time, so a later prepend still finds the same bar.
+func (a *app) pointAt(pane int, x, y float64) kline.Point {
+	cs := a.panes[pane].candles
+	price := a.painted[pane].Price
+	if price.W > 0 {
+		if x < 0 {
+			x = 0
+		}
+		if x > float64(price.W) {
+			x = float64(price.W)
+		}
+	}
+	idx := 0
+	if n := len(cs); n > 0 {
+		if i, ok := a.vp.IndexAt(x, n); ok {
+			idx = i
+		} else if a.vp.BarWidth > 0 {
+			i := int(math.Floor(a.vp.Offset + x/a.vp.BarWidth))
+			if i < 0 {
+				i = 0
+			}
+			if i >= n {
+				i = n - 1
+			}
+			idx = i
+		}
+	}
+	var when time.Time
+	if idx >= 0 && idx < len(cs) {
+		when = cs[idx].Time
+	}
+	return kline.Point{
+		BarIndex: idx,
+		Time:     when,
+		Price:    kline.LocalYToPrice(float64(price.H), y, a.priceScale(pane)),
+	}
 }
 
 func (a *app) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime bool) {
@@ -416,7 +674,15 @@ func (a *app) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime b
 		ptr = kline.Pointer{On: true, X: r.X + a.hoverX, Y: r.Y + a.hoverY}
 	}
 	s := a.panes[i]
-	kline.Paint(p, panes, s.candles, a.active(s), a.vp, ptr, a.crossIndex, kline.StyleFrom(t))
+	style := kline.StyleFrom(t)
+	active := a.active(s)
+	kline.Paint(p, panes, s.candles, active, a.vp, ptr, a.crossIndex, style)
+	var rubber *kline.Rubber
+	if a.draftOn && a.draftPane == i && a.crossPane == i {
+		rubber = &kline.Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY)}
+	}
+	scale := kline.MainScale(s.candles, active, a.vp, a.plotW)
+	kline.DrawOverlays(p, panes.Price, s.overlays.Items(), a.vp, scale, s.candles, style, rubber)
 }
 
 func (a *app) readout(i int) string {
