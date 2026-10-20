@@ -46,5 +46,6 @@ All series come from `Generate` with fixed seeds. Frame benches use a 960×720 `
 | `BenchmarkZoomFrames/{stack,overlay}_{1k,8k,20k}` | One zoom notch at the plot center, then one frame. Direction alternates. |
 | `BenchmarkCrosshairFrames/{stack,overlay}_{1k,8k,20k}` | Move the pointer between two bars. Includes the follow-up frame the crosshair asks for. |
 | `BenchmarkLivePushFrames/{stack,overlay}_{1k,8k,20k}` | Revise ALPHA's last bar through `StubLiveSource`, then one frame. Length stays fixed. |
+| `BenchmarkMarkerPanFrames/8k` | Stack pan of 8000 bars with 500 buy/sell markers on every 16th bar. |
 
-`TestCompareScalesAllocationBudget` is a normal test, not a row in `baseline.txt`. It fails if the overlay scale copies the whole series (48 KB/op). `TestOverlayPanAllocationBudget` fails if an overlay pan frame of 8000 bars goes above 92 KB/op.
+`TestCompareScalesAllocationBudget` is a normal test, not a row in `baseline.txt`. It fails if the overlay scale copies the whole series (48 KB/op). `TestOverlayPanAllocationBudget` fails if an overlay pan frame of 8000 bars goes above 92 KB/op. `TestMarkerPanAllocationBudget` fails if 500 markers add more than 16 KB/op to a stack pan frame.

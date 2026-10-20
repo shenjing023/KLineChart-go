@@ -38,6 +38,9 @@ type Style struct {
 	// Compare is the second series in overlay mode, drawn as a close
 	// line on the indexed price plot.
 	Compare ui.Color
+	// Buy and Sell color trade markers. Zero means the rising and
+	// falling candle colors: Buy follows Up, Sell follows Down.
+	Buy, Sell ui.Color
 	// Clear names colors that stay transparent. On a partial style,
 	// a zero color otherwise means "not set" and completeStyle fills
 	// it from DarkDefault, so a transparent grid cannot be expressed
@@ -76,9 +79,12 @@ func StyleFrom(t *ui.Theme) Style {
 	if labelText == (ui.Color{}) {
 		labelText = t.Background
 	}
+	up, down := ui.RGB(38, 166, 154), ui.RGB(239, 83, 80)
 	return Style{
-		Up:         ui.RGB(38, 166, 154),
-		Down:       ui.RGB(239, 83, 80),
+		Up:         up,
+		Down:       down,
+		Buy:        up,
+		Sell:       down,
 		LimitUp:    ui.RGB(0, 230, 118),
 		LimitDown:  ui.RGB(255, 59, 48),
 		MA5:        t.Accent,
@@ -138,6 +144,8 @@ const (
 	ClearOverlay
 	ClearOverlayHot
 	ClearCompare
+	ClearBuy
+	ClearSell
 )
 
 // CandleBodyColor is the wick and body color for c.
@@ -173,6 +181,12 @@ func (s Style) CandleBodyColor(c Candle, prevClose, limitPct float64) ui.Color {
 // forces the named fields to transparent either way.
 func completeStyle(s Style) Style {
 	if s.Plot.A != 0 || s.Grid.A != 0 || s.Text.A != 0 {
+		if s.Buy.A == 0 && s.Clear&ClearBuy == 0 {
+			s.Buy = s.Up
+		}
+		if s.Sell.A == 0 && s.Clear&ClearSell == 0 {
+			s.Sell = s.Down
+		}
 		return applyClear(s)
 	}
 	base := DarkDefault()
@@ -205,6 +219,8 @@ func completeStyle(s Style) Style {
 	base.Overlay = pickColor(base.Overlay, s.Overlay)
 	base.OverlayHot = pickColor(base.OverlayHot, s.OverlayHot)
 	base.Compare = pickColor(base.Compare, s.Compare)
+	base.Buy = pickColor(base.Up, s.Buy)
+	base.Sell = pickColor(base.Down, s.Sell)
 	return applyClear(base)
 }
 
@@ -289,6 +305,12 @@ func applyClear(s Style) Style {
 	}
 	if s.Clear&ClearCompare != 0 {
 		s.Compare = ui.Color{}
+	}
+	if s.Clear&ClearBuy != 0 {
+		s.Buy = ui.Color{}
+	}
+	if s.Clear&ClearSell != 0 {
+		s.Sell = ui.Color{}
 	}
 	return s
 }

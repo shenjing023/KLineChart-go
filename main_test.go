@@ -74,8 +74,9 @@ func TestDemoToolbarBindsChart(t *testing.T) {
 	if err := tt.Click("US"); err != nil {
 		t.Fatal(err)
 	}
-	if chart.Style(nil).Up != ui.RGB(239, 83, 80) || chart.Style(nil).Down != ui.RGB(38, 166, 154) {
-		t.Fatalf("US preset up %+v down %+v", chart.Style(nil).Up, chart.Style(nil).Down)
+	us := chart.Style(nil)
+	if us.Up != ui.RGB(239, 83, 80) || us.Down != ui.RGB(38, 166, 154) || us.Buy != us.Up || us.Sell != us.Down {
+		t.Fatalf("US preset up %+v down %+v buy %+v sell %+v", us.Up, us.Down, us.Buy, us.Sell)
 	}
 	if err := tt.Click("Limit 10%"); err != nil {
 		t.Fatal(err)
@@ -95,8 +96,9 @@ func TestDemoToolbarBindsChart(t *testing.T) {
 	if err := tt.Click("Classic"); err != nil {
 		t.Fatal(err)
 	}
-	if chart.Style(nil).Up != ui.RGB(38, 166, 154) {
-		t.Fatalf("classic up %+v", chart.Style(nil).Up)
+	classic := chart.Style(nil)
+	if classic.Up != ui.RGB(38, 166, 154) || classic.Buy != classic.Up || classic.Sell != classic.Down {
+		t.Fatalf("classic up %+v buy %+v sell %+v", classic.Up, classic.Buy, classic.Sell)
 	}
 	if err := tt.Click("Reset view"); err != nil {
 		t.Fatal(err)
@@ -127,8 +129,9 @@ func TestRenderDemoFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeDemoPNG(t, filepath.Join(dir, "p8-demo-contrast.png"), tt.Image())
-	if chart.Style(nil).Up != ui.RGB(255, 214, 0) {
-		t.Fatalf("contrast up %+v", chart.Style(nil).Up)
+	contrast := chart.Style(nil)
+	if contrast.Up != ui.RGB(255, 214, 0) || contrast.Buy != contrast.Up || contrast.Sell != contrast.Down {
+		t.Fatalf("contrast up %+v buy %+v sell %+v", contrast.Up, contrast.Buy, contrast.Sell)
 	}
 }
 

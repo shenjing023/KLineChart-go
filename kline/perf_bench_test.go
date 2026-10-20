@@ -406,3 +406,70 @@ func benchLivePushFrames(b *testing.B, n int, layout string) {
 		tt.Frame()
 	}
 }
+
+// markerPanByteSlack is how many extra bytes a pan frame may spend on
+// trade markers after the first frame has warmed the text cache and the
+// triangle path. Copying every marker each frame is far above this.
+const markerPanByteSlack = 16 * 1024
+
+// TestMarkerPanAllocationBudget fails when a pan with 500 markers
+// allocates like a per-frame copy of the marker list. The plain frame
+// is the same stack pan with no markers.
+func TestMarkerPanAllocationBudget(t *testing.T) {
+	plain := markerPanBytes(t, 8000, 0)
+	with := markerPanBytes(t, 8000, 500)
+	if with > plain+markerPanByteSlack {
+		t.Fatalf("pan with 500 markers allocated %d bytes/op, plain frame %d, slack %d", with, plain, markerPanByteSlack)
+	}
+}
+
+func markerPanBytes(t *testing.T, n, count int) int64 {
+	t.Helper()
+	result := testing.Benchmark(func(b *testing.B) {
+		benchMarkerPan(b, n, count)
+	})
+	return result.AllocedBytesPerOp()
+}
+
+// BenchmarkMarkerPanFrames pans a stack of 8000 bars with 500 markers.
+// The markers sit on every 16th bar, so the visible window draws a few
+// of them. Labels are B and S, which the text cache keeps after the
+// warmup frame.
+func BenchmarkMarkerPanFrames(b *testing.B) {
+	b.Run("8k", func(b *testing.B) {
+		benchMarkerPan(b, 8000, 500)
+	})
+}
+
+func benchMarkerPan(b *testing.B, n, count int) {
+	c, tt := benchChart(b, n, LayoutStack)
+	cs := c.panes[0].candles
+	marks := make([]Marker, 0, count)
+	if count > 0 && len(cs) > 1 {
+		step := len(cs) / count
+		if step < 1 {
+			step = 1
+		}
+		for i := 0; i < count && i*step < len(cs)-1; i++ {
+			side := SideBuy
+			if i%2 == 1 {
+				side = SideSell
+			}
+			marks = append(marks, Marker{Time: cs[i*step].Time, Side: side})
+		}
+	}
+	if err := c.SetMarkers("ALPHA", marks); err != nil {
+		b.Fatal(err)
+	}
+	tt.Frame()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		dx := 12.0
+		if i%2 == 1 {
+			dx = -12
+		}
+		c.vp.Pan(dx, c.plotW, c.Bars())
+		tt.Frame()
+	}
+}
