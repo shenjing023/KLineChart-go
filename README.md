@@ -17,7 +17,8 @@ It is a demo of the interaction in [KLineChart](https://github.com/klinecharts/K
 - **BOLL(20, 2)** on the price plot: the middle line is SMA20, and the upper and lower lines are that average ± 2 population standard deviations. The **BOLL** toggle starts off. The crosshair readout shows `MID`, `UP`, and `LOW`.
 - **KDJ(9, 3, 3)** in its own sub-pane under MACD (or under volume when MACD is off). The Y scale covers 0–100 and widens when K, D, or J leaves that range. The **KDJ** toggle starts off. The readout shows `K`, `D`, and `J`.
 - Volume is the built-in VOL strip between price and the sub-panes. It is not a separate indicator and has no toggle.
-- Colors come from `kline.Style`, built from the window theme by `StyleFrom`. Light and dark each get their own plot, grid, crosshair, and MA / MACD colors. Rising stays green and falling stays red on both. `DarkDefault` and `LightDefault` are those two styles.
+- Colors come from `kline.Style`, built from the window theme by `StyleFrom`. Light and dark each get their own plot, grid, crosshair, and MA / MACD colors. Rising stays green and falling stays red on both. `DarkDefault` and `LightDefault` are those two styles. `LimitUp` and `LimitDown` are brighter versions of those two. They paint a candle only when a host sets a positive limit percent; the default percent is 0.
+- Toolbar **Classic / US / Contrast** replaces the candle colors and calls `SetStyle`. Classic is green up, red down. US swaps them. Contrast is yellow up and blue down. **Limit 10%** sets the percent to 0.10, and a second click clears it. The sample walk rarely moves 10% in one bar, so the limit colors usually stay unused until a host feeds a series that does. **Hollow** still outlines a rising body, including a limit-up body.
 - In Stack, the price scale of each pane follows that symbol's visible bars, including BOLL when that toggle is on. In Overlay, the one price scale follows the indexed range of both series, including ALPHA's moving averages and Bollinger bands when those toggles are on.
 - **Reset view** returns both panes to the latest bars at the default width.
 - **1h / 4h / 1d** reload both panes from the data source and fit the latest bars. The default **1h** series is the same walk as before (ALPHA seed 42, BETA seed 99).
@@ -60,10 +61,43 @@ Native UI draws with Direct3D 11 on Windows, Metal on macOS, and OpenGL on Linux
 
 `go test` drives the view with `ui.NewTester`, which renders frames in memory and does not open a window. That is the check used in CI and in this repo's cloud build. A display is still required to look at the chart.
 
+## Embed
+
+Another module can import the chart and skip this demo's toolbar. `Chart.View` is the MyGo view: pass it to `ui.View` for a window, or call it under the host's own chrome. It draws the stack (or overlay) candles, volume, and the indicators named in the options. Pan, zoom, and the crosshair work with no toolbar. The host calls the setters for anything the toolbar used to do.
+
+```go
+chart := kline.NewChart(kline.ChartOptions{
+    Source:     src, // DataSource; LiveSource is optional
+    Symbols:    []string{"ALPHA", "BETA"},
+    Period:     kline.Period{Span: 1, Unit: kline.UnitHour},
+    Layout:     kline.LayoutStack, // or kline.LayoutOverlay
+    Indicators: []string{"MA", "MACD"}, // nil means MA and MACD
+    Magnet:     kline.MagnetOff,
+})
+mygo.NewWindow(mygo.WindowOptions{
+    Title:   "Chart",
+    Width:   960,
+    Height:  720,
+    Content: ui.View(chart.View),
+})
+
+// Host chrome calls the same methods the demo toolbar binds.
+_ = chart.SetPeriod(kline.Period{Span: 1, Unit: kline.UnitDay})
+chart.SetLayout(kline.LayoutOverlay)
+_ = chart.SetSource(src)
+st := chart.Style(nil)
+st.Up = ui.RGB(239, 83, 80) // US-style rising red
+st.LimitPct = 0.10          // close-to-close move that uses LimitUp / LimitDown
+chart.SetStyle(st)
+```
+
+`SetStyle` keeps the colors until the next `SetStyle`. `SetHollow` and `SetLimitPct` change those two switches without dropping the override. `Style.CandleBodyColor` is the rule Paint uses: a non-positive `limitPct` always returns `Up` or `Down`.
+
 ## Layout
 
-- `main.go` — window, one readout per symbol, the shared viewport and crosshair index, and the period, layout, and indicator toggles.
-- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, `Style` (`style.go`: `StyleFrom`, `DarkDefault`, `LightDefault`), `DataSource` (`Period`, `BarRequest`, `SyntheticSource`), optional `LiveSource` and the in-memory `StubLiveSource`, the indicator list (`MA`, `MACD`, `BOLL`, `KDJ`), magnet snap (`MagnetMode`, `SnapPrice`), overlays (`Layer`, horizontal price line, segment, Fibonacci retracement), and overlay compare (`NormalizeClose`, `IndexBase`, `PaintCompare`). Volume is drawn by `Paint`, not by an indicator. Each symbol keeps its own `Layer`.
+- `main.go` — window chrome and the toolbar. The buttons call `kline.Chart`.
+- `kline/chart.go` — embeddable `Chart`: symbols, period, layout, indicators, magnet, drawings, pan, zoom, and the crosshair. `View` does not build a toolbar.
+- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, `Style` (`style.go`: `StyleFrom`, `DarkDefault`, `LightDefault`, `LimitUp`, `LimitDown`, `CandleBodyColor`), `DataSource` (`Period`, `BarRequest`, `SyntheticSource`), optional `LiveSource` and the in-memory `StubLiveSource`, the indicator list (`MA`, `MACD`, `BOLL`, `KDJ`), magnet snap (`MagnetMode`, `SnapPrice`), overlays (`Layer`, horizontal price line, segment, Fibonacci retracement), and overlay compare (`NormalizeClose`, `IndexBase`, `PaintCompare`). Volume is drawn by `Paint`, not by an indicator. Each symbol keeps its own `Layer`.
 
 Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot. Dragging right decreases `offset` for all panes. The wheel keeps the bar under the pointer fixed while the width changes, and the other pane uses that same width. In Stack, each pane's Y axis is its own `chart.Linear` over that symbol's visible high/low. In Overlay, both series share one index scale: `close[i] / close[base] * 100`, and ALPHA's OHLC uses that same divisor. `Paint` takes the shared bar index so a pane draws the vertical line even when the pointer is on the other one.
 
@@ -234,6 +268,25 @@ func (f *feed) UnsubscribeBar(symbol string, period kline.Period) error {
 
 - 比例文字标注、射线 / 平行通道 / 笔刷、自定义比例
 - 跨 pane 共享同一条 overlay
+
+## P8
+
+本阶段把窗体收成可嵌入的 `kline.Chart`。`main` 只留下窗口和工具条，工具条上的按钮改调 Chart 的方法。
+
+能做：
+
+- `kline.NewChart`。选项有 `Source`、`Symbols`、`Period`、`Layout`（`"stack"` 或 `"overlay"`）、`Style`、`Hollow`、`Indicators`、`Magnet`。没填的项用演示默认值：合成源、ALPHA 和 BETA、1h、Stack、MA 和 MACD 开、磁吸关、颜色跟窗口主题。
+- `View` 是 MyGo 的视图函数。单独做窗口时用 `ui.View(chart.View)`。宿主有自己的工具条时，在那一栏下面调用 `chart.View(ctx)`。没有工具条也会画出 Stack 的 K 线、量柱和选中的指标，平移、缩放、十字线都能用。
+- `SetPeriod`、`SetLayout`、`SetSource`。换周期会重新加载并清掉画线。`SetSource(nil)` 返回错误。加载失败时保留原来的源。源实现了 `LiveSource` 仍会订阅，没有实现就只走 `GetBars`。
+- 工具条还绑定了 `SetTool`、`SetMagnet`、`SetIndicator`、`SetHollow`、`ResetView`。指标开关和 Hollow 也可以直接拿 `IndicatorEnabled` / `HollowEnabled` 的 `*bool` 交给 `ui.Toggle`。
+- `SetStyle` 换成一整套颜色。`SetLimitPct` 单独改涨跌停阈值。`Style.CandleBodyColor` 的规则是：`limitPct <= 0` 时只用 `Up` / `Down`（收盘不低于开盘为涨）。`limitPct > 0` 且上一根收盘为正时，`(close-prevClose)/prevClose >= limitPct` 用 `LimitUp`，`<= -limitPct` 用 `LimitDown`。收盘等于最高价本身不算涨停。量柱和 MACD 柱仍用 `Up` / `Down`。
+- 演示工具条 **Classic / US / Contrast** 改 K 线颜色。**Limit 10%** 把阈值设为 0.10，再点一次关掉。默认阈值是 0，所以涨跌停色先备着，不画上去。Hollow 仍然只描涨的实体，涨停那根若收盘不低于开盘，描的是 `LimitUp`。
+
+明确不做：
+
+- 打谱的双盲训练流程（属于 dapu）
+- 打包成 C ABI 或动态库
+- 从行情里读取涨跌停幅度。本仓库不连网络。阈值由宿主传入
 
 ## Out of scope
 

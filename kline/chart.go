@@ -1,0 +1,946 @@
+package kline
+
+import (
+	"math"
+	"sort"
+	"time"
+
+	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/chart"
+)
+
+const (
+	sampleBars   = 600
+	forwardBatch = 200
+	// forwardEdge is the shared offset below which older bars are loaded.
+	// Offset is the bar index at the left edge, the same value Viewport uses.
+	forwardEdge = 5
+)
+
+const (
+	toolPan = iota
+	toolHLine
+	toolSegment
+	toolFib
+)
+
+const (
+	// layoutStack is the default: one column of panes per symbol.
+	layoutStack = iota
+	// layoutOverlay draws both symbols on one price plot. The primary
+	// series stays candles. The second series is a close line. Both are
+	// indexed to 100 at the first visible common bar.
+	layoutOverlay
+)
+
+// clickSlop is how far a pan-tool press can move, in DIPs, and still
+// count as a click that selects an overlay. It matches MyGo's drag
+// threshold.
+const clickSlop = 4
+
+// series is one symbol. Panes share one period, so a bar index is the
+// same open time on each. inds is one instance per app slot, calculated
+// for this symbol's bars.
+type series struct {
+	name    string
+	candles []Candle
+	inds    []Indicator
+	more    bool
+	// overlays are this pane's drawings. They are not shared with the
+	// other symbol: a line placed here is not drawn on the other pane.
+	overlays Layer
+}
+
+// indicatorSlot is one entry in the app's indicator list. on is the
+// toolbar toggle. The list is filled from Registry at startup.
+type indicatorSlot struct {
+	spec Spec
+	on   bool
+}
+
+// Chart is an embeddable candlestick view. One viewport and one
+// crossIndex are shared by every pane. Bars come from src. The host
+// draws window chrome and the toolbar; View paints the plots.
+type Chart struct {
+	src    DataSource
+	period Period
+	panes  []series
+	vp     Viewport
+	// fitted is set once a price plot has a width, so the first frame
+	// opens on the latest bars instead of bar 0.
+	fitted bool
+	// plotW is the price-plot width from the last paint. Wheel and drag
+	// on any pane use it; the panes are the same width.
+	plotW float64
+	// crossIndex is the bar under the pointer, or -1 when the pointer
+	// is outside every pane. crossPane is the pane that has the pointer,
+	// which is the only one that draws the horizontal line.
+	crossIndex int
+	crossPane  int
+	hoverX     float32
+	hoverY     float32
+	// loading is true while a forward request is in flight. Synthetic
+	// loads return immediately; the flag still drops a re-entrant call.
+	loading bool
+	// slots is the indicator list. Both symbols share the toggles and
+	// keep their own calculated instances on series.inds.
+	slots []indicatorSlot
+	// painted is each symbol's layout from the latest frame.
+	painted []Panes
+	// tool is Pan, H-Line, Segment, or Fib. Draw tools do not pan: the
+	// pointer places and moves overlays instead.
+	tool int
+	// magnet snaps new points, including the press that places a new
+	// H-Line, and endpoint drags on Segment and Fib. Dragging an
+	// existing H-Line body uses the raw pointer price.
+	magnet MagnetMode
+	// layout is Stack or Overlay. Stack is the zero value.
+	layout int
+	// hollowUp draws rising candle bodies as outlines. Falling bodies
+	// stay filled. Off, both are filled.
+	hollowUp bool
+	// style, when styleSet, replaces theme colors. The live hollow
+	// switch is hollowUp, not Style.HollowUp. limitPct is the live
+	// limit threshold Paint reads, including when the colors still
+	// come from the theme.
+	style    Style
+	styleSet bool
+	limitPct float64
+	// draft is the first point of a segment that does not have its
+	// second point yet. draftPane is the pane it belongs to.
+	draftOn   bool
+	draftPane int
+	draft     Point
+	// drag moves an overlay the pointer went down on.
+	dragOn   bool
+	dragPane int
+	dragID   string
+	dragPart int
+	// dragNewHLine is set only when this press places a new H-Line and
+	// starts its drag. pointerMove then keeps the magnet price. Dragging
+	// an existing H-Line body leaves it false.
+	dragNewHLine bool
+	// press is a pan-tool click, used to select on release when the
+	// pointer barely moved. A drag keeps panning and does not select.
+	pressOn   bool
+	pressPane int
+	pressX    float64
+	pressY    float64
+	// live is the LiveSource followLive subscribed, kept so a later
+	// source swap can unsubscribe that source. Nil when src is only
+	// a DataSource, which is the synthetic demo.
+	live     LiveSource
+	liveSubs []liveSub
+}
+
+// liveSub is one SubscribeBar the window currently holds.
+type liveSub struct {
+	symbol string
+	period Period
+}
+
+// setPeriod reloads every pane with Kind=init and fits the latest bars
+// when the plot width is already known. The first frame still fits from
+// paint, because layout has not run yet.
+func (a *Chart) setPeriod(p Period) error {
+	if a.src == nil {
+		return ErrInvalidPeriod
+	}
+	next := make([]series, len(a.panes))
+	for i, s := range a.panes {
+		bars, more, err := a.src.GetBars(BarRequest{
+			Symbol: s.name,
+			Period: p,
+			Kind:   KindInit,
+			Limit:  sampleBars,
+		})
+		if err != nil {
+			return err
+		}
+		next[i] = a.mount(series{name: s.name}, bars, more)
+	}
+	a.period = p
+	a.panes = next
+	a.crossIndex = -1
+	a.crossPane = -1
+	a.fitted = false
+	if a.plotW > 1 {
+		a.vp.FitRight(a.bars(), a.plotW)
+		a.fitted = true
+	}
+	a.followLive()
+	return nil
+}
+
+// followLive subscribes when src implements LiveSource and drops any
+// previous subscription, including one on a source the window no longer
+// uses. A plain DataSource, such as SyntheticSource, is ignored. Nothing
+// here opens a connection.
+func (a *Chart) followLive() {
+	a.dropLive()
+	live, ok := a.src.(LiveSource)
+	if !ok {
+		return
+	}
+	subs := make([]liveSub, 0, len(a.panes))
+	for _, s := range a.panes {
+		symbol := s.name
+		err := live.SubscribeBar(symbol, a.period, func(bar Candle) {
+			a.applyLiveBar(symbol, bar)
+		})
+		if err != nil {
+			continue
+		}
+		subs = append(subs, liveSub{symbol: symbol, period: a.period})
+	}
+	if len(subs) == 0 {
+		return
+	}
+	a.live = live
+	a.liveSubs = subs
+}
+
+func (a *Chart) dropLive() {
+	if a.live == nil {
+		a.liveSubs = nil
+		return
+	}
+	for _, sub := range a.liveSubs {
+		_ = a.live.UnsubscribeBar(sub.symbol, sub.period)
+	}
+	a.live = nil
+	a.liveSubs = nil
+}
+
+// applyLiveBar appends a bar with a newer open time, or replaces the
+// last bar when the open time matches. An older open time is ignored.
+// Indicators are recalculated. A view sitting on the right edge stays
+// there; a panned view does not jump.
+func (a *Chart) applyLiveBar(symbol string, bar Candle) {
+	for i := range a.panes {
+		if a.panes[i].name != symbol {
+			continue
+		}
+		s := a.panes[i]
+		n := len(s.candles)
+		pinned := a.pinnedRight()
+		switch {
+		case n == 0 || bar.Time.After(s.candles[n-1].Time):
+			s.candles = append(s.candles, bar)
+		case bar.Time.Equal(s.candles[n-1].Time):
+			s.candles[n-1] = bar
+		default:
+			return
+		}
+		a.panes[i] = a.mount(s, s.candles, s.more)
+		if pinned && a.plotW > 1 {
+			a.vp.FitRight(a.bars(), a.plotW)
+		}
+		return
+	}
+}
+
+func (a *Chart) pinnedRight() bool {
+	if !a.fitted || a.plotW <= 1 || a.bars() <= 0 {
+		return false
+	}
+	v := a.vp
+	v.FitRight(a.bars(), a.plotW)
+	return math.Abs(a.vp.Offset-v.Offset) < 1e-6
+}
+
+// ensureForward prepends older bars when the shared offset is near the
+// left edge. Offset increases by the prepended count, which is the same
+// rule as Viewport: bar i moves to i+n, so (i+n) - (offset+n) is unchanged.
+// A load already in flight does not start another.
+func (a *Chart) ensureForward() {
+	if a.loading || a.src == nil || !a.fitted || a.vp.Offset >= forwardEdge || !a.anyMore() {
+		return
+	}
+	a.loading = true
+	defer func() { a.loading = false }()
+
+	type fetched struct {
+		bars []Candle
+		more bool
+		ok   bool
+	}
+	got := make([]fetched, len(a.panes))
+	for i, s := range a.panes {
+		if !s.more || len(s.candles) == 0 {
+			continue
+		}
+		bars, more, err := a.src.GetBars(BarRequest{
+			Symbol: s.name,
+			Period: a.period,
+			Kind:   KindForward,
+			Anchor: s.candles[0].Time,
+			Limit:  forwardBatch,
+		})
+		if err != nil {
+			return
+		}
+		bars = strictlyBefore(bars, s.candles[0].Time)
+		got[i] = fetched{bars: bars, more: more, ok: true}
+	}
+	n := 0
+	have := false
+	for _, g := range got {
+		if !g.ok || len(g.bars) == 0 {
+			continue
+		}
+		if !have || len(g.bars) < n {
+			n = len(g.bars)
+			have = true
+		}
+	}
+	if !have || n == 0 {
+		for i := range a.panes {
+			if got[i].ok && len(got[i].bars) == 0 {
+				a.panes[i].more = false
+			}
+		}
+		return
+	}
+	for i := range a.panes {
+		if !got[i].ok || len(got[i].bars) == 0 {
+			if got[i].ok {
+				a.panes[i].more = false
+			}
+			continue
+		}
+		older := got[i].bars
+		if len(older) > n {
+			older = older[len(older)-n:]
+		}
+		a.panes[i] = a.mount(a.panes[i], prependBars(older, a.panes[i].candles), got[i].more)
+	}
+	a.vp.Offset += float64(n)
+	if a.crossIndex >= 0 {
+		a.crossIndex += n
+	}
+}
+
+func (a *Chart) anyMore() bool {
+	for _, s := range a.panes {
+		if s.more && len(s.candles) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func strictlyBefore(bars []Candle, anchor time.Time) []Candle {
+	end := len(bars)
+	for end > 0 && !bars[end-1].Time.Before(anchor) {
+		end--
+	}
+	return bars[:end]
+}
+
+func prependBars(older, newer []Candle) []Candle {
+	out := make([]Candle, 0, len(older)+len(newer))
+	out = append(out, older...)
+	out = append(out, newer...)
+	return out
+}
+
+// mount stores bars on s and recalculates every indicator in the list.
+// Existing instances are kept so a prepend does not allocate a new MA
+// or MACD, only a new value slice inside Calc.
+func (a *Chart) mount(s series, bars []Candle, more bool) series {
+	s.candles = bars
+	s.more = more
+	if len(s.inds) != len(a.slots) {
+		s.inds = make([]Indicator, len(a.slots))
+		for i, slot := range a.slots {
+			s.inds[i] = slot.spec.New()
+		}
+	}
+	for _, ind := range s.inds {
+		if ind != nil {
+			ind.Calc(bars)
+		}
+	}
+	return s
+}
+
+// active is the indicators whose toolbar toggle is on.
+func (a *Chart) active(s series) []Indicator {
+	out := make([]Indicator, 0, len(a.slots))
+	for i, slot := range a.slots {
+		if !slot.on || i >= len(s.inds) || s.inds[i] == nil {
+			continue
+		}
+		out = append(out, s.inds[i])
+	}
+	return out
+}
+
+// subPanes reports which sub-pane toggles are on. MACD sits under volume.
+// KDJ sits under MACD when both are on, or under volume when MACD is off.
+func (a *Chart) subPanes() (macd, kdj bool) {
+	for _, slot := range a.slots {
+		if !slot.on {
+			continue
+		}
+		switch slot.spec.Name {
+		case "MACD":
+			macd = true
+		case "KDJ":
+			kdj = true
+		}
+	}
+	return macd, kdj
+}
+
+// orderedSpecs keeps the toolbar in a stable order: the indicators that
+// shipped first, then BOLL and KDJ. Registry order follows file name,
+// which would put the new names first.
+func orderedSpecs(in []Spec) []Spec {
+	rank := func(name string) int {
+		switch name {
+		case "MA":
+			return 0
+		case "MACD":
+			return 1
+		case "BOLL":
+			return 2
+		case "KDJ":
+			return 3
+		default:
+			return 100
+		}
+	}
+	out := append([]Spec(nil), in...)
+	sort.SliceStable(out, func(i, j int) bool {
+		return rank(out[i].Name) < rank(out[j].Name)
+	})
+	return out
+}
+
+func (a *Chart) bars() int {
+	if len(a.panes) == 0 {
+		return 0
+	}
+	n := len(a.panes[0].candles)
+	for _, s := range a.panes[1:] {
+		if len(s.candles) < n {
+			n = len(s.candles)
+		}
+	}
+	return n
+}
+
+// View paints the chart: one header per symbol, then the stack or the
+// overlay plot, with volume and the indicators that are on. Pan, zoom,
+// and the crosshair are on the plot. It does not paint a toolbar; the
+// host binds those controls to SetPeriod, SetLayout, and the other setters.
+//
+// A window can use it directly:
+//
+//	ui.View(chart.View)
+//
+// A host that draws its own chrome calls chart.View(ctx) inside that view.
+func (a *Chart) View(c *ui.Context) {
+	// Load from the offset the previous frame left behind, before headers
+	// read the series, so a prepend and its offset shift land together.
+	a.ensureForward()
+	t := c.Theme()
+	ui.Column(c).Fill().Background(t.Background).Children(func() {
+		// Headers are built before the charts report the pointer, so they
+		// show crossIndex from the previous frame. The charts record the
+		// new index, and a changed index asks for one more frame so every
+		// header catches up before the next input.
+		nextIndex := -1
+		nextPane := -1
+		hoverX, hoverY := float32(0), float32(0)
+		anyHover := false
+		anyPress := false
+		type chartSlot struct {
+			key, label string
+			pane       int
+			showTime   bool
+		}
+		slots := make([]chartSlot, len(a.panes))
+		for i, s := range a.panes {
+			slots[i] = chartSlot{key: s.name, label: s.name + " chart", pane: i, showTime: i == len(a.panes)-1}
+		}
+		if a.layout == layoutOverlay {
+			// One plot. Both headers stay, so the crosshair can show
+			// each symbol's own values at the shared bar index.
+			for i := range a.panes {
+				a.symbolHeader(c, i)
+			}
+			slots = []chartSlot{{key: "compare", label: "Compare chart", pane: 0, showTime: true}}
+		}
+		for _, slot := range slots {
+			if a.layout != layoutOverlay {
+				a.symbolHeader(c, slot.pane)
+			}
+			chart := ui.Box(c.Key(slot.key)).Grow(1).WidthPercent(100).
+				Label(slot.label).Cursor(ui.CursorCrosshair).Focusable()
+			pane := slot.pane
+			showTime := slot.showTime
+			chart.HandleInput(func(ev ui.InputEvent) bool {
+				return a.onChartInput(pane, ev)
+			})
+			// Draw tools take the pointer for placing and dragging lines.
+			// Pan is the tool that moves the shared viewport.
+			if dx, _, pressed := chart.Dragged(); pressed && a.tool == toolPan {
+				anyPress = true
+				if dx != 0 {
+					a.vp.Pan(float64(dx), a.plotW, a.bars())
+				}
+			}
+			if x, y, over := chart.PointerPosition(); over {
+				anyHover = true
+				nextPane = pane
+				hoverX, hoverY = x, y
+				if bar, ok := a.vp.IndexAt(float64(x), a.bars()); ok {
+					nextIndex = bar
+				}
+			}
+			chart.Draw(func(p *ui.Painter, r ui.Rect) {
+				if a.layout == layoutOverlay {
+					a.paintCompare(p, r, t)
+					return
+				}
+				a.paintPane(p, r, t, pane, showTime)
+			})
+		}
+		if !anyHover && !anyPress {
+			nextIndex = -1
+			nextPane = -1
+		}
+		if nextIndex != a.crossIndex || nextPane != a.crossPane || hoverX != a.hoverX || hoverY != a.hoverY {
+			a.crossIndex = nextIndex
+			a.crossPane = nextPane
+			a.hoverX, a.hoverY = hoverX, hoverY
+			c.AnimationFrame()
+		}
+	})
+}
+
+func (a *Chart) symbolHeader(c *ui.Context, i int) {
+	if i < 0 || i >= len(a.panes) {
+		return
+	}
+	s := &a.panes[i]
+	t := c.Theme()
+	ui.Row(c).Padding(2, 14, 2, 14).Gap(10).AlignItems(ui.Center).Children(func() {
+		name := ui.Text(c, s.name).Bold().FontSize(13)
+		if a.layout == layoutOverlay && i == 1 {
+			name.TextColor(a.chartStyle(t).Compare)
+		}
+		ui.Text(c, a.readout(i)).Font("monospace").FontSize(12).NoWrap().Grow(1)
+	})
+}
+
+// onChartInput takes the wheel, the draw tools, and Delete from one pane.
+// MyGo delivers InputScroll in DIPs. Positive DY is the direction that
+// scrolls content downward, and that zooms the bars out. Positive DX
+// scrolls toward later bars. The viewport is shared, so the other pane
+// moves with this one. Drawing does not take the wheel.
+func (a *Chart) onChartInput(pane int, ev ui.InputEvent) bool {
+	switch ev.Kind {
+	case ui.InputScroll:
+		if ev.DY != 0 {
+			// ev.X is local to the pane. Each price plot starts at the
+			// pane's left edge, so that x is the shared zoom anchor.
+			a.vp.Zoom(float64(ev.DY), float64(ev.X), a.plotW, a.bars())
+		}
+		if ev.DX != 0 {
+			a.vp.Pan(-float64(ev.DX), a.plotW, a.bars())
+		}
+		return ev.DX != 0 || ev.DY != 0
+	case ui.InputKeyDown:
+		if ev.Key != ui.KeyDelete {
+			return false
+		}
+		return a.panes[pane].overlays.DeleteSelected()
+	case ui.InputPointerDown:
+		return a.pointerDown(pane, ev)
+	case ui.InputPointerMove:
+		return a.pointerMove(pane, ev)
+	case ui.InputPointerUp:
+		return a.pointerUp(pane, ev)
+	default:
+		return false
+	}
+}
+
+// pointerDown places or selects an overlay. The secondary button deletes
+// the overlay under it. In pan mode the press is left for Dragged, and a
+// later release selects when the pointer did not move.
+func (a *Chart) pointerDown(pane int, ev ui.InputEvent) bool {
+	x, y, in := a.plotLocal(pane, ev)
+	if ev.Button == 1 {
+		if !in {
+			return false
+		}
+		hit, ok := a.hit(pane, x, y)
+		if !ok {
+			return false
+		}
+		a.panes[pane].overlays.Delete(hit.ID)
+		a.dragOn = false
+		return true
+	}
+	if ev.Button != 0 {
+		return false
+	}
+	if a.tool == toolPan {
+		if in {
+			a.pressOn = true
+			a.pressPane = pane
+			a.pressX, a.pressY = x, y
+		}
+		return false
+	}
+	if !in {
+		return false
+	}
+	hit, hitOK := a.hit(pane, x, y)
+	switch a.tool {
+	case toolHLine:
+		if hitOK && a.overlayKind(pane, hit.ID) == OverlayHLine {
+			a.panes[pane].overlays.Select(hit.ID)
+			a.startDrag(pane, hit.ID, HitBody)
+			return true
+		}
+		o := a.panes[pane].overlays.Add(OverlayHLine, a.pointAt(pane, x, y))
+		a.startDrag(pane, o.ID, HitBody)
+		a.dragNewHLine = true
+		return true
+	case toolSegment:
+		if a.draftOn && a.draftPane == pane {
+			a.panes[pane].overlays.Add(OverlaySegment, a.draft, a.pointAt(pane, x, y))
+			a.draftOn = false
+			a.dragOn = false
+			return true
+		}
+		if hitOK && a.overlayKind(pane, hit.ID) == OverlaySegment && hit.Part >= 0 {
+			a.panes[pane].overlays.Select(hit.ID)
+			a.draftOn = false
+			a.startDrag(pane, hit.ID, hit.Part)
+			return true
+		}
+		if hitOK {
+			a.panes[pane].overlays.Select(hit.ID)
+			a.draftOn = false
+			return true
+		}
+		a.draft = a.pointAt(pane, x, y)
+		a.draftOn = true
+		a.draftPane = pane
+		a.dragOn = false
+		return true
+	case toolFib:
+		if a.draftOn && a.draftPane == pane {
+			a.panes[pane].overlays.Add(OverlayFibonacci, a.draft, a.pointAt(pane, x, y))
+			a.draftOn = false
+			a.dragOn = false
+			return true
+		}
+		if hitOK && a.overlayKind(pane, hit.ID) == OverlayFibonacci && hit.Part >= 0 {
+			a.panes[pane].overlays.Select(hit.ID)
+			a.draftOn = false
+			a.startDrag(pane, hit.ID, hit.Part)
+			return true
+		}
+		if hitOK {
+			a.panes[pane].overlays.Select(hit.ID)
+			a.draftOn = false
+			return true
+		}
+		a.draft = a.pointAt(pane, x, y)
+		a.draftOn = true
+		a.draftPane = pane
+		a.dragOn = false
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *Chart) startDrag(pane int, id string, part int) {
+	a.dragOn = true
+	a.dragPane = pane
+	a.dragID = id
+	a.dragPart = part
+	a.dragNewHLine = false
+}
+
+func (a *Chart) pointerMove(pane int, ev ui.InputEvent) bool {
+	if !a.dragOn || pane != a.dragPane || ev.Button != 0 {
+		return false
+	}
+	x, y, _ := a.plotLocal(pane, ev)
+	if a.dragPart < 0 {
+		if a.dragNewHLine {
+			return a.panes[pane].overlays.SetPrice(a.dragID, a.pointAt(pane, x, y).Price)
+		}
+		price := a.painted[pane].Price
+		scale := a.priceScale(pane)
+		return a.panes[pane].overlays.SetPrice(a.dragID, LocalYToPrice(float64(price.H), y, scale))
+	}
+	return a.panes[pane].overlays.SetPoint(a.dragID, a.dragPart, a.pointAt(pane, x, y))
+}
+
+func (a *Chart) pointerUp(pane int, ev ui.InputEvent) bool {
+	if a.dragOn && pane == a.dragPane && ev.Button == 0 {
+		a.dragOn = false
+		a.dragNewHLine = false
+		return true
+	}
+	if a.tool == toolPan && a.pressOn && pane == a.pressPane && ev.Button == 0 {
+		x, y, in := a.plotLocal(pane, ev)
+		dx, dy := x-a.pressX, y-a.pressY
+		a.pressOn = false
+		if !in || dx*dx+dy*dy > clickSlop*clickSlop {
+			return false
+		}
+		if hit, ok := a.hit(pane, x, y); ok {
+			a.panes[pane].overlays.Select(hit.ID)
+		} else {
+			a.panes[pane].overlays.Select("")
+		}
+		return true
+	}
+	return false
+}
+
+func (a *Chart) overlayKind(pane int, id string) string {
+	o := a.panes[pane].overlays.ByID(id)
+	if o == nil {
+		return ""
+	}
+	return o.Kind
+}
+
+func (a *Chart) draftRubberKind() string {
+	if a.tool == toolFib {
+		return OverlayFibonacci
+	}
+	return ""
+}
+
+func (a *Chart) hit(pane int, x, y float64) (Hit, bool) {
+	if pane < 0 || pane >= len(a.panes) || pane >= len(a.painted) {
+		return Hit{}, false
+	}
+	price := a.painted[pane].Price
+	return a.panes[pane].overlays.Hit(x, y, float64(price.W), float64(price.H), a.vp, a.priceScale(pane), a.panes[pane].candles)
+}
+
+// plotLocal converts a pointer event to price-plot DIPs. The price plot
+// starts at the chart box's top-left, so the event's local axes match it.
+// in is false over the volume strip, the sub-panes, and the axes.
+func (a *Chart) plotLocal(pane int, ev ui.InputEvent) (x, y float64, in bool) {
+	if pane < 0 || pane >= len(a.painted) {
+		return 0, 0, false
+	}
+	price := a.painted[pane].Price
+	x, y = float64(ev.X), float64(ev.Y)
+	in = price.H > 1 && x >= 0 && x <= float64(price.W) && y >= 0 && y <= float64(price.H)
+	return x, y, in
+}
+
+func (a *Chart) priceScale(pane int) chart.Linear {
+	if a.layout == layoutOverlay && len(a.panes) >= 1 {
+		compare := []Candle{}
+		if len(a.panes) > 1 {
+			compare = a.panes[1].candles
+		}
+		s := a.panes[0]
+		_, raw, _ := CompareScales(s.candles, compare, a.active(s), a.vp, a.plotW)
+		return raw
+	}
+	s := a.panes[pane]
+	return MainScale(s.candles, a.active(s), a.vp, a.plotW)
+}
+
+// pointAt snaps the pointer to a bar index and a price. Time is that
+// bar's open time, so a later prepend still finds the same bar.
+func (a *Chart) pointAt(pane int, x, y float64) Point {
+	cs := a.panes[pane].candles
+	price := a.painted[pane].Price
+	if price.W > 0 {
+		if x < 0 {
+			x = 0
+		}
+		if x > float64(price.W) {
+			x = float64(price.W)
+		}
+	}
+	idx := 0
+	if n := len(cs); n > 0 {
+		if i, ok := a.vp.IndexAt(x, n); ok {
+			idx = i
+		} else if a.vp.BarWidth > 0 {
+			i := int(math.Floor(a.vp.Offset + x/a.vp.BarWidth))
+			if i < 0 {
+				i = 0
+			}
+			if i >= n {
+				i = n - 1
+			}
+			idx = i
+		}
+	}
+	var when time.Time
+	scale := a.priceScale(pane)
+	raw := LocalYToPrice(float64(price.H), y, scale)
+	px := raw
+	if idx >= 0 && idx < len(cs) {
+		when = cs[idx].Time
+		px = SnapPrice(a.magnet, cs[idx], raw, float64(price.H), scale)
+	}
+	return Point{
+		BarIndex: idx,
+		Time:     when,
+		Price:    px,
+	}
+}
+
+func (a *Chart) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime bool) {
+	macdOn, kdjOn := a.subPanes()
+	panes := SplitStack(r, showTime, macdOn, kdjOn)
+	if i >= len(a.painted) {
+		next := make([]Panes, i+1)
+		copy(next, a.painted)
+		a.painted = next
+	}
+	a.painted[i] = panes
+	a.plotW = float64(panes.Price.W)
+	// The plot width is only known once layout has run, which is inside
+	// Draw. Fitting here puts the latest bars on screen on the first
+	// frame instead of waiting for a second build.
+	if !a.fitted && panes.Price.W > 1 {
+		a.vp.FitRight(a.bars(), a.plotW)
+		a.fitted = true
+	}
+	a.vp.Clamp(a.bars(), a.plotW)
+	ptr := Pointer{}
+	if a.crossPane == i {
+		ptr = Pointer{On: true, X: r.X + a.hoverX, Y: r.Y + a.hoverY}
+	}
+	s := a.panes[i]
+	style := a.chartStyle(t)
+	active := a.active(s)
+	Paint(p, panes, s.candles, active, a.vp, ptr, a.crossIndex, style)
+	var rubber *Rubber
+	if a.draftOn && a.draftPane == i && a.crossPane == i {
+		rubber = &Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}
+	}
+	scale := MainScale(s.candles, active, a.vp, a.plotW)
+	DrawOverlays(p, panes.Price, s.overlays.Items(), a.vp, scale, s.candles, style, rubber)
+}
+
+// paintCompare draws both symbols in one column. Volume, MACD, KDJ, and
+// drawings belong to the primary symbol. The second symbol is the
+// close line painted by PaintCompare.
+func (a *Chart) paintCompare(p *ui.Painter, r ui.Rect, t *ui.Theme) {
+	macdOn, kdjOn := a.subPanes()
+	panes := SplitStack(r, true, macdOn, kdjOn)
+	a.painted = []Panes{panes}
+	a.plotW = float64(panes.Price.W)
+	if !a.fitted && panes.Price.W > 1 {
+		a.vp.FitRight(a.bars(), a.plotW)
+		a.fitted = true
+	}
+	a.vp.Clamp(a.bars(), a.plotW)
+	ptr := Pointer{}
+	if a.crossPane == 0 {
+		ptr = Pointer{On: true, X: r.X + a.hoverX, Y: r.Y + a.hoverY}
+	}
+	primary := a.panes[0]
+	compare := []Candle{}
+	if len(a.panes) > 1 {
+		compare = a.panes[1].candles
+	}
+	style := a.chartStyle(t)
+	active := a.active(primary)
+	indexed := PaintCompare(p, panes, primary.candles, compare, active, a.vp, ptr, a.crossIndex, style)
+	var rubber *Rubber
+	if a.draftOn && a.draftPane == 0 && a.crossPane == 0 {
+		rubber = &Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}
+	}
+	scale := MainScale(primary.candles, active, a.vp, a.plotW)
+	if indexed {
+		_, scale, _ = CompareScales(primary.candles, compare, active, a.vp, a.plotW)
+	}
+	DrawOverlays(p, panes.Price, primary.overlays.Items(), a.vp, scale, primary.candles, style, rubber)
+}
+
+// chartStyle is the window theme's chart colors, or the style passed to
+// NewChart, with the hollow-candle switch applied. Paint paths take this
+// instead of literal colors.
+func (a *Chart) chartStyle(t *ui.Theme) Style {
+	s := StyleFrom(t)
+	if a.styleSet {
+		s = a.style
+	}
+	s.HollowUp = a.hollowUp
+	s.LimitPct = a.limitPct
+	return s
+}
+
+func (a *Chart) readout(i int) string {
+	if i < 0 || i >= len(a.panes) {
+		return ""
+	}
+	s := a.panes[i]
+	n := len(s.candles)
+	if n == 0 {
+		return "No bars"
+	}
+	idx := n - 1
+	label := "Last"
+	if a.crossIndex >= 0 && a.crossIndex < n {
+		idx = a.crossIndex
+		label = "Hover"
+	}
+	line := label + "  " + FormatBar(s.candles[idx], math.NaN(), math.NaN())
+	if a.layout == layoutOverlay {
+		line += "  idx " + FormatPrice(a.indexValue(i, idx))
+		// The compare series is a close line. Its MA and MACD are not
+		// drawn, so they stay off this header.
+		if i != 0 {
+			return line
+		}
+	}
+	for _, ind := range a.active(s) {
+		if v := ind.ValueAt(idx); v != "" {
+			line += "  " + v
+		}
+	}
+	return line
+}
+
+// indexValue is close[idx] / close[base] * 100 for one symbol. base is
+// the first visible bar where every symbol has a positive close.
+func (a *Chart) indexValue(pane, idx int) float64 {
+	if pane < 0 || pane >= len(a.panes) {
+		return math.NaN()
+	}
+	cs := a.panes[pane].candles
+	if idx < 0 || idx >= len(cs) {
+		return math.NaN()
+	}
+	base := a.compareBase()
+	if base < 0 || base >= len(cs) || cs[base].Close <= 0 || math.IsNaN(cs[base].Close) {
+		return math.NaN()
+	}
+	return cs[idx].Close / cs[base].Close * 100
+}
+
+func (a *Chart) compareBase() int {
+	sets := make([][]Candle, 0, len(a.panes))
+	for _, s := range a.panes {
+		sets = append(sets, s.candles)
+	}
+	first, last := a.vp.Visible(a.bars(), a.plotW)
+	return IndexBase(first, last, sets...)
+}

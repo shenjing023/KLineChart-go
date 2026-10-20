@@ -21,6 +21,12 @@ func TestDarkAndLightDefaultsFollowTheme(t *testing.T) {
 	if dark.Up != ui.RGB(38, 166, 154) || dark.Down != ui.RGB(239, 83, 80) {
 		t.Fatalf("candle colors %+v %+v", dark.Up, dark.Down)
 	}
+	if dark.LimitUp == (ui.Color{}) || dark.LimitDown == (ui.Color{}) || dark.LimitUp == dark.Up || dark.LimitDown == dark.Down {
+		t.Fatalf("limit colors should be set and brighter than the body colors: %+v %+v", dark.LimitUp, dark.LimitDown)
+	}
+	if dark.LimitPct != 0 || light.LimitPct != 0 {
+		t.Fatal("limit paint starts off")
+	}
 	if dark.Up != light.Up || dark.Down != light.Down {
 		t.Fatal("rising stays green and falling stays red on both themes")
 	}
@@ -44,5 +50,48 @@ func TestDarkAndLightDefaultsFollowTheme(t *testing.T) {
 	}
 	if dark.HollowUp || light.HollowUp {
 		t.Fatal("hollow rising candles start off")
+	}
+}
+
+func TestCandleBodyColorUsesLimitOnlyWhenPctIsSet(t *testing.T) {
+	s := DarkDefault()
+	up := Candle{Open: 10, Close: 11}
+	down := Candle{Open: 11, Close: 10}
+	flat := Candle{Open: 10, Close: 10}
+	if got := s.CandleBodyColor(up, 10, 0); got != s.Up {
+		t.Fatalf("pct 0 rising %v", got)
+	}
+	if got := s.CandleBodyColor(down, 12, -1); got != s.Down {
+		t.Fatalf("negative pct falling %v", got)
+	}
+	if got := s.CandleBodyColor(flat, 10, 0); got != s.Up {
+		t.Fatalf("flat close is rising by the >= rule: %v", got)
+	}
+	// +10% exactly is a limit-up. 9% is not. close == high is not required.
+	limitUp := Candle{Open: 100, High: 110, Low: 100, Close: 110}
+	if got := s.CandleBodyColor(limitUp, 100, 0.10); got != s.LimitUp {
+		t.Fatalf("exact +10%% %v", got)
+	}
+	inside := Candle{Open: 100, Close: 109}
+	if got := s.CandleBodyColor(inside, 100, 0.10); got != s.Up {
+		t.Fatalf("+9%% should stay Up: %v", got)
+	}
+	limitDown := Candle{Open: 100, Close: 90}
+	if got := s.CandleBodyColor(limitDown, 100, 0.10); got != s.LimitDown {
+		t.Fatalf("exact -10%% %v", got)
+	}
+	mildDown := Candle{Open: 100, Close: 91}
+	if got := s.CandleBodyColor(mildDown, 100, 0.10); got != s.Down {
+		t.Fatalf("-9%% should stay Down: %v", got)
+	}
+	// No previous close, or a non-positive one, cannot be a limit move.
+	if got := s.CandleBodyColor(limitUp, 0, 0.10); got != s.Up {
+		t.Fatalf("prev 0 %v", got)
+	}
+	if got := s.CandleBodyColor(limitUp, 0, 0.10); got != s.Up {
+		t.Fatal(got)
+	}
+	if got := s.CandleBodyColor(Candle{Open: 1, Close: 2}, -5, 0.10); got != s.Up {
+		t.Fatalf("negative prev %v", got)
 	}
 }
