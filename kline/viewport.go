@@ -156,8 +156,10 @@ func (v Viewport) BarLeft(i int) float64 {
 }
 
 // TimeAt maps a fractional bar index onto the series clock. Indexes
-// outside the series extrapolate with the first bar's spacing, so axis
-// labels still move while the plot shows empty space past either end.
+// outside the series extrapolate with the spacing of the end they pass,
+// so a short first gap does not label empty space past the right edge.
+// The left side uses the first pair. The right side uses the last pair.
+// Interior indexes use the two bars they sit between.
 func TimeAt(cs []Candle, index float64) (t time.Time) {
 	if len(cs) == 0 {
 		return time.Time{}
@@ -165,12 +167,13 @@ func TimeAt(cs []Candle, index float64) (t time.Time) {
 	if len(cs) == 1 {
 		return cs[0].Time
 	}
-	step := cs[1].Time.Sub(cs[0].Time)
 	if index <= 0 {
+		step := cs[1].Time.Sub(cs[0].Time)
 		return cs[0].Time.Add(time.Duration(index * float64(step)))
 	}
 	last := float64(len(cs) - 1)
 	if index >= last {
+		step := cs[len(cs)-1].Time.Sub(cs[len(cs)-2].Time)
 		return cs[len(cs)-1].Time.Add(time.Duration((index - last) * float64(step)))
 	}
 	i := int(index)
