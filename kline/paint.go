@@ -25,6 +25,9 @@ type Style struct {
 	// Overlay is a drawing that is not selected. OverlayHot is the
 	// selected one, including its handles.
 	Overlay, OverlayHot ui.Color
+	// Compare is the second series in overlay mode, drawn as a close
+	// line on the indexed price plot.
+	Compare ui.Color
 }
 
 // StyleFrom builds colors that stay readable on the window theme.
@@ -56,6 +59,9 @@ func StyleFrom(t *ui.Theme) Style {
 		LabelText:  labelText,
 		Overlay:    ui.RGB(217, 70, 239),
 		OverlayHot: ui.RGB(255, 214, 0),
+		// Pink, away from the candle green and red, the blue MA accent,
+		// and the magenta drawing color.
+		Compare: ui.RGB(219, 39, 119),
 	}
 }
 

@@ -29,6 +29,15 @@ const (
 	toolSegment
 )
 
+const (
+	// layoutStack is the default: one column of panes per symbol.
+	layoutStack = iota
+	// layoutOverlay draws both symbols on one price plot. The primary
+	// series stays candles. The second series is a close line. Both are
+	// indexed to 100 at the first visible common bar.
+	layoutOverlay
+)
+
 // clickSlop is how far a pan-tool press can move, in DIPs, and still
 // count as a click that selects an overlay. It matches MyGo's drag
 // threshold.
@@ -85,6 +94,8 @@ type app struct {
 	// tool is Pan, H-Line, or Segment. Draw tools do not pan: the
 	// pointer places and moves overlays instead.
 	tool int
+	// layout is Stack or Overlay. Stack is the zero value.
+	layout int
 	// draft is the first point of a segment that does not have its
 	// second point yet. draftPane is the pane it belongs to.
 	draftOn   bool
@@ -326,9 +337,13 @@ func (a *app) view(c *ui.Context) {
 	t := c.Theme()
 	style := kline.StyleFrom(t)
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
-		ui.Row(c).Padding(8, 14, 0, 14).Gap(12).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Padding(8, 14, 0, 14).Gap(12).AlignItems(ui.Center).Wrap().Children(func() {
 			ui.Text(c, "K-line").Bold().FontSize(16)
-			ui.Textf(c, "%d bars · %d panes", a.bars(), len(a.panes)).FontSize(12).TextColor(t.TextMuted)
+			if a.layout == layoutOverlay {
+				ui.Textf(c, "%d bars · overlay", a.bars()).FontSize(12).TextColor(t.TextMuted)
+			} else {
+				ui.Textf(c, "%d bars · %d panes", a.bars(), len(a.panes)).FontSize(12).TextColor(t.TextMuted)
+			}
 			ui.Textf(c, "Period %s", a.period).FontSize(12).TextColor(t.TextMuted)
 			ui.Text(c, "MA5").FontSize(12).TextColor(style.MA5)
 			ui.Text(c, "MA20").FontSize(12).TextColor(style.MA20)
@@ -347,6 +362,23 @@ func (a *app) view(c *ui.Context) {
 				if b.Clicked() {
 					_ = a.setPeriod(choice.period)
 				}
+			}
+			for _, choice := range layoutChoices {
+				var b ui.Element
+				if a.layout == choice.layout {
+					b = ui.PrimaryButton(c, choice.label)
+				} else {
+					b = ui.Button(c, choice.label)
+				}
+				if b.Clicked() {
+					a.layout = choice.layout
+					a.draftOn = false
+					a.dragOn = false
+				}
+			}
+			if a.layout == layoutOverlay {
+				ui.Text(c, "idx 100").FontSize(12).TextColor(t.TextMuted)
+				ui.Text(c, "BETA line").FontSize(12).TextColor(style.Compare)
 			}
 			for _, choice := range toolChoices {
 				var b ui.Element
@@ -367,8 +399,11 @@ func (a *app) view(c *ui.Context) {
 				a.fitted = false
 			}
 		})
-		ui.Text(c, "Pan drags both panes. H-Line and Segment draw on the pane you click, and pan is off while a draw tool is selected. Delete removes the selected line. Right-click removes the line under the pointer.").
-			Padding(4, 14, 6, 14).FontSize(12).TextColor(t.TextMuted)
+		hint := "Pan drags both panes. H-Line and Segment draw on the pane you click, and pan is off while a draw tool is selected. Delete removes the selected line. Right-click removes the line under the pointer."
+		if a.layout == layoutOverlay {
+			hint = "Overlay indexes both symbols to 100 at the first visible bar where both closes are positive. ALPHA stays candles. BETA is the close line. Volume and MACD are ALPHA only, and drawings stay on ALPHA. Pan and the wheel still move the shared viewport."
+		}
+		ui.Text(c, hint).Padding(4, 14, 6, 14).FontSize(12).TextColor(t.TextMuted)
 
 		// Headers are built before the charts report the pointer, so they
 		// show crossIndex from the previous frame. The charts record the
@@ -379,15 +414,31 @@ func (a *app) view(c *ui.Context) {
 		hoverX, hoverY := float32(0), float32(0)
 		anyHover := false
 		anyPress := false
-		for i := range a.panes {
-			s := &a.panes[i]
-			ui.Row(c).Padding(2, 14, 2, 14).Gap(10).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, s.name).Bold().FontSize(13)
-				ui.Text(c, a.readout(i)).Font("monospace").FontSize(12).NoWrap().Grow(1)
-			})
-			chart := ui.Box(c.Key(s.name)).Grow(1).WidthPercent(100).
-				Label(s.name + " chart").Cursor(ui.CursorCrosshair).Focusable()
-			pane := i
+		type chartSlot struct {
+			key, label string
+			pane       int
+			showTime   bool
+		}
+		slots := make([]chartSlot, len(a.panes))
+		for i, s := range a.panes {
+			slots[i] = chartSlot{key: s.name, label: s.name + " chart", pane: i, showTime: i == len(a.panes)-1}
+		}
+		if a.layout == layoutOverlay {
+			// One plot. Both headers stay, so the crosshair can show
+			// each symbol's own values at the shared bar index.
+			for i := range a.panes {
+				a.symbolHeader(c, i)
+			}
+			slots = []chartSlot{{key: "compare", label: "Compare chart", pane: 0, showTime: true}}
+		}
+		for _, slot := range slots {
+			if a.layout != layoutOverlay {
+				a.symbolHeader(c, slot.pane)
+			}
+			chart := ui.Box(c.Key(slot.key)).Grow(1).WidthPercent(100).
+				Label(slot.label).Cursor(ui.CursorCrosshair).Focusable()
+			pane := slot.pane
+			showTime := slot.showTime
 			chart.HandleInput(func(ev ui.InputEvent) bool {
 				return a.onChartInput(pane, ev)
 			})
@@ -401,14 +452,17 @@ func (a *app) view(c *ui.Context) {
 			}
 			if x, y, over := chart.PointerPosition(); over {
 				anyHover = true
-				nextPane = i
+				nextPane = pane
 				hoverX, hoverY = x, y
 				if bar, ok := a.vp.IndexAt(float64(x), a.bars()); ok {
 					nextIndex = bar
 				}
 			}
-			showTime := i == len(a.panes)-1
 			chart.Draw(func(p *ui.Painter, r ui.Rect) {
+				if a.layout == layoutOverlay {
+					a.paintCompare(p, r, t)
+					return
+				}
 				a.paintPane(p, r, t, pane, showTime)
 			})
 		}
@@ -432,6 +486,29 @@ var toolChoices = []struct {
 	{"Pan", toolPan},
 	{"H-Line", toolHLine},
 	{"Segment", toolSegment},
+}
+
+var layoutChoices = []struct {
+	label  string
+	layout int
+}{
+	{"Stack", layoutStack},
+	{"Overlay", layoutOverlay},
+}
+
+func (a *app) symbolHeader(c *ui.Context, i int) {
+	if i < 0 || i >= len(a.panes) {
+		return
+	}
+	s := &a.panes[i]
+	t := c.Theme()
+	ui.Row(c).Padding(2, 14, 2, 14).Gap(10).AlignItems(ui.Center).Children(func() {
+		name := ui.Text(c, s.name).Bold().FontSize(13)
+		if a.layout == layoutOverlay && i == 1 {
+			name.TextColor(kline.StyleFrom(t).Compare)
+		}
+		ui.Text(c, a.readout(i)).Font("monospace").FontSize(12).NoWrap().Grow(1)
+	})
 }
 
 // onChartInput takes the wheel, the draw tools, and Delete from one pane.
@@ -609,6 +686,15 @@ func (a *app) plotLocal(pane int, ev ui.InputEvent) (x, y float64, in bool) {
 }
 
 func (a *app) priceScale(pane int) chart.Linear {
+	if a.layout == layoutOverlay && len(a.panes) >= 1 {
+		compare := []kline.Candle{}
+		if len(a.panes) > 1 {
+			compare = a.panes[1].candles
+		}
+		s := a.panes[0]
+		_, raw, _ := kline.CompareScales(s.candles, compare, a.active(s), a.vp, a.plotW)
+		return raw
+	}
 	s := a.panes[pane]
 	return kline.MainScale(s.candles, a.active(s), a.vp, a.plotW)
 }
@@ -685,6 +771,41 @@ func (a *app) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime b
 	kline.DrawOverlays(p, panes.Price, s.overlays.Items(), a.vp, scale, s.candles, style, rubber)
 }
 
+// paintCompare draws both symbols in one column. Volume, MACD, and
+// drawings belong to the primary symbol. The second symbol is the
+// close line painted by PaintCompare.
+func (a *app) paintCompare(p *ui.Painter, r ui.Rect, t *ui.Theme) {
+	panes := kline.SplitStack(r, true, a.subOpen())
+	a.painted = []kline.Panes{panes}
+	a.plotW = float64(panes.Price.W)
+	if !a.fitted && panes.Price.W > 1 {
+		a.vp.FitRight(a.bars(), a.plotW)
+		a.fitted = true
+	}
+	a.vp.Clamp(a.bars(), a.plotW)
+	ptr := kline.Pointer{}
+	if a.crossPane == 0 {
+		ptr = kline.Pointer{On: true, X: r.X + a.hoverX, Y: r.Y + a.hoverY}
+	}
+	primary := a.panes[0]
+	compare := []kline.Candle{}
+	if len(a.panes) > 1 {
+		compare = a.panes[1].candles
+	}
+	style := kline.StyleFrom(t)
+	active := a.active(primary)
+	indexed := kline.PaintCompare(p, panes, primary.candles, compare, active, a.vp, ptr, a.crossIndex, style)
+	var rubber *kline.Rubber
+	if a.draftOn && a.draftPane == 0 && a.crossPane == 0 {
+		rubber = &kline.Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY)}
+	}
+	scale := kline.MainScale(primary.candles, active, a.vp, a.plotW)
+	if indexed {
+		_, scale, _ = kline.CompareScales(primary.candles, compare, active, a.vp, a.plotW)
+	}
+	kline.DrawOverlays(p, panes.Price, primary.overlays.Items(), a.vp, scale, primary.candles, style, rubber)
+}
+
 func (a *app) readout(i int) string {
 	if i < 0 || i >= len(a.panes) {
 		return ""
@@ -701,12 +822,46 @@ func (a *app) readout(i int) string {
 		label = "Hover"
 	}
 	line := label + "  " + kline.FormatBar(s.candles[idx], math.NaN(), math.NaN())
+	if a.layout == layoutOverlay {
+		line += "  idx " + kline.FormatPrice(a.indexValue(i, idx))
+		// The compare series is a close line. Its MA and MACD are not
+		// drawn, so they stay off this header.
+		if i != 0 {
+			return line
+		}
+	}
 	for _, ind := range a.active(s) {
 		if v := ind.ValueAt(idx); v != "" {
 			line += "  " + v
 		}
 	}
 	return line
+}
+
+// indexValue is close[idx] / close[base] * 100 for one symbol. base is
+// the first visible bar where every symbol has a positive close.
+func (a *app) indexValue(pane, idx int) float64 {
+	if pane < 0 || pane >= len(a.panes) {
+		return math.NaN()
+	}
+	cs := a.panes[pane].candles
+	if idx < 0 || idx >= len(cs) {
+		return math.NaN()
+	}
+	base := a.compareBase()
+	if base < 0 || base >= len(cs) || cs[base].Close <= 0 || math.IsNaN(cs[base].Close) {
+		return math.NaN()
+	}
+	return cs[idx].Close / cs[base].Close * 100
+}
+
+func (a *app) compareBase() int {
+	sets := make([][]kline.Candle, 0, len(a.panes))
+	for _, s := range a.panes {
+		sets = append(sets, s.candles)
+	}
+	first, last := a.vp.Visible(a.bars(), a.plotW)
+	return kline.IndexBase(first, last, sets...)
 }
 
 func main() {
