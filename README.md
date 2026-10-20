@@ -422,8 +422,8 @@ func (f *feed) UnsubscribeBar(symbol string, period kline.Period) error {
 
 - `kline.NewChart`。选项有 `Source`、`Symbols`、`Period`、`Layout`（`"stack"` 或 `"overlay"`）、`Style`、`Hollow`、`Indicators`、`Magnet`。没填的项用演示默认值：合成源、ALPHA 和 BETA、1h、Stack、MA 和 MACD 开、磁吸关、颜色跟窗口主题。
 - `View` 是 MyGo 的视图函数。单独做窗口时用 `ui.View(chart.View)`。宿主有自己的工具条时，在那一栏下面调用 `chart.View(ctx)`。没有工具条也会画出 Stack 的 K 线、量柱和选中的指标，平移、缩放、十字线都能用。
-- `SetPeriod`、`SetLayout`、`SetSource`、`Close`。换周期会重新加载并清掉画线。`SetSource(nil)` 返回错误。`GetBars` 失败时保留原来的源。`SubscribeBar` 失败时返回错误，并退掉这一轮已经订上的 symbol。源实现了 `LiveSource` 仍会订阅，没有实现就只走 `GetBars`。`Close` 退订。
-- 工具条还绑定了 `SetTool`、`SetMagnet`、`SetIndicator`、`SetHollow`、`ResetView`。指标开关和 Hollow 也可以直接拿 `IndicatorEnabled` / `HollowEnabled` 的 `*bool` 交给 `ui.Toggle`。
+- `SetPeriod`、`SetLayout`、`SetSource`、`Close`。换周期会重新加载并清掉画线。`SetSource(nil)` 返回错误。`SetLayout` 只接受 `"stack"` 和 `"overlay"`，别的字符串返回 `ErrUnknownLayout`，布局保持不变。`GetBars` 失败时保留原来的源。`SubscribeBar` 失败时返回错误，并退掉这一轮已经订上的 symbol。源实现了 `LiveSource` 仍会订阅，没有实现就只走 `GetBars`。`Close` 退订。
+- 工具条还绑定了 `SetTool`、`SetMagnet`、`SetIndicator`、`SetHollow`、`ResetView`。`SetMagnet` 只接受关、弱、强，别的值返回 `ErrUnknownMagnet`，当前模式不变。指标开关和 Hollow 也可以直接拿 `IndicatorEnabled` / `HollowEnabled` 的 `*bool` 交给 `ui.Toggle`。
 - `SetStyle` 换成一整套颜色。`SetLimitPct` 单独改涨跌停阈值。`Style.CandleBodyColor` 的规则是：`limitPct <= 0` 时只用 `Up` / `Down`（收盘不低于开盘为涨）。`limitPct > 0` 且上一根收盘为正时，`(close-prevClose)/prevClose >= limitPct` 用 `LimitUp`，`<= -limitPct` 用 `LimitDown`。收盘等于最高价本身不算涨停。量柱和 MACD 柱仍用 `Up` / `Down`。
 - 演示工具条 **Classic / US / Contrast** 改 K 线颜色。**Limit 10%** 把阈值设为 0.10，再点一次关掉。默认阈值是 0，所以涨跌停色先备着，不画上去。Hollow 仍然只描涨的实体，涨停那根若收盘不低于开盘，描的是 `LimitUp`。
 
