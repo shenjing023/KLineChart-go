@@ -3,10 +3,12 @@ package kline
 import (
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/chart"
 )
 
 // histSource serves fixed histories. Init returns the last initN bars of
@@ -524,5 +526,93 @@ func TestDuplicateSymbolsRejected(t *testing.T) {
 	tt.Frame()
 	if tt.HasText("ALPHA") {
 		t.Fatalf("texts %q", tt.Texts())
+	}
+}
+
+// negate mirrors bars below zero, so no close is positive.
+func negate(cs []Candle) []Candle {
+	out := make([]Candle, len(cs))
+	for i, c := range cs {
+		out[i] = Candle{Time: c.Time, Open: -c.Open, High: -c.Low, Low: -c.High, Close: -c.Close, Volume: c.Volume}
+	}
+	return out
+}
+
+func sameScale(a, b chart.Linear) bool { return a.Lo == b.Lo && a.Hi == b.Hi }
+
+func TestOverlayFallbackHitMatchesPaint(t *testing.T) {
+	src := &histSource{initN: 200, hist: map[string][]Candle{
+		"ALPHA": negate(Generate(200, 42)),
+		"BETA":  Generate(200, 99),
+	}}
+	a := NewChart(ChartOptions{Source: src, Symbols: []string{"ALPHA", "BETA"}, Layout: LayoutOverlay, Indicators: []string{}})
+	tt := ui.NewTester(a.View, 1100, 1000)
+	primary, compare := a.overlayPair()
+	inds := a.active(a.panes[0])
+	// No bar has a positive ALPHA close, so PaintCompare draws Paint's
+	// plot on MainScale.
+	painted := MainScale(primary, inds, a.vp, a.plotW)
+	index, raw, base := CompareScales(primary, compare, inds, a.vp, a.plotW)
+	if indexable(primary, base) || !sameScale(index, painted) || !sameScale(raw, painted) {
+		t.Fatalf("fallback scales index %v..%v raw %v..%v, painted %v..%v", index.Lo, index.Hi, raw.Lo, raw.Hi, painted.Lo, painted.Hi)
+	}
+
+	if err := a.SetTool(ToolHLine); err != nil {
+		t.Fatal(err)
+	}
+	price := a.painted[0].Price
+	localX, localY := float32(160), price.H*0.35
+	tt.ClickAt(price.X+localX, price.Y+localY)
+	items := a.panes[0].overlays.Items()
+	if len(items) != 1 {
+		t.Fatalf("drawings %d", len(items))
+	}
+	stored := items[0].Points[0].Price
+	want := LocalYToPrice(float64(price.H), float64(localY), painted)
+	if math.Abs(stored-want) > 1e-6 {
+		t.Fatalf("stored %v, the painted scale reads %v at the click", stored, want)
+	}
+	if y := PriceToLocalY(float64(price.H), stored, painted); math.Abs(y-float64(localY)) > 0.5 {
+		t.Fatalf("line paints at local y %v, clicked at %v", y, localY)
+	}
+	if _, ok := a.hit(0, float64(localX), float64(localY)); !ok {
+		t.Fatal("hit test missed the line under the click")
+	}
+	band := ui.Rect{X: price.X, Y: price.Y + localY - 3, W: price.W, H: 6}
+	if hot := countNear(tt.Image(), band, StyleFrom(nil).OverlayHot); hot < 40 {
+		t.Fatalf("selected line pixels %d on the clicked row", hot)
+	}
+}
+
+func TestOverlayThreeSymbolsShareHeaderBase(t *testing.T) {
+	src := &histSource{initN: 200, hist: map[string][]Candle{
+		"ALPHA": Generate(200, 42),
+		"BETA":  Generate(200, 99),
+		"GAMMA": negate(Generate(200, 7)),
+	}}
+	a := NewChart(ChartOptions{Source: src, Symbols: []string{"ALPHA", "BETA", "GAMMA"}, Layout: LayoutOverlay, Indicators: []string{}})
+	tt := ui.NewTester(a.View, 1100, 1000)
+	first, _ := a.Visible()
+	primary, compare := a.overlayPair()
+	_, _, painted := CompareScales(primary, compare, nil, a.vp, a.plotW)
+	if painted != first || first <= 0 {
+		t.Fatalf("painted base %d, first visible %d", painted, first)
+	}
+	if got := a.compareBase(); got != painted {
+		t.Fatalf("header base %d, painted base %d", got, painted)
+	}
+	if math.Abs(a.indexValue(0, painted)-100) > 1e-9 || math.Abs(a.indexValue(1, painted)-100) > 1e-9 {
+		t.Fatalf("header idx at the painted base %v %v", a.indexValue(0, painted), a.indexValue(1, painted))
+	}
+	if tt.HasText("GAMMA") {
+		t.Fatalf("overlay has a header for a symbol it does not draw: %q", tt.Texts())
+	}
+	if r := a.Readout("GAMMA"); r == "" || strings.Contains(r, "idx") {
+		t.Fatalf("GAMMA readout %q", r)
+	}
+	a.SetLayout(LayoutStack)
+	tt.Frame()
+	if !tt.HasText("GAMMA") {
+		t.Fatal("stack lost the third symbol")
 	}
 }

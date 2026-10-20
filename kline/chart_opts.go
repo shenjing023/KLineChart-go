@@ -11,9 +11,10 @@ import (
 const (
 	// LayoutStack is one column of panes per symbol.
 	LayoutStack = "stack"
-	// LayoutOverlay draws every symbol on one price plot. The first
-	// symbol stays candles. The second is a close line. Both are indexed
-	// to 100 at the first visible common bar.
+	// LayoutOverlay compares the first two symbols on one price plot. The
+	// first stays candles. The second is a close line. Both are indexed
+	// to 100 at the first visible bar where both closes are positive.
+	// Further symbols are not drawn and have no header until LayoutStack.
 	LayoutOverlay = "overlay"
 )
 

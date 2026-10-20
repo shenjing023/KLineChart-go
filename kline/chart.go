@@ -34,9 +34,9 @@ const (
 const (
 	// layoutStack is the default: one column of panes per symbol.
 	layoutStack = iota
-	// layoutOverlay draws both symbols on one price plot. The primary
-	// series stays candles. The second series is a close line. Both are
-	// indexed to 100 at the first visible common bar.
+	// layoutOverlay draws the first two symbols on one price plot. The
+	// primary series stays candles. The second series is a close line.
+	// Both are indexed to 100 at the first visible common bar.
 	layoutOverlay
 )
 
@@ -870,9 +870,10 @@ func (a *Chart) View(c *ui.Context) {
 		}
 		if a.layout == layoutOverlay {
 			// One plot. Both headers stay, so the crosshair can show
-			// each symbol's own values at the shared bar index.
+			// each symbol's own values at the shared bar index. A third
+			// symbol is not drawn here, so it has no header either.
 			if !a.hideHeader {
-				for i := range a.panes {
+				for i := 0; i < len(a.panes) && i < 2; i++ {
 					a.symbolHeader(c, i)
 				}
 			}
@@ -1156,18 +1157,30 @@ func (a *Chart) plotLocal(pane int, ev ui.InputEvent) (x, y float64, in bool) {
 	return x, y, in
 }
 
+// priceScale maps the pane's price plot for hit tests and new points. In
+// overlay it is CompareScales' raw scale, which is also what overlays are
+// drawn with, including when the base cannot be indexed.
 func (a *Chart) priceScale(pane int) chart.Linear {
 	if a.layout == layoutOverlay && len(a.panes) >= 1 {
-		compare := []Candle{}
-		if len(a.panes) > 1 {
-			compare = a.panes[1].candles
-		}
-		s := a.panes[0]
-		_, raw, _ := CompareScales(s.candles, compare, a.active(s), a.vp, a.plotW)
+		primary, compare := a.overlayPair()
+		_, raw, _ := CompareScales(primary, compare, a.active(a.panes[0]), a.vp, a.plotW)
 		return raw
 	}
 	s := a.panes[pane]
 	return MainScale(s.candles, a.active(s), a.vp, a.plotW)
+}
+
+// overlayPair is what LayoutOverlay draws: the first symbol as candles
+// and the second as the indexed close line. Other symbols are not drawn
+// there.
+func (a *Chart) overlayPair() (primary, compare []Candle) {
+	if len(a.panes) > 0 {
+		primary = a.panes[0].candles
+	}
+	if len(a.panes) > 1 {
+		compare = a.panes[1].candles
+	}
+	return primary, compare
 }
 
 // pointAt snaps the pointer to a bar index and a price. Time is that
@@ -1262,23 +1275,16 @@ func (a *Chart) paintCompare(p *ui.Painter, r ui.Rect, t *ui.Theme) {
 	if a.crossPane == 0 {
 		ptr = Pointer{On: true, X: r.X + a.hoverX, Y: r.Y + a.hoverY}
 	}
-	primary := a.panes[0]
-	compare := []Candle{}
-	if len(a.panes) > 1 {
-		compare = a.panes[1].candles
-	}
+	primary, compare := a.overlayPair()
 	style := a.chartStyle(t)
-	active := a.active(primary)
-	indexed := PaintCompare(p, panes, primary.candles, compare, active, a.vp, ptr, a.crossIndex, style)
+	active := a.active(a.panes[0])
+	PaintCompare(p, panes, primary, compare, active, a.vp, ptr, a.crossIndex, style)
 	var rubber *Rubber
 	if a.draftOn && a.draftPane == 0 && a.crossPane == 0 {
 		rubber = &Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}
 	}
-	scale := MainScale(primary.candles, active, a.vp, a.plotW)
-	if indexed {
-		_, scale, _ = CompareScales(primary.candles, compare, active, a.vp, a.plotW)
-	}
-	DrawOverlays(p, panes.Price, primary.overlays.Items(), a.vp, scale, primary.candles, style, rubber)
+	_, scale, _ := CompareScales(primary, compare, active, a.vp, a.plotW)
+	DrawOverlays(p, panes.Price, a.panes[0].overlays.Items(), a.vp, scale, primary, style, rubber)
 }
 
 // chartStyle is the window theme's chart colors, or the style passed to
@@ -1311,6 +1317,10 @@ func (a *Chart) readout(i int) string {
 	}
 	line := label + "  " + FormatBar(s.candles[idx], math.NaN(), math.NaN())
 	if a.layout == layoutOverlay {
+		// Symbols after the second are not on the overlay plot.
+		if i > 1 {
+			return line
+		}
 		line += "  idx " + FormatPrice(a.indexValue(i, idx))
 		// The compare series is a close line. Its MA and MACD are not
 		// drawn, so they stay off this header.
@@ -1327,7 +1337,8 @@ func (a *Chart) readout(i int) string {
 }
 
 // indexValue is close[idx] / close[base] * 100 for one symbol. base is
-// the first visible bar where every symbol has a positive close.
+// the bar PaintCompare indexes to 100: the first visible bar where both
+// overlay series have a positive close.
 func (a *Chart) indexValue(pane, idx int) float64 {
 	if pane < 0 || pane >= len(a.panes) {
 		return math.NaN()
@@ -1344,10 +1355,7 @@ func (a *Chart) indexValue(pane, idx int) float64 {
 }
 
 func (a *Chart) compareBase() int {
-	sets := make([][]Candle, 0, len(a.panes))
-	for _, s := range a.panes {
-		sets = append(sets, s.candles)
-	}
-	first, last := a.vp.Visible(a.bars(), a.plotW)
-	return IndexBase(first, last, sets...)
+	primary, compare := a.overlayPair()
+	base, _, _ := overlayBase(primary, compare, a.vp, a.plotW)
+	return base
 }

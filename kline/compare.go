@@ -119,23 +119,18 @@ func commonPositiveClose(series [][]Candle, i int) bool {
 // raw maps primary prices onto the same pixels, so a drawing stored in
 // raw price lands on the indexed candles. base is the bar whose close
 // is 100 on each series.
+//
+// When base has no positive primary close, the overlay cannot be
+// indexed and PaintCompare draws Paint's plot instead. index and raw are
+// then both MainScale, the scale that plot uses, so drawings and hit
+// tests still land on its candles.
 func CompareScales(primary, compare []Candle, inds []Indicator, vp Viewport, plotW float64) (index, raw chart.Linear, base int) {
-	n := commonLen(primary, compare)
-	first, last := vp.Visible(n, plotW)
-	sets := [][]Candle{primary}
-	if len(compare) > 0 {
-		sets = append(sets, compare)
-	}
-	base = IndexBase(first, last, sets...)
-	if base < 0 || base >= len(primary) {
-		index = chart.NewLinear(0, 1)
+	base, first, last := overlayBase(primary, compare, vp, plotW)
+	if !indexable(primary, base) {
+		index = MainScale(primary, inds, vp, plotW)
 		return index, index, base
 	}
 	baseClose := primary[base].Close
-	if baseClose <= 0 || math.IsNaN(baseClose) {
-		index = chart.NewLinear(0, 1)
-		return index, index, base
-	}
 	// Domain only reads the visible window. Copying that window keeps
 	// PriceDomain's padding and avoids a full-series normalize on pan.
 	if first > last {
@@ -164,6 +159,22 @@ func CompareScales(primary, compare []Candle, inds []Indicator, vp Viewport, plo
 	index = chart.NewLinear(lo, hi).Nice(5)
 	raw = rawScale(index, baseClose)
 	return index, raw, base
+}
+
+// overlayBase is the bar the overlay indexes to 100 for the window vp
+// shows, and that window. Every overlay reader uses it, so the header's
+// index and the painted base agree.
+func overlayBase(primary, compare []Candle, vp Viewport, plotW float64) (base, first, last int) {
+	first, last = vp.Visible(commonLen(primary, compare), plotW)
+	if len(compare) == 0 {
+		return IndexBase(first, last, primary), first, last
+	}
+	return IndexBase(first, last, primary, compare), first, last
+}
+
+// indexable reports whether bar base of cs has a close that can be 100.
+func indexable(cs []Candle, base int) bool {
+	return base >= 0 && base < len(cs) && cs[base].Close > 0 && !math.IsNaN(cs[base].Close)
 }
 
 func rawScale(index chart.Linear, baseClose float64) chart.Linear {
@@ -233,7 +244,7 @@ func PaintCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []
 		return false
 	}
 	index, _, base := CompareScales(primary, compare, inds, vp, float64(price.W))
-	if base < 0 || base >= len(primary) || primary[base].Close <= 0 || math.IsNaN(primary[base].Close) {
+	if !indexable(primary, base) {
 		Paint(p, panes, primary, inds, vp, ptr, barIndex, style)
 		return false
 	}
