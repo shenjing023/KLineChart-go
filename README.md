@@ -13,7 +13,8 @@ It is a demo of the interaction in [KLineChart](https://github.com/klinecharts/K
 - MA5 and MA20 on each symbol.
 - The price scale of each pane follows that symbol's visible bars.
 - **Reset view** returns both panes to the latest bars at the default width.
-- 600 hourly bars per symbol from a fixed random walk, same clock, different seeds, so the app runs with no network and no API key.
+- **1h / 4h / 1d** reload both panes from the data source and fit the latest bars. The default **1h** series is the same walk as before (ALPHA seed 42, BETA seed 99).
+- Dragging to the left edge loads older bars, prepends them, and shifts the shared offset by that count so the bars on screen stay put. A load already in flight does not start another.
 
 ## Run
 
@@ -52,16 +53,36 @@ Native UI draws with Direct3D 11 on Windows, Metal on macOS, and OpenGL on Linux
 
 ## Layout
 
-- `main.go` — window, one readout per symbol, and the shared viewport and crosshair index.
-- `kline/` — `Candle`, the synthetic series, SMA, the viewport (index, bar width, pan, zoom, hit testing), and `Paint` using `ui.Painter`.
+- `main.go` — window, one readout per symbol, the shared viewport and crosshair index, and the period toolbar.
+- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, and `DataSource` (`Period`, `BarRequest`, `SyntheticSource`).
 
 Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot. Dragging right decreases `offset` for all panes. The wheel keeps the bar under the pointer fixed while the width changes, and the other pane uses that same width. Each pane's Y axis is its own `chart.Linear` over that symbol's visible high/low. `Paint` takes the shared bar index so a pane draws the vertical line even when the pointer is on the other one.
 
+## P0
+
+本阶段在原有双窗联动图上补了数据层，没有改画布和手势模型。
+
+能做：
+
+- 通过 `kline.DataSource.GetBars` 取数。当前只有 `SyntheticSource`（本地合成，不访问网络）。
+- `init` 取最新一段（默认 600 根）。`forward` 取锚点之前的更早 K 线，时间不重叠。`backward` 只留在接口里，合成源返回错误。
+- 工具条 `1h` / `4h` / `1d`。切换时 ALPHA 和 BETA 一起重新加载，再 `FitRight`。
+- 共享 `Offset < 5` 且还有更早数据时，prepend 一批并加上同样的根数，画面不跳。加载过程中不重复请求。
+
+明确不做（也不在本阶段开始）：
+
+- 真实行情 HTTP、WebSocket、`subscribeBar`
+- 缺会话的空隙压缩
+- P1 副图指标（MACD）、可开关 MA
+- P2 画线
+- P3 同轴叠加
+- P4 外置样式、明暗主题、空心阳线
+
 ## Out of scope
 
-- Feature parity with KLineChart: drawings, a full indicator set, log scale, sessions, or a data loader.
+- Feature parity with KLineChart beyond the list above: drawings, a full indicator set, log scale, or session gaps.
 - A WebView, or embedding the JavaScript chart.
-- Live market data.
+- Live market data. A real feed implements `DataSource`; this repo does not open a socket.
 - Installer polish beyond `go build` and `mygo build`.
 
 ## Limitations

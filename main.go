@@ -7,6 +7,7 @@ package main
 import (
 	"log"
 	"math"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -14,25 +15,30 @@ import (
 )
 
 const (
-	sampleBars = 600
-	sampleSeed = 42
-	otherSeed  = 99
+	sampleBars   = 600
+	forwardBatch = 200
+	// forwardEdge is the shared offset below which older bars are loaded.
+	// Offset is the bar index at the left edge, the same value Viewport uses.
+	forwardEdge = 5
 )
 
-// series is one symbol. Every series in the window shares the hourly
-// clock from kline.Generate, so a bar index is the same time on each.
+// series is one symbol. Panes share one period, so a bar index is the
+// same open time on each.
 type series struct {
 	name    string
 	candles []kline.Candle
 	ma5     []float64
 	ma20    []float64
+	more    bool
 }
 
 // app is the state the window shows. One viewport and one crossIndex
-// are shared by every pane.
+// are shared by every pane. Bars come from src.
 type app struct {
-	panes []series
-	vp    kline.Viewport
+	src    kline.DataSource
+	period kline.Period
+	panes  []series
+	vp     kline.Viewport
 	// fitted is set once a price plot has a width, so the first frame
 	// opens on the latest bars instead of bar 0.
 	fitted bool
@@ -46,23 +52,170 @@ type app struct {
 	crossPane  int
 	hoverX     float32
 	hoverY     float32
+	// loading is true while a forward request is in flight. Synthetic
+	// loads return immediately; the flag still drops a re-entrant call.
+	loading bool
 }
 
 func newApp() *app {
-	return &app{
-		panes: []series{
-			newSeries("ALPHA", sampleSeed),
-			newSeries("BETA", otherSeed),
-		},
+	a := &app{
+		src:        &kline.SyntheticSource{},
+		period:     kline.Period{Span: 1, Unit: kline.UnitHour},
+		panes:      []series{{name: "ALPHA"}, {name: "BETA"}},
 		vp:         kline.Viewport{BarWidth: kline.DefaultBarWidth},
 		crossIndex: -1,
 		crossPane:  -1,
 	}
+	if err := a.setPeriod(a.period); err != nil {
+		panic(err)
+	}
+	return a
 }
 
-func newSeries(name string, seed int64) series {
-	cs := kline.Generate(sampleBars, seed)
-	return series{name: name, candles: cs, ma5: kline.SMA(cs, 5), ma20: kline.SMA(cs, 20)}
+// setPeriod reloads every pane with Kind=init and fits the latest bars
+// when the plot width is already known. The first frame still fits from
+// paint, because layout has not run yet.
+func (a *app) setPeriod(p kline.Period) error {
+	if a.src == nil {
+		return kline.ErrInvalidPeriod
+	}
+	next := make([]series, len(a.panes))
+	for i, s := range a.panes {
+		bars, more, err := a.src.GetBars(kline.BarRequest{
+			Symbol: s.name,
+			Period: p,
+			Kind:   kline.KindInit,
+			Limit:  sampleBars,
+		})
+		if err != nil {
+			return err
+		}
+		next[i] = series{
+			name:    s.name,
+			candles: bars,
+			ma5:     kline.SMA(bars, 5),
+			ma20:    kline.SMA(bars, 20),
+			more:    more,
+		}
+	}
+	a.period = p
+	a.panes = next
+	a.crossIndex = -1
+	a.crossPane = -1
+	a.fitted = false
+	if a.plotW > 1 {
+		a.vp.FitRight(a.bars(), a.plotW)
+		a.fitted = true
+	}
+	return nil
+}
+
+var periodChoices = []struct {
+	label  string
+	period kline.Period
+}{
+	{"1h", kline.Period{Span: 1, Unit: kline.UnitHour}},
+	{"4h", kline.Period{Span: 4, Unit: kline.UnitHour}},
+	{"1d", kline.Period{Span: 1, Unit: kline.UnitDay}},
+}
+
+// ensureForward prepends older bars when the shared offset is near the
+// left edge. Offset increases by the prepended count, which is the same
+// rule as Viewport: bar i moves to i+n, so (i+n) - (offset+n) is unchanged.
+// A load already in flight does not start another.
+func (a *app) ensureForward() {
+	if a.loading || a.src == nil || !a.fitted || a.vp.Offset >= forwardEdge || !a.anyMore() {
+		return
+	}
+	a.loading = true
+	defer func() { a.loading = false }()
+
+	type fetched struct {
+		bars []kline.Candle
+		more bool
+		ok   bool
+	}
+	got := make([]fetched, len(a.panes))
+	for i, s := range a.panes {
+		if !s.more || len(s.candles) == 0 {
+			continue
+		}
+		bars, more, err := a.src.GetBars(kline.BarRequest{
+			Symbol: s.name,
+			Period: a.period,
+			Kind:   kline.KindForward,
+			Anchor: s.candles[0].Time,
+			Limit:  forwardBatch,
+		})
+		if err != nil {
+			return
+		}
+		bars = strictlyBefore(bars, s.candles[0].Time)
+		got[i] = fetched{bars: bars, more: more, ok: true}
+	}
+	n := 0
+	have := false
+	for _, g := range got {
+		if !g.ok || len(g.bars) == 0 {
+			continue
+		}
+		if !have || len(g.bars) < n {
+			n = len(g.bars)
+			have = true
+		}
+	}
+	if !have || n == 0 {
+		for i := range a.panes {
+			if got[i].ok && len(got[i].bars) == 0 {
+				a.panes[i].more = false
+			}
+		}
+		return
+	}
+	for i := range a.panes {
+		if !got[i].ok || len(got[i].bars) == 0 {
+			if got[i].ok {
+				a.panes[i].more = false
+			}
+			continue
+		}
+		older := got[i].bars
+		if len(older) > n {
+			older = older[len(older)-n:]
+		}
+		a.panes[i].candles = prependBars(older, a.panes[i].candles)
+		a.panes[i].ma5 = kline.SMA(a.panes[i].candles, 5)
+		a.panes[i].ma20 = kline.SMA(a.panes[i].candles, 20)
+		a.panes[i].more = got[i].more
+	}
+	a.vp.Offset += float64(n)
+	if a.crossIndex >= 0 {
+		a.crossIndex += n
+	}
+}
+
+func (a *app) anyMore() bool {
+	for _, s := range a.panes {
+		if s.more && len(s.candles) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func strictlyBefore(bars []kline.Candle, anchor time.Time) []kline.Candle {
+	end := len(bars)
+	for end > 0 && !bars[end-1].Time.Before(anchor) {
+		end--
+	}
+	return bars[:end]
+}
+
+func prependBars(older, newer []kline.Candle) []kline.Candle {
+	out := make([]kline.Candle, 0, len(older)+len(newer))
+	out = append(out, older...)
+	out = append(out, newer...)
+	return out
 }
 
 func (a *app) bars() int {
@@ -79,14 +232,29 @@ func (a *app) bars() int {
 }
 
 func (a *app) view(c *ui.Context) {
+	// Load from the offset the previous frame left behind, before headers
+	// read the series, so a prepend and its offset shift land together.
+	a.ensureForward()
 	t := c.Theme()
 	style := kline.StyleFrom(t)
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
 		ui.Row(c).Padding(8, 14, 0, 14).Gap(12).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "K-line").Bold().FontSize(16)
 			ui.Textf(c, "%d bars · %d panes", a.bars(), len(a.panes)).FontSize(12).TextColor(t.TextMuted)
+			ui.Textf(c, "Period %s", a.period).FontSize(12).TextColor(t.TextMuted)
 			ui.Text(c, "MA5").FontSize(12).TextColor(style.MA5)
 			ui.Text(c, "MA20").FontSize(12).TextColor(style.MA20)
+			for _, choice := range periodChoices {
+				var b ui.Element
+				if a.period == choice.period {
+					b = ui.PrimaryButton(c, choice.label)
+				} else {
+					b = ui.Button(c, choice.label)
+				}
+				if b.Clicked() {
+					_ = a.setPeriod(choice.period)
+				}
+			}
 			ui.Box(c).Grow(1)
 			if ui.Button(c, "Reset view").Clicked() {
 				a.vp.BarWidth = kline.DefaultBarWidth
