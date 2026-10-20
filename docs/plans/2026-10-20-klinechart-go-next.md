@@ -1,6 +1,6 @@
 # KLineChart-go 下一阶段 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Historical record.** P0–P9 are already on `main`. This file is not a work queue. Do not re-implement a task from it, including any box that was still open when the plan was written. Current behavior is the code and the README. P9 (host embed/extend and the overlay pan budget) has no section here; the README performance notes describe it. Checked boxes below record what landed, not a new assignment.
 
 **Goal:** 在已合入的 P0–P4 基线上，按打谱优先级补齐：真行情**只留接口**、BOLL/KDJ、磁吸+斐波那契、可嵌入 Chart API；仍保持 MyGo Native、无 WebView。
 
@@ -18,7 +18,7 @@
 
 ## 现状基线（main @ 99b510f）
 
-已有：`DataSource`/`SyntheticSource`、周期与 forward、MA+MACD、H-Line/Segment、Stack/Overlay、`Style`+Hollow、双窗十字线联动。`main.go` 仍是胖 demo 窗体。
+写计划时已有：`DataSource`/`SyntheticSource`、周期与 forward、MA+MACD、H-Line/Segment、Stack/Overlay、`Style`+Hollow、双窗十字线联动。其后 P5–P8 已合入，`main.go` 只组装 `Chart`。
 
 ## 分期总览
 
@@ -41,9 +41,12 @@ kline/
   ind_kdj.go         # P6
   magnet.go          # P7：价格磁吸
   ov_fibonacci.go    # P7
-  chart.go           # P8：可嵌入组件
-  chart_opts.go      # P8：选项
-main.go              # 逐步变薄；P8 只组装 Chart
+  chart.go           # P8：类型、View、绘制、读数
+  chart_opts.go      # P8：选项与 setter
+  chart_load.go      # 周期重载与 forward
+  chart_live.go      # 订阅与 live bar
+  chart_input.go     # 指针、草稿、命中几何
+main.go              # 薄 demo：NewChart + 窗口 chrome + 工具条
 ```
 
 ---
@@ -56,7 +59,7 @@ main.go              # 逐步变薄；P8 只组装 Chart
 
 **Files:** Modify `kline/data.go`；Create `kline/live_stub.go`, `kline/live_test.go`；Modify `README.md`
 
-- [ ] 在 `DataSource` 旁增加可选实时接口（名称可微调，语义对齐 KLineChart）：
+- [x] 在 `DataSource` 旁增加可选实时接口（名称可微调，语义对齐 KLineChart）：
 
 ```go
 // BarHandler receives one bar update (new or revise last).
@@ -71,11 +74,11 @@ type LiveSource interface {
 }
 ```
 
-- [ ] `SyntheticSource` **不**实现 `LiveSource`（或实现为 no-op 返回明确 error），避免假实时。
-- [ ] `StubLiveSource`：内存队列；`SubscribeBar` 后测试可 `Push` 一根；断言 handler 收到；`UnsubscribeBar` 后不再投递。
-- [ ] README：说明真实源 = 实现 `DataSource` + 可选 `LiveSource`；本仓不提供券商客户端；dapu 主仓负责接行情。
-- [ ] 可选：`main` 用 type assert 检测 `LiveSource`，有则订阅、无则忽略——**不接网络**。
-- [ ] PR：`P5: LiveSource interface + stub (no network feed)`。
+- [x] `SyntheticSource` **不**实现 `LiveSource`（或实现为 no-op 返回明确 error），避免假实时。
+- [x] `StubLiveSource`：内存队列；`SubscribeBar` 后测试可 `Push` 一根；断言 handler 收到；`UnsubscribeBar` 后不再投递。
+- [x] README：说明真实源 = 实现 `DataSource` + 可选 `LiveSource`；本仓不提供券商客户端；dapu 主仓负责接行情。
+- [x] 可选：`main` 用 type assert 检测 `LiveSource`，有则订阅、无则忽略——**不接网络**。
+- [x] PR：`P5: LiveSource interface + stub (no network feed)`。
 
 **P5 不做：** 任何 HTTP/WS 行情、A 股/港股具体协议、鉴权。
 
@@ -142,7 +145,7 @@ type LiveSource interface {
 
 **Files:** Create `kline/chart.go`（及必要拆分）；Slim `main.go`；Create `kline/chart_test.go`；README「嵌入」小节
 
-- [ ] 公开类型大致形状（实现时可微调命名，保持可测）：
+- [x] 公开类型大致形状（实现时可微调命名，保持可测）：
 
 ```go
 type ChartOptions struct {
@@ -165,24 +168,26 @@ func (c *Chart) SetLayout(layout string)
 func (c *Chart) SetSource(src DataSource) error
 ```
 
-- [ ] 现有工具条行为迁入 `Chart` 或由宿主自绘工具条 + 调上述 API；**最低要求**：无工具条也能显示 Stack K 线+量+已选指标，平移缩放十字线可用。
-- [ ] `main` 只：`NewChart` + 窗口 chrome + 工具条绑定。
-- [ ] 测试：`NewChart` + Tester 出帧非空；换 Period 不 panic。
-- [ ] README：一段「在其他模块中嵌入」示例代码。
-- [ ] PR：`P8: embeddable Chart API`。
+- [x] 现有工具条行为迁入 `Chart` 或由宿主自绘工具条 + 调上述 API；**最低要求**：无工具条也能显示 Stack K 线+量+已选指标，平移缩放十字线可用。
+- [x] `main` 只：`NewChart` + 窗口 chrome + 工具条绑定。
+- [x] 测试：`NewChart` + Tester 出帧非空；换 Period 不 panic。
+- [x] README：一段「在其他模块中嵌入」示例代码。
+- [x] PR：`P8: embeddable Chart API`。
 
 **P8 不做：** 打谱双盲训练流程（属 dapu）；打包成 C ABI / 动态库。
+
+P9（宿主嵌入/扩展与 overlay 平移预算）不在本文分期内，已随 README 的性能说明合入 `main`。不要据此再开一个 P9 实现。
 
 ---
 
 ## 验证清单（每阶段）
 
-- [ ] `go test ./... -count=1`
-- [ ] `go build -o /tmp/klinechart-go .`
-- [ ] 无 WebView
-- [ ] Tester 帧或实窗截图
-- [ ] README 更新
-- [ ] Squash 合入 `main` 后再开下一阶段
+- [x] `go test ./... -count=1`
+- [x] `go build -o /tmp/klinechart-go .`
+- [x] 无 WebView
+- [x] Tester 帧或实窗截图
+- [x] README 更新
+- [x] Squash 合入 `main` 后再开下一阶段
 
 ## Backlog（本方案仍不做）
 
@@ -197,6 +202,8 @@ func (c *Chart) SetSource(src DataSource) error
 1. 本文档确认（或用户说按这个做）→ P5 PR。
 2. P5 → P6 → P7 → P8，逐段合入。
 3. 布局/手势要破相容时先停并更新本文档。
+
+上述顺序已经走完。后续改动以代码和 README 为准，不要从本清单重开阶段。
 
 ## 文档位置
 
