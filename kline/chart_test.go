@@ -707,7 +707,7 @@ func TestFibEndpointDrag(t *testing.T) {
 	fib := a.panes[0].overlays.Items()[0]
 	other := fib.Points[1]
 	end := fib.Points[0]
-	scale := MainScale(a.panes[0].candles, a.active(a.panes[0]), a.vp, a.plotW)
+	scale := MainScale(a.panes[0].candles, a.active(&a.panes[0]), a.vp, a.plotW)
 	winX := p0.X + float32(AnchorX(end, a.vp, a.panes[0].candles))
 	winY := p0.Y + float32(PriceToLocalY(float64(p0.H), end.Price, scale))
 	tt.Press(winX, winY)
@@ -736,7 +736,7 @@ func TestFibMagnetStrongSnapsEndpoints(t *testing.T) {
 		t.Fatal("no bar under click")
 	}
 	bar := a.panes[0].candles[idx]
-	scale := MainScale(a.panes[0].candles, a.active(a.panes[0]), a.vp, a.plotW)
+	scale := MainScale(a.panes[0].candles, a.active(&a.panes[0]), a.vp, a.plotW)
 	raw := LocalYToPrice(float64(p0.H), float64(y0-p0.Y), scale)
 	if onOHLC(raw, bar, 1e-6) {
 		y0 = p0.Y + p0.H*0.37
@@ -773,7 +773,7 @@ func TestSegmentEndpointDrag(t *testing.T) {
 	tt.ClickAt(p0.X+260, p0.Y+p0.H*0.6)
 	seg := a.panes[0].overlays.Items()[0]
 	end := seg.Points[0]
-	scale := MainScale(a.panes[0].candles, a.active(a.panes[0]), a.vp, a.plotW)
+	scale := MainScale(a.panes[0].candles, a.active(&a.panes[0]), a.vp, a.plotW)
 	winX := p0.X + float32(AnchorX(end, a.vp, a.panes[0].candles))
 	winY := p0.Y + float32(PriceToLocalY(float64(p0.H), end.Price, scale))
 	tt.Press(winX, winY)
@@ -1246,8 +1246,7 @@ func TestLiveBarAppendsRevisesAndRecalculates(t *testing.T) {
 		t.Fatal("the demo source must not implement LiveSource")
 	}
 	stub := stubWithPanes(t, a, a.period)
-	a.src = stub
-	if err := a.SetPeriod(a.period); err != nil {
+	if err := a.SetSource(stub); err != nil {
 		t.Fatal(err)
 	}
 	n := len(a.panes[0].candles)
@@ -1259,25 +1258,39 @@ func TestLiveBarAppendsRevisesAndRecalculates(t *testing.T) {
 	next.Time = last.Time.Add(time.Hour)
 	next.Close = last.Close + 5
 	stub.Push("ALPHA", a.period, next)
-	if len(a.panes[0].candles) != n+1 || a.panes[0].candles[n] != next {
-		t.Fatalf("append len %d", len(a.panes[0].candles))
-	}
-	if maLineLen(&a.panes[0]) != n+1 {
-		t.Fatal("MA was not recalculated")
-	}
-	if len(a.panes[1].candles) != n {
-		t.Fatal("BETA changed on an ALPHA push")
+	// BETA has no bar at that open time yet, so ALPHA's bar waits.
+	if len(a.panes[0].candles) != n || len(a.panes[0].held) != 1 || a.Bars() != n || maLineLen(&a.panes[0]) != n {
+		t.Fatalf("one-sided push: candles %d held %d bars %d", len(a.panes[0].candles), len(a.panes[0].held), a.Bars())
 	}
 	revised := next
 	revised.Close = next.Close + 1
 	stub.Push("ALPHA", a.period, revised)
-	if len(a.panes[0].candles) != n+1 || a.panes[0].candles[n].Close != revised.Close {
+	if len(a.panes[0].held) != 1 || a.panes[0].held[0].Close != revised.Close {
+		t.Fatal("revise did not replace the held bar")
+	}
+	beta := a.panes[1].candles[n-1]
+	beta.Time = next.Time
+	beta.Close += 2
+	stub.Push("BETA", a.period, beta)
+	if a.Bars() != n+1 || a.panes[0].candles[n] != revised || a.panes[1].candles[n] != beta {
+		t.Fatalf("matched open time: bars %d", a.Bars())
+	}
+	if len(a.panes[0].held) != 0 || len(a.panes[1].held) != 0 {
+		t.Fatal("matched bars stayed held")
+	}
+	if maLineLen(&a.panes[0]) != n+1 || maLineLen(&a.panes[1]) != n+1 {
+		t.Fatal("MA was not recalculated")
+	}
+	shown := revised
+	shown.Close = revised.Close + 1
+	stub.Push("ALPHA", a.period, shown)
+	if a.Bars() != n+1 || a.panes[0].candles[n].Close != shown.Close {
 		t.Fatal("revise did not replace the last bar")
 	}
 	stale := last
 	stale.Close = 0
 	stub.Push("ALPHA", a.period, stale)
-	if len(a.panes[0].candles) != n+1 || a.panes[0].candles[n].Close != revised.Close {
+	if a.Bars() != n+1 || a.panes[0].candles[n].Close != shown.Close || len(a.panes[0].held) != 0 {
 		t.Fatal("a bar older than the last open time was applied")
 	}
 }
@@ -1302,8 +1315,7 @@ func TestLiveSubscriptionFollowsPeriodAndSource(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	a.src = stub
-	if err := a.SetPeriod(hour); err != nil {
+	if err := a.SetSource(stub); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.SetPeriod(four); err != nil {
@@ -1316,6 +1328,7 @@ func TestLiveSubscriptionFollowsPeriodAndSource(t *testing.T) {
 		t.Fatalf("1h push after a 4h switch len %d", len(a.panes[0].candles))
 	}
 	stub.Push("ALPHA", four, Candle{Time: last.Time.Add(4 * time.Hour), Close: 2})
+	stub.Push("BETA", four, Candle{Time: last.Time.Add(4 * time.Hour), Close: 2})
 	if len(a.panes[0].candles) != before+1 || a.panes[0].candles[before].Close != 2 {
 		t.Fatalf("4h push len %d", len(a.panes[0].candles))
 	}
@@ -1335,8 +1348,7 @@ func TestLiveSubscriptionFollowsPeriodAndSource(t *testing.T) {
 func TestLiveBarFollowsRightEdgeOnly(t *testing.T) {
 	a := newApp()
 	stub := stubWithPanes(t, a, a.period)
-	a.src = stub
-	if err := a.SetPeriod(a.period); err != nil {
+	if err := a.SetSource(stub); err != nil {
 		t.Fatal(err)
 	}
 	tt := ui.NewTester(a.View, 960, 720)
@@ -1470,7 +1482,7 @@ func TestMagnetToolbarAndBehavior(t *testing.T) {
 		t.Fatal("no bar under click")
 	}
 	bar := a.panes[0].candles[idx]
-	scale := MainScale(a.panes[0].candles, a.active(a.panes[0]), a.vp, a.plotW)
+	scale := MainScale(a.panes[0].candles, a.active(&a.panes[0]), a.vp, a.plotW)
 	raw := LocalYToPrice(float64(p0.H), float64(y-p0.Y), scale)
 	if onOHLC(raw, bar, 1e-6) {
 		y = p0.Y + p0.H*0.37

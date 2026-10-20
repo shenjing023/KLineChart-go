@@ -1,6 +1,7 @@
 package kline
 
 import (
+	"errors"
 	"math"
 	"testing"
 
@@ -75,6 +76,72 @@ func TestCompareScalesAllocationBudget(t *testing.T) {
 	if result.AllocedBytesPerOp() > 48*1024 {
 		t.Fatalf("CompareScales allocated %d bytes/op, want the visible window under 48KB", result.AllocedBytesPerOp())
 	}
+}
+
+// overlayPanByteCeiling is BenchmarkOverlayPanFrames/8k after the frame
+// stopped computing CompareScales a second time. The measured frame is
+// about 84KB. One extra CompareScales is about 15KB and lands above this.
+const overlayPanByteCeiling = 92 * 1024
+
+// TestOverlayPanAllocationBudget fails when an overlay pan frame starts
+// allocating like it did when paint and DrawOverlays each called
+// CompareScales. The bench has no drawings; TestOverlayFrameSkipsItemCopy
+// covers that copy.
+func TestOverlayPanAllocationBudget(t *testing.T) {
+	result := testing.Benchmark(func(b *testing.B) {
+		benchPanFrames(b, 8000, LayoutOverlay)
+	})
+	got := result.AllocedBytesPerOp()
+	if got > overlayPanByteCeiling {
+		t.Fatalf("overlay pan allocated %d bytes/op, ceiling is %d", got, overlayPanByteCeiling)
+	}
+}
+
+// TestOverlayFrameSkipsItemCopy fails when paint deep-copies overlay
+// points. The drawings use a Draw func that allocates nothing, so the
+// extra bytes are the copy.
+func TestOverlayFrameSkipsItemCopy(t *testing.T) {
+	const kind = "quietmark"
+	err := RegisterOverlay(OverlaySpec{
+		Kind:    kind,
+		Anchors: 1,
+		Draw:    func(*ui.Painter, ui.Rect, Overlay, Viewport, chart.Linear, []Candle, Style) {},
+		Hit: func(Overlay, float64, float64, float64, float64, Viewport, chart.Linear, []Candle) (int, bool) {
+			return 0, false
+		},
+	})
+	if err != nil && !errors.Is(err, ErrDuplicateOverlay) {
+		t.Fatal(err)
+	}
+	const n = 200
+	plain := overlayFrameBytes(t, 0, kind)
+	with := overlayFrameBytes(t, n, kind)
+	// A point-slice copy of n drawings is tens of kilobytes. Drawing
+	// them with an empty Draw func should stay near the plain frame.
+	if with > plain+8*1024 {
+		t.Fatalf("frame with %d drawings allocated %d bytes/op, plain frame %d", n, with, plain)
+	}
+}
+
+func overlayFrameBytes(t *testing.T, drawings int, kind string) int64 {
+	t.Helper()
+	result := testing.Benchmark(func(b *testing.B) {
+		c, tt := benchChart(b, 1000, LayoutOverlay)
+		for i := 0; i < drawings; i++ {
+			c.panes[0].overlays.Add(kind, Point{BarIndex: i % 50, Price: 100 + float64(i)})
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			dx := 12.0
+			if i%2 == 1 {
+				dx = -12
+			}
+			c.vp.Pan(dx, c.plotW, c.Bars())
+			tt.Frame()
+		}
+	})
+	return result.AllocedBytesPerOp()
 }
 
 func benchSeries(n int, seed int64) []Candle {

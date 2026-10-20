@@ -96,3 +96,43 @@ func TestPriceDomainAndTime(t *testing.T) {
 		t.Fatal("volume max should pad above 100")
 	}
 }
+
+func TestPriceDomainSkipsNonFinitePrices(t *testing.T) {
+	cs := Generate(60, 5)
+	vp := Viewport{BarWidth: 10, Offset: 10}
+	const plotW = 300.0
+	first, last := vp.Visible(len(cs), plotW)
+	cleanLo, cleanHi := PriceDomain(cs, first, last)
+
+	inside := func(what string, lo, hi float64) {
+		t.Helper()
+		if math.IsNaN(lo) || math.IsNaN(hi) || math.IsInf(lo, 0) || math.IsInf(hi, 0) || lo >= hi {
+			t.Fatalf("%s: domain %v..%v", what, lo, hi)
+		}
+		if lo < cleanLo-1e-9 || hi > cleanHi+1e-9 {
+			t.Fatalf("%s: domain %v..%v left the clean %v..%v", what, lo, hi, cleanLo, cleanHi)
+		}
+	}
+
+	bad := append([]Candle(nil), cs...)
+	k := first + 5
+	bad[k].Low = math.NaN()
+	lo, hi := PriceDomain(bad, first, last)
+	inside("NaN low", lo, hi)
+	if body := math.Min(bad[k].Open, bad[k].Close); lo > body {
+		t.Fatalf("bar with a NaN low lost its body: lo %v, body bottom %v", lo, body)
+	}
+	bad[k+1].High = math.Inf(1)
+	bad[k+2].Low = math.Inf(-1)
+	lo, hi = PriceDomain(bad, first, last)
+	inside("infinite high and low", lo, hi)
+	scale := MainScale(bad, nil, vp, plotW)
+	if math.IsNaN(scale.Lo) || math.IsNaN(scale.Hi) || math.IsInf(scale.Lo, 0) || math.IsInf(scale.Hi, 0) || scale.Hi <= scale.Lo {
+		t.Fatalf("price scale %v..%v", scale.Lo, scale.Hi)
+	}
+
+	none := []Candle{{Open: math.NaN(), High: math.NaN(), Low: math.Inf(-1), Close: math.Inf(1)}}
+	if lo, hi := PriceDomain(none, 0, 0); lo != 0 || hi != 1 {
+		t.Fatalf("no finite price: %v..%v, want 0..1", lo, hi)
+	}
+}

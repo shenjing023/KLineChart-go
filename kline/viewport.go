@@ -91,8 +91,8 @@ func (v *Viewport) Zoom(dy, anchorX, plotW float64, n int) {
 }
 
 // Clamp keeps BarWidth in range and Offset where at least part of the
-// series can still meet the plot. A series shorter than the plot is
-// pinned to the left margin.
+// series can still meet the plot. A series shorter than the plot,
+// including an empty one, is pinned to the left margin.
 func (v *Viewport) Clamp(n int, plotW float64) {
 	if v.BarWidth < MinBarWidth {
 		v.BarWidth = MinBarWidth
@@ -100,12 +100,12 @@ func (v *Viewport) Clamp(n int, plotW float64) {
 	if v.BarWidth > MaxBarWidth {
 		v.BarWidth = MaxBarWidth
 	}
-	if n <= 0 || plotW <= 0 {
+	if plotW <= 0 {
 		return
 	}
 	minOff := -float64(OverscrollBars)
 	maxOff := float64(n) - plotW/v.BarWidth + float64(OverscrollBars)
-	if maxOff < minOff {
+	if n <= 0 || maxOff < minOff {
 		v.Offset = minOff
 		return
 	}
@@ -180,7 +180,10 @@ func TimeAt(cs []Candle, index float64) (t time.Time) {
 
 // PriceDomain is the padded high/low of bars first..last, widened to
 // include any finite extra series (moving averages) in that window.
-// An empty window returns 0, 1.
+// Each bar contributes its finite Open, High, Low, and Close, so one NaN
+// or infinite price drops out instead of turning the domain into NaN; a
+// bar whose Low is missing still keeps its body on the scale. An empty
+// window, or one with no finite price, returns 0, 1.
 func PriceDomain(cs []Candle, first, last int, extra ...[]float64) (lo, hi float64) {
 	if first < 0 {
 		first = 0
@@ -193,14 +196,19 @@ func PriceDomain(cs []Candle, first, last int, extra ...[]float64) (lo, hi float
 	}
 	lo, hi = math.Inf(1), math.Inf(-1)
 	for i := first; i <= last; i++ {
-		lo = math.Min(lo, cs[i].Low)
-		hi = math.Max(hi, cs[i].High)
+		c := cs[i]
+		for _, v := range [4]float64{c.Open, c.High, c.Low, c.Close} {
+			if finite(v) {
+				lo = math.Min(lo, v)
+				hi = math.Max(hi, v)
+			}
+		}
 		for _, series := range extra {
 			if i >= len(series) {
 				continue
 			}
 			v := series[i]
-			if math.IsNaN(v) || math.IsInf(v, 0) {
+			if !finite(v) {
 				continue
 			}
 			lo = math.Min(lo, v)
@@ -220,6 +228,8 @@ func PriceDomain(cs []Candle, first, last int, extra ...[]float64) (lo, hi float
 	pad := span * 0.08
 	return lo - pad, hi + pad
 }
+
+func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 
 // VolumeMax is a little above the largest volume in first..last, or 1
 // when the window is empty.

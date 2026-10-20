@@ -15,6 +15,7 @@ import (
 var ErrDuplicateOverlay = errors.New("kline: duplicate overlay")
 
 // OverlayDrawFunc paints one overlay inside the price plot.
+// It must not change o.Points: Chart passes the layer's own slice.
 type OverlayDrawFunc func(p *ui.Painter, plot ui.Rect, o Overlay, vp Viewport, scale chart.Linear, cs []Candle, style Style)
 
 // OverlayHitFunc reports the endpoint index under the pointer, or
@@ -158,6 +159,14 @@ func (l *Layer) Add(kind string, points ...Point) Overlay {
 	}
 	l.items = append(l.items, o)
 	return o
+}
+
+// live is the overlays Chart paints. Callers must not change Points.
+func (l *Layer) live() []Overlay {
+	if l == nil {
+		return nil
+	}
+	return l.items
 }
 
 // Items returns a copy of the overlays, including their points.
@@ -323,7 +332,8 @@ type Rubber struct {
 
 // DrawOverlays paints items on the price plot. rubber, when set, is the
 // segment that does not have its second point yet. Coordinates in rubber
-// are local to plot, whose origin is the top-left.
+// are local to plot, whose origin is the top-left. Draw funcs must not
+// change item points; Chart passes the layer's own slice.
 func DrawOverlays(p *ui.Painter, plot ui.Rect, items []Overlay, vp Viewport, scale chart.Linear, cs []Candle, style Style, rubber *Rubber) {
 	if p == nil || plot.W < 2 || plot.H < 2 {
 		return

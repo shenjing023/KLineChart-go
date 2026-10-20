@@ -7,7 +7,7 @@ It is a demo of the interaction in [KLineChart](https://github.com/klinecharts/K
 ## What you can do
 
 - **Stack / Overlay.** Stack is the default: ALPHA and BETA each get a price plot, a volume strip, and a MACD sub-pane, on their own price scales. Turning **KDJ** on adds a KDJ sub-pane under MACD. Overlay puts both symbols on one price plot.
-- In Overlay, ALPHA stays candles and BETA is a close line. Both are divided by their own close at the first visible bar where both closes are positive, so that bar is 100 on the shared Y axis. Panning or zooming moves that base with the window. The header shows each symbol's own OHLCV at the crosshair index, plus that index (`idx`).
+- In Overlay, ALPHA stays candles and BETA is a close line. Both are divided by their own close at the first visible bar where both closes are positive, so that bar is 100 on the shared Y axis. Panning or zooming moves that base with the window. The header shows each symbol's own OHLCV at the crosshair index, plus that index (`idx`). Overlay compares the first two symbols: a third one is not drawn and has no header until Stack. When no bar has a positive close on both, nothing can be indexed, so ALPHA is drawn on its own price scale, and drawings and hit tests use that same scale.
 - Overlay keeps one volume strip and the open sub-panes (MACD, and KDJ when that toggle is on), all for ALPHA. BETA's volume, MACD, and KDJ are not drawn. BETA's header is the bar's OHLCV and index, not BETA's MA, BOLL, MACD, or KDJ.
 - The panes share one horizontal viewport in both layouts. Dragging or scrolling pans and zooms that viewport, so the same bar indexes stay aligned.
 - One crosshair. In Stack, moving the pointer in either pane selects one bar index and draws that vertical line through that symbol's price plot, volume strip, and open sub-panes, and through the other symbol as well. The symbol under the pointer also draws the horizontal line. Each header shows that symbol's own OHLCV, and the MA, BOLL, MACD, and KDJ values when those indicators are on. The time axis is drawn once, under the lower symbol. In Overlay the same index drives both headers, and the vertical line runs through the one price plot, the ALPHA volume strip, and ALPHA's open sub-panes.
@@ -68,7 +68,7 @@ Another module can import the chart and skip this demo's toolbar. `Chart.View` i
 ```go
 chart := kline.NewChart(kline.ChartOptions{
     Source:     src, // nil uses SyntheticSource; LiveSource is optional
-    Symbols:    []string{"ALPHA", "BETA"}, // empty uses ALPHA and BETA
+    Symbols:    []string{"ALPHA", "BETA"}, // unique names; empty uses ALPHA and BETA
     Period:     kline.Period{Span: 1, Unit: kline.UnitHour},
     Layout:     kline.LayoutStack, // or kline.LayoutOverlay
     Indicators: []string{"MA", "MACD"}, // nil keeps MA and MACD; empty turns all off
@@ -81,6 +81,9 @@ mygo.NewWindow(mygo.WindowOptions{
     Height:  720,
     Content: ui.View(chart.View),
 })
+if err := chart.LoadError(); err != nil {
+    // the first GetBars or SubscribeBar failed; chart.SetPeriod(chart.Period()) retries
+}
 
 _ = chart.SetPeriod(kline.Period{Span: 1, Unit: kline.UnitDay})
 _ = chart.SetIndicators([]string{"MA", "BOLL"}) // nil or empty turns all off; an unknown name changes nothing
@@ -101,7 +104,9 @@ first, last := chart.Visible()
 _, _ = first, last
 ```
 
-`NewChart` with a `Style` that only sets a candle color fills the rest from `DarkDefault`. `EditStyle` starts from the theme you pass (`nil` is dark), keeps the live hollow switch and limit percent, then applies the edit. `SetHollow` and `SetLimitPct` change those two switches without dropping the color override. `Style.CandleBodyColor` is the rule Paint uses: a non-positive `limitPct` always returns `Up` or `Down`. An invalid `SetPeriod` returns `ErrInvalidPeriod` and leaves the loaded bars in place.
+`NewChart` with a `Style` that only sets a candle color fills the rest from `DarkDefault`. `EditStyle` starts from the theme you pass (`nil` is dark), keeps the live hollow switch and limit percent, then applies the edit. `SetHollow` and `SetLimitPct` change those two switches without dropping the color override. `Style.CandleBodyColor` is the rule Paint uses: a non-positive `limitPct` always returns `Up` or `Down`.
+
+`NewChart` has no error result. `LoadError` reports a first load whose `GetBars` failed (the panes stay empty) or whose `SubscribeBar` failed (the bars have no live updates). An invalid `SetPeriod` returns `ErrInvalidPeriod` before the source is asked and leaves the loaded bars in place. `SetPeriod` with the period already loaded does nothing while `LoadError` is nil: drawings, a segment in progress, and the live subscription stay. Earlier versions reloaded and dropped the drawings. While `LoadError` is set, the same period loads again. A real period change and `SetSource` drop drawings, any drawing or drag in progress, and the crosshair. `SetSource` reloads even when it is handed the source already in use, which is how a host refreshes a plain `DataSource`. The chart copies every slice `GetBars` returns, so a source may reuse its buffer.
 
 `ChartOptions.Marshal` hops a live bar onto the UI thread. Pass `win.Update` (`(*mygo.Window).Update`): it runs the callback on the main thread and redraws. `mygo.RunOnMain` hops and waits, and does not redraw, so the host must `Invalidate`. A nil `Marshal` applies the bar on the caller and does not request a frame. `SetPeriod` and `SetSource` return a `SubscribeBar` error; subscriptions opened for that call are rolled back. `Close` unsubscribes and ignores a handler that runs afterward. The live callback must not call `SetPeriod`, `SetSource`, or `View`.
 
@@ -109,7 +114,7 @@ _, _ = first, last
 
 ## Extend
 
-Register indicators and drawings before `NewChart`, usually from `init`. A chart that already exists picks up new specs from `SyncIndicators`. Built-in names and tool names stay reserved.
+Register indicators and drawings before `NewChart`, usually from `init`. A chart that already exists picks up new specs from `SyncIndicators`, which keeps every existing toggle in place: a `*bool` from `IndicatorEnabled` that a `ui.Toggle` holds stays bound. Built-in names and tool names stay reserved. `ChartOptions.Indicators` and `SetIndicators` read nil differently: nil options keep MA and MACD, and `SetIndicators(nil)` turns everything off.
 
 ### Indicator
 
@@ -120,6 +125,7 @@ Register indicators and drawings before `NewChart`, usually from `init`. A chart
 ```go
 type band struct {
     values []float64
+    series [][]float64
     color  ui.Color
 }
 
@@ -130,6 +136,11 @@ func (b *band) Calc(cs []kline.Candle) {
     for i, c := range cs {
         b.values[i] = c.Close
     }
+    if cap(b.series) < 1 {
+        b.series = make([][]float64, 1)
+    }
+    b.series = b.series[:1]
+    b.series[0] = b.values
 }
 func (b *band) DrawMain(*ui.Painter, ui.Rect, kline.Viewport, chart.Linear) {}
 func (b *band) DrawSub(*ui.Painter, ui.Rect, kline.Viewport)                 {}
@@ -139,7 +150,7 @@ func (b *band) ValueAt(i int) string {
     }
     return "BAND " + kline.FormatPrice(b.values[i])
 }
-func (b *band) Series() [][]float64    { return [][]float64{b.values} }
+func (b *band) Series() [][]float64    { return b.series }
 func (b *band) LineColors() []ui.Color { return []ui.Color{b.color} }
 
 func init() {
@@ -155,7 +166,7 @@ func init() {
 
 ### Overlay
 
-`RegisterOverlay` adds a tool `SetTool` accepts. `Anchors` is 1 (click to place, drag to move) or 2 (two clicks, then drag an endpoint). `hline`, `segment`, `fib`, and `fibonacci` are reserved. Delete and right-click use the same hit test as the built-ins.
+`RegisterOverlay` adds a tool `SetTool` accepts. `Anchors` is 1 (click to place, drag to move) or 2 (two clicks, then drag an endpoint). `hline`, `segment`, `fib`, and `fibonacci` are reserved. Delete and right-click use the same hit test as the built-ins. `Draw` must not change `o.Points`: the chart passes the layer's own slice.
 
 ```go
 _ = kline.RegisterOverlay(kline.OverlaySpec{
@@ -186,9 +197,17 @@ _ = chart.SetTool("mark")
 
 ### Data source
 
-History is `DataSource.GetBars`. A feed that can push also implements `LiveSource`. The chart subscribes when `SetSource` or `SetPeriod` sees that interface, and ignores a plain `DataSource`. Older bars are prepended only when every pane that already has bars accepts the same count; otherwise the shared offset stays put and each pane keeps the `more` flag the source reported. A forward `GetBars` error leaves the panes unchanged and is not retried on the next frame. `SyntheticSource` is not a live feed. `StubLiveSource` is the in-memory double. This repo does not open a connection. `kline/host_embed_test.go` has a complete feed: init, forward, subscribe, and one pushed bar.
+History is `DataSource.GetBars`, in ascending open time. A feed that can push also implements `LiveSource`. The chart subscribes when `SetSource` or `SetPeriod` sees that interface, and ignores a plain `DataSource`. Older bars are prepended only when every pane that already has bars accepts the same count; otherwise the shared offset stays put and each pane keeps the `more` flag the source reported. A forward `GetBars` error leaves the panes unchanged and is not retried on the next frame. `SyntheticSource` is not a live feed. `StubLiveSource` is the in-memory double. This repo does not open a connection. `kline/host_embed_test.go` has a complete feed: init, forward, subscribe, and one pushed bar.
 
-Indicator series are cached until the candles change. Pan and zoom do not call `Calc`.
+Every symbol shares one bar index: bar `i` is the same open time on each pane. That is what lets one viewport, one crosshair, and the overlay base work across symbols, so the chart enforces it wherever bars arrive:
+
+- **Load.** The init windows are trimmed to the open times every symbol has. Bars before the latest first open time are dropped; a forward load brings them back once every symbol has them. Bars after the earliest last open time are held, which covers one feed having opened the next bar before the other. If what is left still differs in open time, or one symbol has no bars while another does, `SetPeriod` and `SetSource` return `ErrMisaligned` and keep the previous bars. `NewChart` reports it through `LoadError`.
+- **Forward.** Only the trailing run of older bars whose open times every symbol shares is prepended. A batch that ends on different open times is left out, and `AlignError` reports it.
+- **Live.** A bar with a new open time is held until every symbol has a bar at that open time. Then those bars are shown together, and a view on the right edge follows them. A revision of a symbol's newest bar, held or shown, replaces it. A held bar that another symbol skipped, because that feed already moved on to a later open time, is dropped, and `AlignError` reports it. A symbol whose feed stops also holds back the other symbols' new bars.
+
+Symbol names must be unique. `NewChart` with a repeated name has no panes, and `LoadError` wraps `ErrDuplicateSymbol`. An empty series pins the viewport to the left margin like any series shorter than the plot.
+
+Indicator series are cached until the candles change. Pan and zoom do not call `Calc`. An indicator that is off is not calculated when bars load, prepend, or arrive live; it is calculated once when it is turned on, if the bars changed while it was off.
 
 ## Performance
 
@@ -201,6 +220,8 @@ Overlay mode used to normalize every bar on each frame. On 8000 bars at 960×720
 | Stack pan frame | 3.24 ms, 190 KB/op | 2.67 ms, 191 KB/op |
 
 Stack paint already walked the visible bars. The stack frame is mostly MyGo layout, so it was left alone. `BenchmarkIndicatorCalc/8k` is MA, BOLL, MACD, and KDJ on 8000 bars, and it runs only when candles are replaced. `TestCompareScalesAllocationBudget` fails if the overlay scale copies the whole series again (budget 48 KB/op at this window). That table is the P9 before/after. Later runs compare against `bench/baseline.txt`.
+
+An overlay pan uses the scale the frame already computed, for both the candles and the drawings, and `BOLL.Series` keeps one header until the next `Calc`. `TestOverlayPanAllocationBudget` fails if `BenchmarkOverlayPanFrames/8k` goes above 92 KB/op. That is less than the cost of computing the overlay scale a second time.
 
 ## Benchmarking
 
