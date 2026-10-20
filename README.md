@@ -125,6 +125,7 @@ Register indicators and drawings before `NewChart`, usually from `init`. A chart
 ```go
 type band struct {
     values []float64
+    series [][]float64
     color  ui.Color
 }
 
@@ -135,6 +136,11 @@ func (b *band) Calc(cs []kline.Candle) {
     for i, c := range cs {
         b.values[i] = c.Close
     }
+    if cap(b.series) < 1 {
+        b.series = make([][]float64, 1)
+    }
+    b.series = b.series[:1]
+    b.series[0] = b.values
 }
 func (b *band) DrawMain(*ui.Painter, ui.Rect, kline.Viewport, chart.Linear) {}
 func (b *band) DrawSub(*ui.Painter, ui.Rect, kline.Viewport)                 {}
@@ -144,7 +150,7 @@ func (b *band) ValueAt(i int) string {
     }
     return "BAND " + kline.FormatPrice(b.values[i])
 }
-func (b *band) Series() [][]float64    { return [][]float64{b.values} }
+func (b *band) Series() [][]float64    { return b.series }
 func (b *band) LineColors() []ui.Color { return []ui.Color{b.color} }
 
 func init() {
@@ -160,7 +166,7 @@ func init() {
 
 ### Overlay
 
-`RegisterOverlay` adds a tool `SetTool` accepts. `Anchors` is 1 (click to place, drag to move) or 2 (two clicks, then drag an endpoint). `hline`, `segment`, `fib`, and `fibonacci` are reserved. Delete and right-click use the same hit test as the built-ins.
+`RegisterOverlay` adds a tool `SetTool` accepts. `Anchors` is 1 (click to place, drag to move) or 2 (two clicks, then drag an endpoint). `hline`, `segment`, `fib`, and `fibonacci` are reserved. Delete and right-click use the same hit test as the built-ins. `Draw` must not change `o.Points`: the chart passes the layer's own slice.
 
 ```go
 _ = kline.RegisterOverlay(kline.OverlaySpec{
@@ -214,6 +220,8 @@ Overlay mode used to normalize every bar on each frame. On 8000 bars at 960×720
 | Stack pan frame | 3.24 ms, 190 KB/op | 2.67 ms, 191 KB/op |
 
 Stack paint already walked the visible bars. The stack frame is mostly MyGo layout, so it was left alone. `BenchmarkIndicatorCalc/8k` is MA, BOLL, MACD, and KDJ on 8000 bars, and it runs only when candles are replaced. `TestCompareScalesAllocationBudget` fails if the overlay scale copies the whole series again (budget 48 KB/op at this window). That table is the P9 before/after. Later runs compare against `bench/baseline.txt`.
+
+An overlay pan uses the scale the frame already computed, for both the candles and the drawings, and `BOLL.Series` keeps one header until the next `Calc`. `TestOverlayPanAllocationBudget` fails if `BenchmarkOverlayPanFrames/8k` goes above 92 KB/op. That is less than the cost of computing the overlay scale a second time.
 
 ## Benchmarking
 

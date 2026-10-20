@@ -29,6 +29,7 @@ type BOLL struct {
 	Mult                        float64
 	Mid, Up, Low                []float64
 	MidColor, UpColor, LowColor ui.Color
+	series                      [][]float64
 }
 
 // NewBOLL returns bands with the given window and multiplier. Draw
@@ -47,8 +48,16 @@ func NewBOLL(period int, mult float64) *BOLL {
 func (b *BOLL) Name() string     { return "BOLL" }
 func (b *BOLL) PaneKind() string { return PaneMain }
 
-// Series and LineColors implement LinePlot.
-func (b *BOLL) Series() [][]float64 { return [][]float64{b.Mid, b.Up, b.Low} }
+// Series and LineColors implement LinePlot. Series returns one header
+// for the life of the indicator, updated in place by Calc, so a frame
+// can read the three lines without allocating. It is nil before the
+// first Calc.
+func (b *BOLL) Series() [][]float64 {
+	if b == nil {
+		return nil
+	}
+	return b.series
+}
 
 func (b *BOLL) LineColors() []ui.Color {
 	return []ui.Color{b.MidColor, b.UpColor, b.LowColor}
@@ -69,10 +78,12 @@ func (b *BOLL) Calc(cs []Candle) {
 	b.Low = nanSlice(n)
 	period := b.Period
 	if n == 0 || period < 1 {
+		b.bindSeries()
 		return
 	}
 	mid := SMA(cs, period)
 	if mid == nil {
+		b.bindSeries()
 		return
 	}
 	b.Mid = mid
@@ -90,6 +101,17 @@ func (b *BOLL) Calc(cs []Candle) {
 		b.Up[i] = m + b.Mult*std
 		b.Low[i] = m - b.Mult*std
 	}
+	b.bindSeries()
+}
+
+func (b *BOLL) bindSeries() {
+	if cap(b.series) < 3 {
+		b.series = make([][]float64, 3)
+	}
+	b.series = b.series[:3]
+	b.series[0] = b.Mid
+	b.series[1] = b.Up
+	b.series[2] = b.Low
 }
 
 func (b *BOLL) DrawMain(p *ui.Painter, priceRect ui.Rect, vp Viewport, y chart.Linear) {

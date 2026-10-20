@@ -239,14 +239,27 @@ func commonLen(primary, compare []Candle) int {
 // primary series, in raw units. It returns false when the base close cannot be
 // indexed, and then draws the primary series with Paint instead.
 func PaintCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, style Style) bool {
+	_, ok := drawCompare(p, panes, primary, compare, inds, vp, ptr, barIndex, style)
+	return ok
+}
+
+// drawCompare is PaintCompare, and it returns the scale drawings use.
+// That is the raw scale on an indexed plot, and MainScale when the base
+// close cannot be indexed. An empty primary draws nothing and still
+// returns MainScale.
+func drawCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, style Style) (chart.Linear, bool) {
 	price := panes.Price
-	if price.W < 2 || price.H < 2 || len(primary) == 0 {
-		return false
+	if price.W < 2 || price.H < 2 {
+		return chart.Linear{}, false
 	}
-	index, _, base := CompareScales(primary, compare, inds, vp, float64(price.W))
+	if len(primary) == 0 {
+		// PaintCompare draws nothing. Drawings still use MainScale, which
+		// is what CompareScales returns when the base cannot be indexed.
+		return MainScale(primary, inds, vp, float64(price.W)), false
+	}
+	index, raw, base := CompareScales(primary, compare, inds, vp, float64(price.W))
 	if !indexable(primary, base) {
-		Paint(p, panes, primary, inds, vp, ptr, barIndex, style)
-		return false
+		return drawPrice(p, panes, primary, inds, vp, ptr, barIndex, style), false
 	}
 	baseClose := primary[base].Close
 
@@ -298,5 +311,7 @@ func PaintCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []
 		})
 	}
 	drawCrosshair(p, panes, primary, vp, index, layers, ptr, barIndex, style)
-	return true
+	// Drawings are stored in raw price. raw is the scale that puts them
+	// on the indexed candles this function just painted.
+	return raw, true
 }

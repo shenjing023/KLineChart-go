@@ -56,6 +56,18 @@ func TestBOLLMatchesSMAAndIsSymmetric(t *testing.T) {
 	assertClose(t, "UP[19]", b.Up[19], 22.032562594670797)
 	assertClose(t, "LOW[19]", b.Low[19], -1.0325625946707966)
 	assertClose(t, "MID[20]", b.Mid[20], 11.5)
+	header := b.Series()
+	if len(header) != 3 || &header[0][0] != &b.Mid[0] || &header[1][0] != &b.Up[0] || &header[2][0] != &b.Low[0] {
+		t.Fatal("Series should be the three lines from the last Calc")
+	}
+	again := b.Series()
+	if &header[0] != &again[0] {
+		t.Fatal("Series allocated a new header")
+	}
+	b.Calc(cs)
+	if &header[0] != &b.Series()[0] {
+		t.Fatal("Calc replaced the Series header")
+	}
 
 	if b.ValueAt(18) != "" || b.ValueAt(-1) != "" || b.ValueAt(len(cs)) != "" {
 		t.Fatal("ValueAt should be empty before the window fills and outside the series")

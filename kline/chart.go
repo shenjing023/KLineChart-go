@@ -1277,13 +1277,12 @@ func (a *Chart) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime
 	s := &a.panes[i]
 	style := a.chartStyle(t)
 	active := a.active(s)
-	Paint(p, panes, s.candles, active, a.vp, ptr, a.crossIndex, style)
+	scale := drawPrice(p, panes, s.candles, active, a.vp, ptr, a.crossIndex, style)
 	var rubber *Rubber
 	if a.draftOn && a.draftPane == i && a.crossPane == i {
 		rubber = &Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}
 	}
-	scale := MainScale(s.candles, active, a.vp, a.plotW)
-	DrawOverlays(p, panes.Price, s.overlays.Items(), a.vp, scale, s.candles, style, rubber)
+	DrawOverlays(p, panes.Price, s.overlays.live(), a.vp, scale, s.candles, style, rubber)
 }
 
 // paintCompare draws both symbols in one column. Volume, MACD, KDJ, and
@@ -1305,13 +1304,12 @@ func (a *Chart) paintCompare(p *ui.Painter, r ui.Rect, t *ui.Theme) {
 	primary, compare := a.overlayPair()
 	style := a.chartStyle(t)
 	active := a.active(&a.panes[0])
-	PaintCompare(p, panes, primary, compare, active, a.vp, ptr, a.crossIndex, style)
+	scale, _ := drawCompare(p, panes, primary, compare, active, a.vp, ptr, a.crossIndex, style)
 	var rubber *Rubber
 	if a.draftOn && a.draftPane == 0 && a.crossPane == 0 {
 		rubber = &Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}
 	}
-	_, scale, _ := CompareScales(primary, compare, active, a.vp, a.plotW)
-	DrawOverlays(p, panes.Price, a.panes[0].overlays.Items(), a.vp, scale, primary, style, rubber)
+	DrawOverlays(p, panes.Price, a.panes[0].overlays.live(), a.vp, scale, primary, style, rubber)
 }
 
 // chartStyle is the window theme's chart colors, or the style passed to

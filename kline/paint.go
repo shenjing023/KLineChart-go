@@ -51,9 +51,15 @@ type Pointer struct {
 // The vertical line runs through the price plot, the volume strip, and
 // each open sub-pane.
 func Paint(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, style Style) {
+	drawPrice(p, panes, cs, inds, vp, ptr, barIndex, style)
+}
+
+// drawPrice is Paint, and it returns the price scale it used. A plot
+// smaller than 2 DIPs draws nothing and returns a zero scale.
+func drawPrice(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, style Style) chart.Linear {
 	price := panes.Price
 	if price.W < 2 || price.H < 2 {
-		return
+		return chart.Linear{}
 	}
 	p.Fill(ui.Rect{X: price.X, Y: price.Y, W: price.W + panes.PriceAxis.W, H: panes.Time.Y + panes.Time.H - price.Y}, style.Plot, 0)
 	p.Fill(panes.Volume, style.VolumeBg, 0)
@@ -102,6 +108,7 @@ func Paint(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewpor
 		})
 	}
 	drawCrosshair(p, panes, cs, vp, yScale, layers, ptr, barIndex, style)
+	return yScale
 }
 
 // subLayer is one open sub-pane and the scale its axis uses.
