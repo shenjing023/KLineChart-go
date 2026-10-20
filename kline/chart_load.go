@@ -194,6 +194,11 @@ func (a *Chart) cancelGesture() {
 // source again immediately. A load already in flight does not start
 // another.
 func (a *Chart) ensureForward() {
+	// Replay owns the series. A forward load would pull bars from the
+	// source that the cursor has not revealed.
+	if a.replay != nil {
+		return
+	}
 	if a.loading || a.src == nil || !a.fitted || a.vp.Offset >= forwardEdge || a.forwardCooling() || !a.canForward() {
 		return
 	}

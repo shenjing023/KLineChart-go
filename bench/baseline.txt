@@ -188,5 +188,29 @@ BenchmarkMarkerPanFrames/8k-4          	    1106	   1046475 ns/op	  173380 B/op	
 BenchmarkMarkerPanFrames/8k-4          	    1171	   1010417 ns/op	  173380 B/op	     758 allocs/op
 BenchmarkMarkerPanFrames/8k-4          	    1171	   1002676 ns/op	  173381 B/op	     758 allocs/op
 BenchmarkMarkerPanFrames/8k-4          	    1162	    999149 ns/op	  173380 B/op	     758 allocs/op
+BenchmarkAppendBar/8k-4                	 2628477	       591.9 ns/op	     879 B/op	       1 allocs/op
+BenchmarkAppendBar/8k-4                	 2996120	       398.6 ns/op	     959 B/op	       1 allocs/op
+BenchmarkAppendBar/8k-4                	 3467688	       506.7 ns/op	     946 B/op	       1 allocs/op
+BenchmarkAppendBar/8k-4                	 3238309	       544.0 ns/op	     892 B/op	       1 allocs/op
+BenchmarkAppendBar/8k-4                	 3745483	       540.8 ns/op	     960 B/op	       1 allocs/op
+BenchmarkAppendBar/8k-4                	 3883844	       387.1 ns/op	     928 B/op	       1 allocs/op
+BenchmarkAppendBar/20k-4               	 3899227	       448.3 ns/op	     969 B/op	       1 allocs/op
+BenchmarkAppendBar/20k-4               	 4142948	       428.9 ns/op	     915 B/op	       1 allocs/op
+BenchmarkAppendBar/20k-4               	 4585269	       501.1 ns/op	     911 B/op	       1 allocs/op
+BenchmarkAppendBar/20k-4               	 4907488	       447.4 ns/op	     964 B/op	       1 allocs/op
+BenchmarkAppendBar/20k-4               	 4937131	       484.9 ns/op	     958 B/op	       1 allocs/op
+BenchmarkAppendBar/20k-4               	 4252224	       443.8 ns/op	     893 B/op	       1 allocs/op
+BenchmarkReplayStepFrames/8k-4         	     744	   2825694 ns/op	  294626 B/op	     888 allocs/op
+BenchmarkReplayStepFrames/8k-4         	     781	   2845619 ns/op	  287997 B/op	     885 allocs/op
+BenchmarkReplayStepFrames/8k-4         	     750	   2830129 ns/op	  288575 B/op	     886 allocs/op
+BenchmarkReplayStepFrames/8k-4         	     775	   2813715 ns/op	  288102 B/op	     885 allocs/op
+BenchmarkReplayStepFrames/8k-4         	     770	   2965130 ns/op	  288194 B/op	     885 allocs/op
+BenchmarkReplayStepFrames/8k-4         	     775	   2901901 ns/op	  288104 B/op	     885 allocs/op
+BenchmarkReplayStepFrames/20k-4        	     783	   2805988 ns/op	  287948 B/op	     885 allocs/op
+BenchmarkReplayStepFrames/20k-4        	     774	   2798936 ns/op	  288117 B/op	     885 allocs/op
+BenchmarkReplayStepFrames/20k-4        	     792	   2847032 ns/op	  287808 B/op	     884 allocs/op
+BenchmarkReplayStepFrames/20k-4        	     774	   2802247 ns/op	  288119 B/op	     885 allocs/op
+BenchmarkReplayStepFrames/20k-4        	     784	   2804962 ns/op	  287931 B/op	     885 allocs/op
+BenchmarkReplayStepFrames/20k-4        	     798	   2775447 ns/op	  287704 B/op	     884 allocs/op
 PASS
 ok  	github.com/shenjing023/KLineChart-go/kline	250.538s

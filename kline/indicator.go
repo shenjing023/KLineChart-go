@@ -34,6 +34,16 @@ type Indicator interface {
 	ValueAt(i int) string
 }
 
+// BarTail is optional. Append adds the bar that is now the last element
+// of cs. Revise replaces that last bar; prev is the candle it replaced.
+// Both leave the same values as Calc on cs. A chart calls them so a new
+// bar does not walk the whole series. Indicators that do not implement
+// BarTail are recalculated.
+type BarTail interface {
+	Append(cs []Candle)
+	Revise(cs []Candle, prev Candle)
+}
+
 // LinePlot is optional. A main-pane indicator implements it so the
 // price scale includes Series, and so both layouts can stroke those
 // lines. NaN entries are gaps. LineColors aligns with Series; a zero

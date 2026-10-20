@@ -4,12 +4,23 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/shenjing023/KLineChart-go/kline"
+)
+
+// demoReplay is the blind playback started from the toolbar. demoBase is
+// the 1h series it reveals, captured the first time Replay is clicked so
+// a later click does not snapshot the already-hidden suffix. demoSpeed
+// is bars per second.
+var (
+	demoReplay *kline.Replay
+	demoBase   map[string][]kline.Candle
+	demoSpeed  = 1.0
 )
 
 func main() {
@@ -139,11 +150,52 @@ func demoView(c *ui.Context, chart *kline.Chart) {
 				}
 			}
 			ui.Box(c).Grow(1)
+			var replayBtn ui.Element
+			if demoReplay != nil {
+				replayBtn = ui.PrimaryButton(c, "Replay")
+			} else {
+				replayBtn = ui.Button(c, "Replay")
+			}
+			if replayBtn.Clicked() {
+				startDemoReplay(chart)
+			}
+			if ui.Button(c, "Step").Clicked() && demoReplay != nil {
+				_ = demoReplay.Step(1)
+			}
+			if ui.Button(c, "Back").Clicked() && demoReplay != nil {
+				_ = demoReplay.StepBack(1)
+			}
+			playLabel := "Play"
+			if demoReplay != nil && demoReplay.Playing() {
+				playLabel = "Pause"
+			}
+			if ui.Button(c, playLabel).Clicked() && demoReplay != nil {
+				if demoReplay.Playing() {
+					demoReplay.Pause()
+				} else {
+					demoReplay.Play(demoSpeed)
+				}
+			}
+			if ui.Button(c, fmt.Sprintf("Speed %.0fx", demoSpeed)).Clicked() {
+				switch demoSpeed {
+				case 1:
+					demoSpeed = 2
+				case 2:
+					demoSpeed = 4
+				case 4:
+					demoSpeed = 8
+				default:
+					demoSpeed = 1
+				}
+				if demoReplay != nil && demoReplay.Playing() {
+					demoReplay.Play(demoSpeed)
+				}
+			}
 			if ui.Button(c, "Reset view").Clicked() {
 				chart.ResetView()
 			}
 		})
-		hint := "Pan drags both panes. H-Line, Segment, and Fib draw on the pane you click, and pan is off while a draw tool is selected. Escape cancels a line that is still waiting for its second point. Delete removes the selected line. Right-click removes the line under the pointer, or cancels that unfinished line."
+		hint := "Pan drags both panes. H-Line, Segment, and Fib draw on the pane you click, and pan is off while a draw tool is selected. Escape cancels a line that is still waiting for its second point. Delete removes the selected line. Right-click removes the line under the pointer, or cancels that unfinished line. Replay hides the series and reveals it one bar at a time."
 		if chart.Layout() == kline.LayoutOverlay {
 			hint = "Overlay indexes both symbols to 100 at the first visible bar where both closes are positive. ALPHA stays candles. BETA is the close line. Volume and MACD are ALPHA only, and drawings stay on ALPHA. Pan and the wheel still move the shared viewport."
 		}
@@ -202,6 +254,46 @@ var colorPresets = []struct {
 	{"Classic", ui.RGB(38, 166, 154), ui.RGB(239, 83, 80), ui.RGB(0, 230, 118), ui.RGB(255, 59, 48)},
 	{"US", ui.RGB(239, 83, 80), ui.RGB(38, 166, 154), ui.RGB(255, 59, 48), ui.RGB(0, 230, 118)},
 	{"Contrast", ui.RGB(255, 214, 0), ui.RGB(56, 189, 248), ui.RGB(255, 255, 255), ui.RGB(168, 85, 247)},
+}
+
+// startDemoReplay hides the loaded 1h series and reveals the first 48
+// bars. Later clicks start that same series over. Play asks Chart.View
+// to reveal bars at demoSpeed; it does not start a goroutine.
+func startDemoReplay(chart *kline.Chart) {
+	if demoReplay != nil {
+		demoReplay.Close()
+		demoReplay = nil
+	}
+	hour := kline.Period{Span: 1, Unit: kline.UnitHour}
+	if chart.Period() != hour {
+		if err := chart.SetPeriod(hour); err != nil {
+			return
+		}
+	}
+	if demoBase == nil {
+		demoBase = snapshotBars(chart)
+	}
+	replay, err := kline.StartReplay(chart, demoBase)
+	if err != nil {
+		return
+	}
+	demoReplay = replay
+	_ = demoReplay.SeekIndex(48)
+}
+
+func snapshotBars(chart *kline.Chart) map[string][]kline.Candle {
+	out := make(map[string][]kline.Candle, len(chart.Symbols()))
+	for _, sym := range chart.Symbols() {
+		cs := make([]kline.Candle, 0, chart.Bars())
+		for i := 0; i < chart.Bars(); i++ {
+			bar, ok := chart.Bar(sym, i)
+			if ok {
+				cs = append(cs, bar)
+			}
+		}
+		out[sym] = cs
+	}
+	return out
 }
 
 // seedDemoMarkers places a few trades on the bars the window opens on,

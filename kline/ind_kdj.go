@@ -33,6 +33,12 @@ type KDJ struct {
 	N, M1, M2              int
 	K, D, J                []float64
 	KColor, DColor, JColor ui.Color
+	// pk and pd are K and D after the last bar. pre* is that pair before
+	// the last bar, so revising the bar does not walk the earlier ones.
+	pk, pd     float64
+	have       bool
+	preK, preD float64
+	preHave    bool
 }
 
 // NewKDJ returns a KDJ with the given periods. Draw colors start as
@@ -63,6 +69,8 @@ func (k *KDJ) Calc(cs []Candle) {
 	k.K = nanSlice(n)
 	k.D = nanSlice(n)
 	k.J = nanSlice(n)
+	k.pk, k.pd, k.have = 0, 0, false
+	k.preK, k.preD, k.preHave = 0, 0, false
 	period, m1, m2 := k.N, k.M1, k.M2
 	if n == 0 || period < 1 || m1 < 1 || m2 < 1 {
 		return
@@ -70,32 +78,90 @@ func (k *KDJ) Calc(cs []Candle) {
 	var prevK, prevD float64
 	have := false
 	for i := period - 1; i < n; i++ {
-		hn := cs[i].High
-		ln := cs[i].Low
-		for j := i - (period - 1); j <= i; j++ {
-			if cs[j].High > hn {
-				hn = cs[j].High
-			}
-			if cs[j].Low < ln {
-				ln = cs[j].Low
-			}
+		if i == n-1 {
+			k.preK, k.preD, k.preHave = prevK, prevD, have
 		}
-		den := hn - ln
-		if den == 0 {
-			den = 1
+		kv, dv, jv, ok := k.point(cs, i, prevK, prevD, have)
+		if !ok {
+			continue
 		}
-		rsv := (cs[i].Close - ln) / den * 100
-		pk, pd := 50.0, 50.0
-		if have {
-			pk, pd = prevK, prevD
-		}
-		kv := (float64(m1-1)*pk + rsv) / float64(m1)
-		dv := (float64(m2-1)*pd + kv) / float64(m2)
-		jv := 3*kv - 2*dv
 		k.K[i], k.D[i], k.J[i] = kv, dv, jv
 		prevK, prevD = kv, dv
 		have = true
 	}
+	k.pk, k.pd, k.have = prevK, prevD, have
+}
+
+// point is K, D, and J at i. The window is the last N bars. A flat
+// window uses 1 as the divisor. The first value uses 50 when have is
+// false.
+func (k *KDJ) point(cs []Candle, i int, pk, pd float64, have bool) (kv, dv, jv float64, ok bool) {
+	period, m1, m2 := k.N, k.M1, k.M2
+	if i < 0 || period < 1 || m1 < 1 || m2 < 1 || i < period-1 || i >= len(cs) {
+		return math.NaN(), math.NaN(), math.NaN(), false
+	}
+	hn := cs[i].High
+	ln := cs[i].Low
+	for j := i - (period - 1); j <= i; j++ {
+		if cs[j].High > hn {
+			hn = cs[j].High
+		}
+		if cs[j].Low < ln {
+			ln = cs[j].Low
+		}
+	}
+	den := hn - ln
+	if den == 0 {
+		den = 1
+	}
+	rsv := (cs[i].Close - ln) / den * 100
+	if !have {
+		pk, pd = 50, 50
+	}
+	kv = (float64(m1-1)*pk + rsv) / float64(m1)
+	dv = (float64(m2-1)*pd + kv) / float64(m2)
+	jv = 3*kv - 2*dv
+	return kv, dv, jv, true
+}
+
+// Append extends K, D, and J by the bar now at the end of cs.
+func (k *KDJ) Append(cs []Candle) {
+	if k == nil || len(cs) == 0 {
+		return
+	}
+	n := len(cs)
+	if len(k.K) != n-1 || len(k.D) != n-1 || len(k.J) != n-1 {
+		k.Calc(cs)
+		return
+	}
+	k.preK, k.preD, k.preHave = k.pk, k.pd, k.have
+	kv, dv, jv, ok := k.point(cs, n-1, k.pk, k.pd, k.have)
+	k.K = append(k.K, kv)
+	k.D = append(k.D, dv)
+	k.J = append(k.J, jv)
+	if ok {
+		k.pk, k.pd, k.have = kv, dv, true
+	}
+}
+
+// Revise replaces the last K, D, and J from the state saved before that bar.
+func (k *KDJ) Revise(cs []Candle, _ Candle) {
+	if k == nil || len(cs) == 0 {
+		return
+	}
+	n := len(cs)
+	if len(k.K) != n || len(k.D) != n || len(k.J) != n {
+		k.Calc(cs)
+		return
+	}
+	kv, dv, jv, ok := k.point(cs, n-1, k.preK, k.preD, k.preHave)
+	last := n - 1
+	k.K[last], k.D[last], k.J[last] = kv, dv, jv
+	if ok {
+		k.pk, k.pd, k.have = kv, dv, true
+		return
+	}
+	k.pk, k.pd, k.have = k.preK, k.preD, k.preHave
 }
 
 // YDomain is the padded range of K, D, and J in first..last. The scale

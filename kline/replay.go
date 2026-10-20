@@ -1,0 +1,558 @@
+package kline
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"time"
+)
+
+// ErrReplayPeriod is returned when a period change during replay asks
+// for bars finer than the series the replay loaded. Those bars are not
+// in the revealed prefix, and the chart does not ask the source for them.
+var ErrReplayPeriod = errors.New("kline: replay period is finer than the loaded bars")
+
+// ErrReplayClosed is returned when Step, Seek, or SetPeriod runs after
+// Close, or after the chart has dropped the replay.
+var ErrReplayClosed = errors.New("kline: replay is closed")
+
+// ReplayBar is one base bar that just became visible. Bars aligns with
+// Chart.Symbols and is the base series, not the higher-period aggregate
+// on screen. The chart never receives a bar past this one.
+type ReplayBar struct {
+	Index int
+	Time  time.Time
+	Bars  []Candle
+}
+
+// Replay reveals a loaded series one base bar at a time. The full series
+// stays here. The chart's panes only ever hold the revealed prefix, so
+// paint, the price and volume scales, indicators, the crosshair, the
+// readout, and overlay compare cannot see a future bar.
+//
+// Play does not start a goroutine. The host calls Tick, or embeds
+// Chart.View, which ticks once per frame and asks for another frame
+// while playback is running. Close and Pause stop that. A live
+// subscription is dropped when the replay starts, so a pushed bar cannot
+// append itself ahead of the cursor.
+type Replay struct {
+	chart      *Chart
+	base       [][]Candle
+	basePeriod Period
+	cursor     int
+	speed      float64
+	playing    bool
+	playAt     time.Time
+	playCursor float64
+	now        func() time.Time
+	hook       func(ReplayBar)
+	closed     bool
+}
+
+// StartReplay copies bars and shows none of them until Step or Seek.
+// Keys must include every symbol on the chart, in any order. Every
+// series must share open times. The chart's current period is the base
+// period: a later SetPeriod may aggregate it, and may not go finer.
+// Drawings already on the chart stay. Markers stay and stay hidden
+// until the cursor reaches their bar. The live subscription is dropped.
+func StartReplay(chart *Chart, bars map[string][]Candle) (*Replay, error) {
+	if chart == nil {
+		return nil, fmt.Errorf("kline: nil chart")
+	}
+	if chart.symbolErr != nil {
+		return nil, chart.symbolErr
+	}
+	if !chart.period.Valid() {
+		return nil, ErrInvalidPeriod
+	}
+	base := make([][]Candle, len(chart.panes))
+	for i, s := range chart.panes {
+		series, ok := bars[s.name]
+		if !ok {
+			return nil, fmt.Errorf("%w: %s", ErrUnknownSymbol, s.name)
+		}
+		base[i] = cloneCandles(series)
+	}
+	if err := alignedSeries(base); err != nil {
+		return nil, err
+	}
+	_ = chart.dropLive()
+	if chart.replay != nil {
+		chart.replay.Close()
+	}
+	r := &Replay{
+		chart:      chart,
+		base:       base,
+		basePeriod: chart.period,
+		now:        time.Now,
+	}
+	chart.replay = r
+	for i := range chart.panes {
+		chart.panes[i].candles = nil
+		chart.panes[i].held = nil
+		chart.panes[i].more = false
+		chart.recalc(&chart.panes[i])
+		chart.reindexMarks(&chart.panes[i])
+	}
+	chart.crossIndex = -1
+	chart.crossPane = -1
+	chart.cancelGesture()
+	return r, nil
+}
+
+func alignedSeries(base [][]Candle) error {
+	if len(base) == 0 {
+		return fmt.Errorf("%w: no series", ErrMisaligned)
+	}
+	n := len(base[0])
+	for i := 1; i < len(base); i++ {
+		if len(base[i]) != n {
+			return fmt.Errorf("%w: series lengths differ", ErrMisaligned)
+		}
+		for j := 0; j < n; j++ {
+			if !base[i][j].Time.Equal(base[0][j].Time) {
+				return fmt.Errorf("%w: open times differ at %s", ErrMisaligned, base[0][j].Time.UTC().Format("2006-01-02 15:04"))
+			}
+		}
+	}
+	return nil
+}
+
+// Cursor is how many base bars are revealed. Zero means the chart is empty.
+func (r *Replay) Cursor() int {
+	if r == nil {
+		return 0
+	}
+	return r.cursor
+}
+
+// OnBar sets the callback for each base bar that becomes visible.
+// Step and a forward Seek call it once per bar, after that bar is on
+// the chart. StepBack does not. nil clears it. The callback runs on the
+// caller of Step, Seek, or Tick and must not call those methods.
+func (r *Replay) OnBar(fn func(ReplayBar)) {
+	if r == nil {
+		return
+	}
+	r.hook = fn
+}
+
+// SetClock replaces the clock Play and Tick read. nil restores time.Now.
+// Tests pass a clock they move themselves. A playing replay restarts its
+// speed anchor so a clock change does not reveal a pile of bars at once.
+func (r *Replay) SetClock(now func() time.Time) {
+	if r == nil {
+		return
+	}
+	r.now = now
+	if r.playing {
+		r.playAt = r.clock()
+		r.playCursor = float64(r.cursor)
+	}
+}
+
+// Step reveals n more base bars. n <= 0 does nothing. The cursor stops
+// at the last bar. Each new bar is reported to OnBar.
+func (r *Replay) Step(n int) error {
+	return r.advance(n, true)
+}
+
+// StepBack hides n base bars and rebuilds the prefix. It does not report
+// bars to OnBar. n past the start leaves the chart empty.
+func (r *Replay) StepBack(n int) error {
+	if err := r.ready(); err != nil {
+		return err
+	}
+	if n <= 0 {
+		return nil
+	}
+	i := r.cursor - n
+	if i < 0 {
+		i = 0
+	}
+	return r.SeekIndex(i)
+}
+
+// SeekIndex reveals the first i base bars. A forward seek reports each
+// newly revealed bar. A backward seek rebuilds the prefix and reports
+// nothing. i is clamped to the series.
+func (r *Replay) SeekIndex(i int) error {
+	if err := r.ready(); err != nil {
+		return err
+	}
+	if i < 0 {
+		i = 0
+	}
+	if n := len(r.base[0]); i > n {
+		i = n
+	}
+	if i >= r.cursor {
+		return r.Step(i - r.cursor)
+	}
+	r.cursor = i
+	r.rebuild()
+	r.retarget()
+	return nil
+}
+
+// SeekTo reveals every base bar whose open time is at or before t.
+// A zero t, or a t before the first bar, shows nothing.
+func (r *Replay) SeekTo(t time.Time) error {
+	if err := r.ready(); err != nil {
+		return err
+	}
+	if len(r.base) == 0 || len(r.base[0]) == 0 || t.IsZero() {
+		return r.SeekIndex(0)
+	}
+	cs := r.base[0]
+	i := sort.Search(len(cs), func(i int) bool { return cs[i].Time.After(t) })
+	return r.SeekIndex(i)
+}
+
+// Play reveals bars at barsPerSec from the current cursor. Tick applies
+// the clock. A non-positive speed pauses. Playback stops at the last bar.
+func (r *Replay) Play(barsPerSec float64) {
+	if r == nil || r.closed || len(r.base) == 0 {
+		return
+	}
+	if barsPerSec < 0 {
+		barsPerSec = 0
+	}
+	r.speed = barsPerSec
+	r.playing = barsPerSec > 0 && r.cursor < len(r.base[0])
+	r.playAt = r.clock()
+	r.playCursor = float64(r.cursor)
+}
+
+// Pause stops playback. The cursor stays where it is.
+func (r *Replay) Pause() {
+	if r == nil {
+		return
+	}
+	r.playing = false
+}
+
+// Playing reports whether Tick will reveal bars.
+func (r *Replay) Playing() bool {
+	if r == nil {
+		return false
+	}
+	return r.playing
+}
+
+// Speed is the bars per second passed to Play.
+func (r *Replay) Speed() float64 {
+	if r == nil {
+		return 0
+	}
+	return r.speed
+}
+
+// Tick reveals the bars the clock says are due since Play. It does
+// nothing while paused. A clock that jumps backward does not hide bars.
+func (r *Replay) Tick() {
+	if r == nil || r.closed || !r.playing || r.speed <= 0 || len(r.base) == 0 {
+		return
+	}
+	if r.cursor >= len(r.base[0]) {
+		r.playing = false
+		return
+	}
+	elapsed := r.clock().Sub(r.playAt).Seconds()
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	want := int(r.playCursor + elapsed*r.speed)
+	if want <= r.cursor {
+		return
+	}
+	if want > len(r.base[0]) {
+		want = len(r.base[0])
+	}
+	_ = r.advance(want-r.cursor, false)
+	if r.cursor >= len(r.base[0]) {
+		r.playing = false
+	}
+}
+
+// Close stops playback and detaches the replay from the chart. The bars
+// already revealed stay. Further Step and Seek return ErrReplayClosed.
+// Close does not restore the hidden suffix.
+func (r *Replay) Close() {
+	if r == nil {
+		return
+	}
+	r.playing = false
+	r.closed = true
+	if r.chart != nil && r.chart.replay == r {
+		r.chart.replay = nil
+	}
+}
+
+func (r *Replay) ready() error {
+	if r == nil || r.closed || r.chart == nil || r.chart.replay != r || len(r.base) == 0 {
+		return ErrReplayClosed
+	}
+	return nil
+}
+
+func (r *Replay) clock() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
+}
+
+func (r *Replay) retarget() {
+	if r.playing {
+		r.playAt = r.clock()
+		r.playCursor = float64(r.cursor)
+	}
+}
+
+func (r *Replay) advance(n int, retarget bool) error {
+	if err := r.ready(); err != nil {
+		return err
+	}
+	if n <= 0 {
+		return nil
+	}
+	for n > 0 && r.cursor < len(r.base[0]) {
+		if err := r.revealOne(); err != nil {
+			return err
+		}
+		n--
+	}
+	if retarget {
+		r.retarget()
+	}
+	return nil
+}
+
+func (r *Replay) revealOne() error {
+	idx := r.cursor
+	if r.aggregated() {
+		if err := r.revealAggregate(idx); err != nil {
+			return err
+		}
+	} else {
+		for i := range r.base {
+			if err := r.chart.AppendBar(r.chart.panes[i].name, r.base[i][idx]); err != nil {
+				return err
+			}
+		}
+	}
+	r.cursor++
+	r.fire(idx)
+	return nil
+}
+
+func (r *Replay) revealAggregate(idx int) error {
+	d, err := r.chart.period.Duration()
+	if err != nil {
+		return err
+	}
+	bt := bucketFloor(r.base[0][idx].Time, d)
+	same := false
+	if n := len(r.chart.panes[0].candles); n > 0 {
+		same = r.chart.panes[0].candles[n-1].Time.Equal(bt)
+	}
+	for i := range r.base {
+		c := aggregateOne(r.base[i], idx, d)
+		name := r.chart.panes[i].name
+		var err error
+		if same {
+			err = r.chart.UpdateLast(name, c)
+		} else {
+			err = r.chart.AppendBar(name, c)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Replay) fire(idx int) {
+	if r.hook == nil || len(r.base) == 0 || idx < 0 || idx >= len(r.base[0]) {
+		return
+	}
+	bars := make([]Candle, len(r.base))
+	for i := range r.base {
+		bars[i] = r.base[i][idx]
+	}
+	r.hook(ReplayBar{Index: idx, Time: bars[0].Time, Bars: bars})
+}
+
+func (r *Replay) aggregated() bool {
+	if r.chart == nil {
+		return false
+	}
+	cur, err1 := r.chart.period.Duration()
+	base, err2 := r.basePeriod.Duration()
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return cur > base
+}
+
+// setPeriod aggregates the revealed prefix at p. It does not call the
+// data source. A period finer than the base series is ErrReplayPeriod.
+// Drawings are dropped, as they are on a normal period change, because
+// bar indexes no longer name the same candles. Markers stay and are
+// mapped onto the new bars.
+func (r *Replay) setPeriod(p Period) error {
+	if err := r.ready(); err != nil {
+		return err
+	}
+	if !p.Valid() {
+		return ErrInvalidPeriod
+	}
+	next, err := p.Duration()
+	if err != nil {
+		return err
+	}
+	base, err := r.basePeriod.Duration()
+	if err != nil {
+		return err
+	}
+	if next < base {
+		return fmt.Errorf("%w: %s is finer than %s", ErrReplayPeriod, p, r.basePeriod)
+	}
+	if p == r.chart.period {
+		return nil
+	}
+	r.chart.period = p
+	for i := range r.chart.panes {
+		r.chart.panes[i].overlays = Layer{}
+	}
+	r.chart.cancelGesture()
+	r.chart.crossIndex = -1
+	r.chart.crossPane = -1
+	r.rebuild()
+	return nil
+}
+
+// rebuild replaces every pane with the aggregate of the revealed prefix.
+// A view that was on the right edge stays there. A panned view keeps
+// its offset, clamped to the new length.
+func (r *Replay) rebuild() {
+	a := r.chart
+	pinned := a.pinnedRight()
+	before := a.bars()
+	for i := range a.panes {
+		s := &a.panes[i]
+		s.candles = r.displayed(i)
+		s.held = nil
+		s.more = false
+		a.recalc(s)
+		a.reindexMarks(s)
+	}
+	if a.crossIndex >= a.bars() {
+		a.crossIndex = -1
+		a.crossPane = -1
+	}
+	if a.plotW > 1 && (pinned || before == 0) {
+		a.vp.FitRight(a.bars(), a.plotW)
+		if a.bars() > 0 {
+			a.fitted = true
+		}
+		return
+	}
+	if a.plotW > 1 {
+		a.vp.Clamp(a.bars(), a.plotW)
+	}
+}
+
+func (r *Replay) displayed(sym int) []Candle {
+	if r.cursor <= 0 || sym < 0 || sym >= len(r.base) {
+		return nil
+	}
+	prefix := r.base[sym][:r.cursor]
+	if !r.aggregated() {
+		return cloneCandles(prefix)
+	}
+	d, err := r.chart.period.Duration()
+	if err != nil {
+		return cloneCandles(prefix)
+	}
+	return aggregate(prefix, d)
+}
+
+func aggregate(cs []Candle, d time.Duration) []Candle {
+	if len(cs) == 0 || d <= 0 {
+		return nil
+	}
+	out := make([]Candle, 0, len(cs)/4+1)
+	var cur Candle
+	have := false
+	for _, b := range cs {
+		bt := bucketFloor(b.Time, d)
+		if !have || !bt.Equal(cur.Time) {
+			if have {
+				out = append(out, cur)
+			}
+			cur = Candle{Time: bt, Open: b.Open, High: b.High, Low: b.Low, Close: b.Close, Volume: b.Volume}
+			have = true
+			continue
+		}
+		if b.High > cur.High {
+			cur.High = b.High
+		}
+		if b.Low < cur.Low {
+			cur.Low = b.Low
+		}
+		cur.Close = b.Close
+		cur.Volume += b.Volume
+	}
+	if have {
+		out = append(out, cur)
+	}
+	return out
+}
+
+func aggregateOne(cs []Candle, idx int, d time.Duration) Candle {
+	bt := bucketFloor(cs[idx].Time, d)
+	start := idx
+	for start > 0 && bucketFloor(cs[start-1].Time, d).Equal(bt) {
+		start--
+	}
+	b0 := cs[start]
+	c := Candle{Time: bt, Open: b0.Open, High: b0.High, Low: b0.Low, Close: b0.Close, Volume: b0.Volume}
+	for j := start + 1; j <= idx; j++ {
+		b := cs[j]
+		if b.High > c.High {
+			c.High = b.High
+		}
+		if b.Low < c.Low {
+			c.Low = b.Low
+		}
+		c.Close = b.Close
+		c.Volume += b.Volume
+	}
+	return c
+}
+
+// bucketFloor is the UTC bucket that contains t. Hours and minutes
+// truncate to the epoch. A day truncates to UTC midnight, which is the
+// same rule. 09:30 in a 4h period lands on 08:00.
+func bucketFloor(t time.Time, d time.Duration) time.Time {
+	if d <= 0 {
+		return t.UTC()
+	}
+	step := d.Nanoseconds()
+	if step <= 0 {
+		return t.UTC()
+	}
+	unix := t.UTC().UnixNano()
+	if unix < 0 {
+		// Floor, not truncate toward zero, so a negative instant still
+		// belongs to the bucket that contains it.
+		mod := unix % step
+		if mod != 0 {
+			unix -= step + mod
+		}
+		return time.Unix(0, unix).UTC()
+	}
+	return time.Unix(0, unix-unix%step).UTC()
+}

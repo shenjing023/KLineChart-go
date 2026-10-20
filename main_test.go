@@ -19,7 +19,7 @@ func TestDemoToolbarBindsChart(t *testing.T) {
 		Indicators: []string{"MA", "MACD"},
 	})
 	tt := ui.NewTester(func(c *ui.Context) { demoView(c, chart) }, 1100, 1000)
-	for _, text := range []string{"K-line", "600 bars", "Period 1h", "MA", "MACD", "BOLL", "KDJ", "Hollow", "Classic", "US", "Contrast", "Limit 10%", "1h", "4h", "1d", "Stack", "Overlay", "Pan", "H-Line", "Segment", "Fib", "Magnet Off", "Magnet Weak", "Magnet Strong", "Reset view"} {
+	for _, text := range []string{"K-line", "600 bars", "Period 1h", "MA", "MACD", "BOLL", "KDJ", "Hollow", "Classic", "US", "Contrast", "Limit 10%", "1h", "4h", "1d", "Stack", "Overlay", "Pan", "H-Line", "Segment", "Fib", "Magnet Off", "Magnet Weak", "Magnet Strong", "Replay", "Step", "Back", "Play", "Speed 1x", "Reset view"} {
 		if !tt.HasText(text) {
 			t.Fatalf("toolbar missing %q, texts %q", text, tt.Texts())
 		}
@@ -108,6 +108,33 @@ func TestDemoToolbarBindsChart(t *testing.T) {
 	}
 	if chart.Layout() != kline.LayoutStack {
 		t.Fatalf("layout %s", chart.Layout())
+	}
+	if err := tt.Click("Replay"); err != nil {
+		t.Fatal(err)
+	}
+	if chart.Bars() != 48 || chart.Period().String() != "1h" {
+		t.Fatalf("replay bars %d period %s", chart.Bars(), chart.Period())
+	}
+	if err := tt.Click("Step"); err != nil {
+		t.Fatal(err)
+	}
+	if chart.Bars() != 49 {
+		t.Fatalf("step bars %d", chart.Bars())
+	}
+	if err := tt.Click("Back"); err != nil {
+		t.Fatal(err)
+	}
+	if chart.Bars() != 48 {
+		t.Fatalf("back bars %d", chart.Bars())
+	}
+	if err := tt.Click("Play"); err != nil {
+		t.Fatal(err)
+	}
+	if !tt.HasText("Pause") {
+		t.Fatal("Play should switch to Pause")
+	}
+	if err := tt.Click("Pause"); err != nil {
+		t.Fatal(err)
 	}
 }
 

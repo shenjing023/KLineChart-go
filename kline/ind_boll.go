@@ -30,6 +30,8 @@ type BOLL struct {
 	Mid, Up, Low                []float64
 	MidColor, UpColor, LowColor ui.Color
 	series                      [][]float64
+	// sum is the rolling close sum of the last window after the last bar.
+	sum float64
 }
 
 // NewBOLL returns bands with the given window and multiplier. Draw
@@ -78,11 +80,13 @@ func (b *BOLL) Calc(cs []Candle) {
 	b.Low = nanSlice(n)
 	period := b.Period
 	if n == 0 || period < 1 {
+		b.sum = 0
 		b.bindSeries()
 		return
 	}
 	mid := SMA(cs, period)
 	if mid == nil {
+		b.sum = 0
 		b.bindSeries()
 		return
 	}
@@ -92,16 +96,84 @@ func (b *BOLL) Calc(cs []Candle) {
 		if math.IsNaN(m) {
 			continue
 		}
-		var sum float64
-		for j := i - period + 1; j <= i; j++ {
-			d := cs[j].Close - m
-			sum += d * d
-		}
-		std := math.Sqrt(sum / float64(period))
-		b.Up[i] = m + b.Mult*std
-		b.Low[i] = m - b.Mult*std
+		b.Up[i], b.Low[i] = b.bands(cs, i, m)
 	}
+	b.sum = bollSum(cs, period)
 	b.bindSeries()
+}
+
+// Append extends the bands by the bar now at the end of cs. The new
+// point reads one window of closes.
+func (b *BOLL) Append(cs []Candle) {
+	if b == nil || len(cs) == 0 {
+		return
+	}
+	n := len(cs)
+	if b.Period < 1 || len(b.Mid) != n-1 || len(b.Up) != n-1 || len(b.Low) != n-1 {
+		b.Calc(cs)
+		return
+	}
+	i := n - 1
+	sum := b.sum + cs[i].Close
+	if i >= b.Period {
+		sum -= cs[i-b.Period].Close
+	}
+	b.sum = sum
+	mid, up, low := math.NaN(), math.NaN(), math.NaN()
+	if i >= b.Period-1 {
+		mid = sum / float64(b.Period)
+		up, low = b.bands(cs, i, mid)
+	}
+	b.Mid = append(b.Mid, mid)
+	b.Up = append(b.Up, up)
+	b.Low = append(b.Low, low)
+	b.bindSeries()
+}
+
+// Revise replaces the last band after prev was overwritten in cs.
+func (b *BOLL) Revise(cs []Candle, prev Candle) {
+	if b == nil || len(cs) == 0 {
+		return
+	}
+	n := len(cs)
+	if b.Period < 1 || len(b.Mid) != n || len(b.Up) != n || len(b.Low) != n {
+		b.Calc(cs)
+		return
+	}
+	i := n - 1
+	b.sum = b.sum - prev.Close + cs[i].Close
+	mid, up, low := math.NaN(), math.NaN(), math.NaN()
+	if i >= b.Period-1 {
+		mid = b.sum / float64(b.Period)
+		up, low = b.bands(cs, i, mid)
+	}
+	b.Mid[i], b.Up[i], b.Low[i] = mid, up, low
+	b.bindSeries()
+}
+
+func (b *BOLL) bands(cs []Candle, i int, mid float64) (up, low float64) {
+	var sum float64
+	for j := i - b.Period + 1; j <= i; j++ {
+		d := cs[j].Close - mid
+		sum += d * d
+	}
+	std := math.Sqrt(sum / float64(b.Period))
+	return mid + b.Mult*std, mid - b.Mult*std
+}
+
+func bollSum(cs []Candle, period int) float64 {
+	if len(cs) == 0 || period < 1 {
+		return 0
+	}
+	start := 0
+	if len(cs) > period {
+		start = len(cs) - period
+	}
+	var sum float64
+	for i := start; i < len(cs); i++ {
+		sum += cs[i].Close
+	}
+	return sum
 }
 
 func (b *BOLL) bindSeries() {

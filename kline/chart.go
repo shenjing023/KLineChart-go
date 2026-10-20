@@ -157,6 +157,10 @@ type Chart struct {
 	// outlives UnsubscribeBar does not apply. Push may run off the UI
 	// goroutine, so this is atomic.
 	liveGen atomic.Uint64
+	// replay, when set, owns the full series. The panes hold only the
+	// revealed prefix. View ticks it. SetPeriod aggregates that prefix
+	// instead of asking the source, which would load bars past the cursor.
+	replay *Replay
 	// marshal is ChartOptions.Marshal. Nil applies a live bar on the caller.
 	marshal func(func())
 	// forwardHold is the earliest time a failed forward load may try again.
@@ -356,7 +360,17 @@ func (a *Chart) bars() int {
 //	ui.View(chart.View)
 //
 // A host that draws its own chrome calls chart.View(ctx) inside that view.
+// While a replay is playing, View reveals the bars that are due and asks
+// for another frame. Playback does not start a goroutine.
 func (a *Chart) View(c *ui.Context) {
+	// Playback is driven from the frame so it shares the UI goroutine
+	// with paint. Invalidate asks for the next frame while it is running.
+	if a.replay != nil {
+		a.replay.Tick()
+		if a.replay.Playing() {
+			c.Invalidate()
+		}
+	}
 	t := c.Theme()
 	if len(a.panes) == 0 {
 		// The symbol list was refused; LoadError says why.

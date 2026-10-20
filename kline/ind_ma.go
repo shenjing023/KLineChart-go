@@ -22,6 +22,8 @@ type MA struct {
 	Periods []int
 	colors  []ui.Color
 	lines   [][]float64
+	// sums is the rolling close sum of each line after the last bar.
+	sums []float64
 }
 
 // NewMA returns an MA over the given periods. Periods below 1 are dropped.
@@ -69,8 +71,69 @@ func (m *MA) SetColors(colors []ui.Color) {
 
 func (m *MA) Calc(cs []Candle) {
 	m.lines = make([][]float64, len(m.Periods))
+	m.sums = make([]float64, len(m.Periods))
 	for i, period := range m.Periods {
-		m.lines[i] = SMA(cs, period)
+		m.lines[i], m.sums[i] = smaLine(cs, period)
+	}
+}
+
+// Append extends each average by the bar now at the end of cs.
+func (m *MA) Append(cs []Candle) {
+	if m == nil || len(cs) == 0 {
+		return
+	}
+	last := len(cs) - 1
+	if len(m.lines) != len(m.Periods) || len(m.sums) != len(m.Periods) {
+		m.Calc(cs)
+		return
+	}
+	for pi := range m.Periods {
+		if len(m.lines[pi]) != last {
+			m.Calc(cs)
+			return
+		}
+	}
+	close := cs[last].Close
+	for pi, period := range m.Periods {
+		sum := m.sums[pi] + close
+		if period >= 1 && last >= period {
+			sum -= cs[last-period].Close
+		}
+		m.sums[pi] = sum
+		v := math.NaN()
+		if period >= 1 && last >= period-1 {
+			v = sum / float64(period)
+		}
+		m.lines[pi] = append(m.lines[pi], v)
+	}
+}
+
+// Revise replaces the last average after prev was overwritten in cs.
+func (m *MA) Revise(cs []Candle, prev Candle) {
+	if m == nil || len(cs) == 0 {
+		return
+	}
+	n := len(cs)
+	if len(m.lines) != len(m.Periods) || len(m.sums) != len(m.Periods) {
+		m.Calc(cs)
+		return
+	}
+	for pi := range m.Periods {
+		if len(m.lines[pi]) != n {
+			m.Calc(cs)
+			return
+		}
+	}
+	last := n - 1
+	close := cs[last].Close
+	for pi, period := range m.Periods {
+		sum := m.sums[pi] - prev.Close + close
+		m.sums[pi] = sum
+		if period >= 1 && last >= period-1 {
+			m.lines[pi][last] = sum / float64(period)
+			continue
+		}
+		m.lines[pi][last] = math.NaN()
 	}
 }
 

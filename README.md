@@ -25,6 +25,7 @@ It is a demo of the interaction in [KLineChart](https://github.com/klinecharts/K
 - Dragging to the left edge loads older bars, prepends them, and shifts the shared offset by that count so the bars on screen stay put. A load already in flight does not start another.
 - **Pan / H-Line / Segment / Fib.** Pan drags the chart. H-Line places a horizontal price line with one click; dragging it changes the price. Segment takes two clicks, with a rubber band between them. **Fib** takes two clicks and draws seven standard retracement levels (0 through 1) across the horizontal span between the anchors, with a level preview while the second click is pending. Ratio 0 is the second click and ratio 1 is the first click. A draw tool turns pan off. The selected drawing is highlighted. Delete removes it. Escape cancels a drawing that does not have its second point yet, and so does a right-click; that right-click does not also delete a finished drawing. With no draft up, a right-click removes the drawing under the pointer. A press that arrives before the first frame is applied once the price plot has a size. Turning a sub-pane off grows that plot before the next frame, and a click in the new area is accepted. Drawings belong to the pane that was clicked. In Overlay, new drawings are stored on ALPHA in raw price, and BETA's existing lines stay hidden until you return to Stack.
 - **Trade markers.** `SetMarkers`, `AppendMarker`, and `ClearMarkers` store buy and sell arrows per symbol. A buy points up from below the bar's low and a sell points down from above the high. `Time` picks the bar whose open interval contains it, so a period change remaps the trade and a forward prepend keeps it on that bar. A time outside the loaded bars is hidden. `Price` 0 uses the bar; any other price also draws a tick there. Markers on one bar stack. `Style.Buy` and `Style.Sell` color them and default to `Up` and `Down`, so Classic, US, and Contrast recolor the arrows with the candles. The header names the markers on the hovered bar.
+- **Replay.** `AppendBar` and `UpdateLast` push or revise the newest bar without recalculating the whole series. MA, MACD, BOLL, and KDJ implement `BarTail`, so an append updates a rolling sum or the last window. The view follows the right edge when it was already there, and stays put when it was panned. `StartReplay` keeps the full series private and shows only the revealed prefix, so a hidden bar cannot move the price or volume scale, an indicator, the crosshair, the readout, or an overlay compare. `Step`, `StepBack`, `SeekIndex`, and `SeekTo` move the cursor. `Play` / `Tick` reveal bars at a speed in bars per second and do not start a goroutine; `Chart.View` ticks once per frame. A higher period during replay aggregates only the revealed bars, so the last bucket can still be forming. Markers past the cursor stay hidden. The demo's **Replay / Step / Back / Play / Speed** buttons drive that.
 - **Magnet Off / Weak / Strong.** Off leaves the pointer price alone. Weak snaps to the nearest Open, High, Low, or Close on the bar under the pointer when that OHLC is within 6 DIPs in local Y. Strong always snaps to the nearest OHLC. Any other `MagnetMode` does not snap. `SetMagnet` returns `ErrUnknownMagnet` for a value other than those three and leaves the current mode. `NewChart` treats an out-of-range `ChartOptions.Magnet` as off. New points snap, including the press that places a new H-Line, and so do endpoint drags on Segment and Fib. Dragging an existing H-Line body does not. Changing the mode does not rewrite lines already placed. Default is Off.
 
 ## Run
@@ -107,6 +108,19 @@ if bar, ok := chart.Bar("ALPHA", chart.Bars()-2); ok {
     _ = chart.AppendMarker("ALPHA", kline.Marker{Time: bar.Time, Side: kline.SideSell, Price: bar.Close, Label: "S"})
     _ = chart.ClearMarkers("ALPHA")
 }
+series := map[string][]kline.Candle{}
+for _, sym := range chart.Symbols() {
+    cs := make([]kline.Candle, chart.Bars())
+    for i := range cs {
+        cs[i], _ = chart.Bar(sym, i)
+    }
+    series[sym] = cs
+}
+replay, _ := kline.StartReplay(chart, series) // hidden bars are not on the chart
+replay.OnBar(func(ev kline.ReplayBar) {})     // host records a trade here
+_ = replay.SeekIndex(48)
+_ = replay.Step(1)
+replay.Play(2) // bars per second; Chart.View calls Tick
 first, last := chart.Visible()
 _, _ = first, last
 ```
@@ -114,6 +128,10 @@ _, _ = first, last
 `NewChart` with a `Style` that only sets a candle color fills the rest from `DarkDefault`. A zero color on that partial style means "not set". `Style.Clear` names fields that should stay transparent, for example `ClearGrid`. A style that sets `Plot`, `Grid`, or `Text` is kept as given, so a transparent field there needs no bit. `EditStyle` starts from the theme you pass (`nil` is dark), keeps the live hollow switch and limit percent, then applies the edit. `SetHollow` and `SetLimitPct` change those two switches without dropping the color override, and both write the stored style when one is set. `Style.CandleBodyColor` is the rule Paint uses: a non-positive `limitPct` always returns `Up` or `Down`. `Style.Buy` and `Style.Sell` color trade markers. Left at zero, they follow `Up` and `Down`, including a partial palette that only sets those two. `ClearBuy` and `ClearSell` keep them transparent. The demo's Classic, US, and Contrast buttons set the marker colors to the same pair as the candles.
 
 `SetMarkers(symbol, markers)` replaces that symbol's trades. `AppendMarker` adds one. `ClearMarkers` removes them. `Markers` returns a copy. An unknown symbol is `ErrUnknownSymbol`. A side other than `SideBuy` or `SideSell` is `ErrUnknownMarker` and does not change the stored list. `Marker.Time` is the lookup key and is not unique: every marker whose time falls in `[bar open, next bar open)` is drawn on that bar, and the last bar extends one period past its open. Times outside the loaded series stay stored and are not drawn. `Price` 0 anchors the arrow on the bar low or high. Any other price also draws a short tick at that price. An empty `Label` is `B` or `S`. A non-zero `Qty` is appended to the label. Buys point up from below the low; sells point down from above the high. Several markers on one bar step away from the candle so they do not overlap. Each symbol keeps its own list in both Stack and Overlay. A period change and `SetSource` keep the markers and map them onto the new bars. A forward prepend shifts the bar index with the candles. The hovered bar's header lists each marker on it.
+
+`AppendBar(symbol, bar)` holds the bar until every symbol has that open time, then appends them together and updates indicators from the new close. `UpdateLast` revises the newest bar in place and does not move the viewport. A time that is not the edge returns `ErrBarTime`. An unknown symbol is `ErrUnknownSymbol`. A view on the right edge follows an append. A panned view does not.
+
+`StartReplay(chart, bars)` copies a full series and shows none of it until `Step` or `SeekIndex` / `SeekTo`. The chart panes only contain the revealed prefix. `OnBar` runs once for each base bar that becomes visible, on the caller, so a host can record a trade without a future bar on screen. `Play(barsPerSec)` and `Tick` use a clock (`SetClock` in tests). `Pause` and `Close` stop playback. There is no replay goroutine. `Chart.Close` detaches the replay and fences live handlers; the replay drops the live subscription when it starts. `SetPeriod` during replay aggregates the revealed bars into the coarser period, partial bucket included, and does not call `GetBars`. A finer period returns `ErrReplayPeriod`. `SetSource` ends the replay and loads that source. Markers whose bar is still hidden are not drawn. Drawings stay across a step; a period change drops them, as a normal `SetPeriod` does. An index past the revealed prefix does not crash a paint.
 
 `ChartOptions.PriceDecimals` is the number of digits after the decimal in `Readout` and in the crosshair price tags. Nil, or a negative value, keeps two decimals (`FormatPrice`). Zero prints a whole number. `FormatPriceDigits` and `FormatBarIn` are the same formatting for a host that draws its own label. `ChartOptions.Location` is the time zone of those times. Nil is UTC. A direct `Paint` or `PaintCompare` call stays at two decimals and UTC. Indicator `ValueAt` strings still use `FormatPrice`.
 
@@ -438,10 +456,11 @@ func (f *feed) UnsubscribeBar(symbol string, period kline.Period) error {
 - `SetStyle` 换成一整套颜色。`SetLimitPct` 单独改涨跌停阈值。`Style.CandleBodyColor` 的规则是：`limitPct <= 0` 时只用 `Up` / `Down`（收盘不低于开盘为涨）。`limitPct > 0` 且上一根收盘为正时，`(close-prevClose)/prevClose >= limitPct` 用 `LimitUp`，`<= -limitPct` 用 `LimitDown`。收盘等于最高价本身不算涨停。量柱和 MACD 柱仍用 `Up` / `Down`。
 - 演示工具条 **Classic / US / Contrast** 改 K 线颜色，买卖标记跟着同一对涨跌色。**Limit 10%** 把阈值设为 0.10，再点一次关掉。默认阈值是 0，所以涨跌停色先备着，不画上去。Hollow 仍然只描涨的实体，涨停那根若收盘不低于开盘，描的是 `LimitUp`。
 - `SetMarkers`、`AppendMarker`、`ClearMarkers` 按 symbol 存买卖标记。`Time` 落在哪根 K 线的开区间，就画在那根上；换周期会重映射，向左补历史时下标跟着移。数据之外的时间留着但不画。买在最低价下方朝上，卖在最高价上方朝下，同一根上多个标记会错开。`Price` 为 0 只用 K 线价，其它价格再画一个短横。`Style.Buy` / `Style.Sell` 着色，不填就跟 `Up` / `Down`。十字线表头会写出当前 bar 上的标记。未知 symbol 返回 `ErrUnknownSymbol`，非法方向返回 `ErrUnknownMarker`。
+- `AppendBar` 在所有 symbol 都有同一开盘时间后追加一根，指标只更新新的这一点。`UpdateLast` 改最后一根，视口不动。贴着右边缘时追加会跟着走，平移过的视口留在原地。`StartReplay` 把完整序列留在图外，图上只有已经揭开的前缀，隐藏的 K 线进不了价格轴、量轴、指标、十字线、表头和叠加比较。`Step`、`StepBack`、`SeekTo` 移动游标。`Play` 按每秒根数揭开，不另起 goroutine，`View` 每帧调用 `Tick`。回放中换成更大周期时，只聚合已揭开的低周期 bar，最后一根可以是未走完的桶。更小周期返回 `ErrReplayPeriod`。游标之后的买卖标记不画。演示工具条有 **Replay / Step / Back / Play / Speed**。
 
 明确不做：
 
-- 打谱的双盲训练流程（属于 dapu）
+- 打谱的对局流程（属于 dapu）。本仓库提供不偷看未来的逐根追加和回放，训练会话本身不在这里
 - 打包成 C ABI 或动态库
 - 从行情里读取涨跌停幅度。本仓库不连网络。阈值由宿主传入
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/chart"
@@ -439,6 +440,92 @@ func BenchmarkMarkerPanFrames(b *testing.B) {
 	b.Run("8k", func(b *testing.B) {
 		benchMarkerPan(b, 8000, 500)
 	})
+}
+
+// BenchmarkAppendBar pushes one bar onto a mounted series. Indicators
+// update from the new close. 8k and 20k should cost about the same.
+func BenchmarkAppendBar(b *testing.B) {
+	for _, size := range []struct {
+		name string
+		n    int
+	}{
+		{"8k", 8000},
+		{"20k", 20000},
+	} {
+		b.Run(size.name, func(b *testing.B) {
+			benchAppendBar(b, size.n)
+		})
+	}
+}
+
+func benchAppendBar(b *testing.B, n int) {
+	c := NewChart(ChartOptions{
+		Symbols:    []string{"ALPHA"},
+		Period:     Period{Span: 1, Unit: UnitHour},
+		Indicators: benchIndicatorNames(LayoutStack),
+	})
+	mountBenchBars(b, c, n)
+	b.ReportAllocs()
+	b.ResetTimer()
+	bar := c.panes[0].candles[len(c.panes[0].candles)-1]
+	for i := 0; i < b.N; i++ {
+		bar.Time = bar.Time.Add(time.Hour)
+		bar.Close += 0.01
+		if err := c.AppendBar("ALPHA", bar); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkReplayStepFrames reveals one base bar and paints a frame.
+// A seek back to the start is outside the timer, so the sample is the
+// step and the frame.
+func BenchmarkReplayStepFrames(b *testing.B) {
+	for _, size := range []struct {
+		name string
+		n    int
+	}{
+		{"8k", 8000},
+		{"20k", 20000},
+	} {
+		b.Run(size.name, func(b *testing.B) {
+			benchReplayStep(b, size.n)
+		})
+	}
+}
+
+func benchReplayStep(b *testing.B, n int) {
+	alpha := benchSeries(n, 1)
+	beta := benchSeries(n, 2)
+	c := NewChart(ChartOptions{
+		Symbols:    []string{"ALPHA", "BETA"},
+		Period:     Period{Span: 1, Unit: UnitHour},
+		Indicators: benchIndicatorNames(LayoutStack),
+	})
+	replay, err := StartReplay(c, map[string][]Candle{"ALPHA": alpha, "BETA": beta})
+	if err != nil {
+		b.Fatal(err)
+	}
+	if err := replay.SeekIndex(1); err != nil {
+		b.Fatal(err)
+	}
+	tt := ui.NewTester(c.View, 960, 720)
+	tt.Frame()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if replay.Cursor() >= n {
+			b.StopTimer()
+			if err := replay.SeekIndex(1); err != nil {
+				b.Fatal(err)
+			}
+			b.StartTimer()
+		}
+		if err := replay.Step(1); err != nil {
+			b.Fatal(err)
+		}
+		tt.Frame()
+	}
 }
 
 func benchMarkerPan(b *testing.B, n, count int) {
