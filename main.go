@@ -95,6 +95,9 @@ type app struct {
 	// tool is Pan, H-Line, or Segment. Draw tools do not pan: the
 	// pointer places and moves overlays instead.
 	tool int
+	// magnet snaps new points and endpoint drags to OHLC. Body drags
+	// still use the raw pointer price.
+	magnet kline.MagnetMode
 	// layout is Stack or Overlay. Stack is the zero value.
 	layout int
 	// hollowUp draws rising candle bodies as outlines. Falling bodies
@@ -518,6 +521,17 @@ func (a *app) view(c *ui.Context) {
 					a.dragOn = false
 				}
 			}
+			for _, choice := range magnetChoices {
+				var b ui.Element
+				if a.magnet == choice.mode {
+					b = ui.PrimaryButton(c, choice.label)
+				} else {
+					b = ui.Button(c, choice.label)
+				}
+				if b.Clicked() {
+					a.magnet = choice.mode
+				}
+			}
 			ui.Box(c).Grow(1)
 			if ui.Button(c, "Reset view").Clicked() {
 				a.vp.BarWidth = kline.DefaultBarWidth
@@ -611,6 +625,15 @@ var toolChoices = []struct {
 	{"Pan", toolPan},
 	{"H-Line", toolHLine},
 	{"Segment", toolSegment},
+}
+
+var magnetChoices = []struct {
+	label string
+	mode  kline.MagnetMode
+}{
+	{"Magnet Off", kline.MagnetOff},
+	{"Magnet Weak", kline.MagnetWeak},
+	{"Magnet Strong", kline.MagnetStrong},
 }
 
 var layoutChoices = []struct {
@@ -853,13 +876,17 @@ func (a *app) pointAt(pane int, x, y float64) kline.Point {
 		}
 	}
 	var when time.Time
+	var bar kline.Candle
 	if idx >= 0 && idx < len(cs) {
 		when = cs[idx].Time
+		bar = cs[idx]
 	}
+	scale := a.priceScale(pane)
+	raw := kline.LocalYToPrice(float64(price.H), y, scale)
 	return kline.Point{
 		BarIndex: idx,
 		Time:     when,
-		Price:    kline.LocalYToPrice(float64(price.H), y, a.priceScale(pane)),
+		Price:    kline.SnapPrice(a.magnet, bar, raw, float64(price.H), scale),
 	}
 }
 

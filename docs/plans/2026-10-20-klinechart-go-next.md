@@ -116,10 +116,10 @@ type LiveSource interface {
 
 **Files:** Create `kline/magnet.go`, `kline/magnet_test.go`；Modify overlay 放置路径 / `main.go`
 
-- [ ] `MagnetMode`: `off` | `weak` | `strong`。
-- [ ] 弱磁：指针价距最近 OHLC（或收盘）小于阈值（DIP 或价格比例）则吸附；强磁：强制吸到最近 OHLC。
-- [ ] 工具条 **Magnet: Off / Weak / Strong**；仅影响新点与拖端点，不改已有线批量重算。
-- [ ] 测试：给定 bar OHLC 与指针价，断言吸附结果。
+- [x] `MagnetMode`: `off` | `weak` | `strong`。
+- [x] 弱磁：指针价距最近 OHLC（或收盘）小于阈值（DIP 或价格比例）则吸附；强磁：强制吸到最近 OHLC。
+- [x] 工具条 **Magnet: Off / Weak / Strong**；仅影响新点与拖端点，不改已有线批量重算。
+- [x] 测试：给定 bar OHLC 与指针价，断言吸附结果。
 
 ### Task P7.2：Fibonacci
 

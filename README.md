@@ -23,6 +23,7 @@ It is a demo of the interaction in [KLineChart](https://github.com/klinecharts/K
 - **1h / 4h / 1d** reload both panes from the data source and fit the latest bars. The default **1h** series is the same walk as before (ALPHA seed 42, BETA seed 99).
 - Dragging to the left edge loads older bars, prepends them, and shifts the shared offset by that count so the bars on screen stay put. A load already in flight does not start another.
 - **Pan / H-Line / Segment.** Pan drags the chart. H-Line places a horizontal price line with one click; dragging it changes the price. Segment takes two clicks, with a rubber band between them. A draw tool turns pan off. The selected line is highlighted. Delete removes it, and a right-click removes the line under the pointer. Drawings belong to the pane that was clicked. In Overlay, new drawings are stored on ALPHA in raw price, and BETA's existing lines stay hidden until you return to Stack.
+- **Magnet Off / Weak / Strong.** Off leaves the pointer price alone. Weak snaps new points and segment endpoint drags to the nearest Open, High, Low, or Close on the bar under the pointer when that OHLC is within 6 DIPs in local Y. Strong always snaps to the nearest OHLC. Dragging an H-Line body still uses the raw pointer price. Changing the mode does not rewrite lines already placed. Default is Off.
 
 ## Run
 
@@ -62,7 +63,7 @@ Native UI draws with Direct3D 11 on Windows, Metal on macOS, and OpenGL on Linux
 ## Layout
 
 - `main.go` — window, one readout per symbol, the shared viewport and crosshair index, and the period, layout, and indicator toggles.
-- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, `Style` (`style.go`: `StyleFrom`, `DarkDefault`, `LightDefault`), `DataSource` (`Period`, `BarRequest`, `SyntheticSource`), optional `LiveSource` and the in-memory `StubLiveSource`, the indicator list (`MA`, `MACD`, `BOLL`, `KDJ`), overlays (`Layer`, horizontal price line, segment), and overlay compare (`NormalizeClose`, `IndexBase`, `PaintCompare`). Volume is drawn by `Paint`, not by an indicator. Each symbol keeps its own `Layer`.
+- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, `Style` (`style.go`: `StyleFrom`, `DarkDefault`, `LightDefault`), `DataSource` (`Period`, `BarRequest`, `SyntheticSource`), optional `LiveSource` and the in-memory `StubLiveSource`, the indicator list (`MA`, `MACD`, `BOLL`, `KDJ`), magnet snap (`MagnetMode`, `SnapPrice`), overlays (`Layer`, horizontal price line, segment), and overlay compare (`NormalizeClose`, `IndexBase`, `PaintCompare`). Volume is drawn by `Paint`, not by an indicator. Each symbol keeps its own `Layer`.
 
 Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot. Dragging right decreases `offset` for all panes. The wheel keeps the bar under the pointer fixed while the width changes, and the other pane uses that same width. In Stack, each pane's Y axis is its own `chart.Linear` over that symbol's visible high/low. In Overlay, both series share one index scale: `close[i] / close[base] * 100`, and ALPHA's OHLC uses that same divisor. `Paint` takes the shared bar index so a pane draws the vertical line even when the pointer is on the other one.
 
@@ -120,7 +121,7 @@ Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot.
 
 明确不做：
 
-- 斐波那契、笔刷，以及磁吸的弱档 / 强档
+- 斐波那契、笔刷
 - 一条线同时画在两个 pane 上
 - P3 同轴叠加（见下文）、P4 样式外置
 
@@ -216,7 +217,23 @@ func (f *feed) UnsubscribeBar(symbol string, period kline.Period) error {
 
 - RSI、SAR，以及其余指标
 - 自定义脚本指标
-- P7 磁吸和斐波那契
+- P7 斐波那契（见下文）
+
+## P7
+
+本阶段先加磁吸。斐波那契回撤线在下一项任务，不在这一增量里。
+
+能做：
+
+- `kline.MagnetMode`：`MagnetOff`、`MagnetWeak`、`MagnetStrong`。弱磁在指针的 local Y 与最近 OHLC 相差不超过 `HitRadius`（6 DIP）时，把新点或拖端点吸到该 bar 的 Open / High / Low / Close（跳过 NaN）。距离相同按 Open、High、Low、Close 先后。强磁总是吸到最近 OHLC。
+- 工具条 **Magnet Off / Magnet Weak / Magnet Strong**，默认 Off。选中项为 `PrimaryButton`。只影响 `pointAt` 里放下或拖动的点；**H-Line 拖动线身**仍走 `SetPrice`，用原始指针价。切换磁吸模式不会批量改已有线的价格。
+- 新 H-Line、新 Segment 端点、Segment 端点拖动都会经过 `SnapPrice`。
+
+明确不做（本增量）：
+
+- 斐波那契画线工具
+- 全套射线 / 平行通道 / 笔刷
+- 跨 pane 共享同一条 overlay
 
 ## Out of scope
 

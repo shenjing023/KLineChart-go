@@ -1287,6 +1287,93 @@ func writePNG(t *testing.T, path string, img *image.RGBA) {
 	}
 }
 
+func onOHLC(price float64, c kline.Candle, eps float64) bool {
+	for _, p := range []float64{c.Open, c.High, c.Low, c.Close} {
+		if math.Abs(price-p) <= eps {
+			return true
+		}
+	}
+	return false
+}
+
+func TestMagnetToolbarAndBehavior(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	for _, label := range []string{"Magnet Off", "Magnet Weak", "Magnet Strong"} {
+		if !tt.HasText(label) {
+			t.Fatalf("toolbar missing %q: %q", label, tt.Texts())
+		}
+	}
+	if a.magnet != kline.MagnetOff {
+		t.Fatalf("default magnet %v", a.magnet)
+	}
+	if err := tt.Click("Magnet Strong"); err != nil {
+		t.Fatal(err)
+	}
+	if a.magnet != kline.MagnetStrong {
+		t.Fatalf("magnet mode %v", a.magnet)
+	}
+	tt.Frame()
+	if err := tt.Click("Magnet Strong"); err != nil {
+		t.Fatal(err)
+	}
+	if a.magnet != kline.MagnetStrong {
+		t.Fatal("strong should stay selected")
+	}
+
+	if err := tt.Click("H-Line"); err != nil {
+		t.Fatal(err)
+	}
+	p0 := a.painted[0].Price
+	x := p0.X + 200
+	y := p0.Y + p0.H*0.42
+	plotX := float64(x - p0.X)
+	idx, ok := a.vp.IndexAt(plotX, len(a.panes[0].candles))
+	if !ok {
+		t.Fatal("no bar under click")
+	}
+	bar := a.panes[0].candles[idx]
+	scale := kline.MainScale(a.panes[0].candles, a.active(a.panes[0]), a.vp, a.plotW)
+	raw := kline.LocalYToPrice(float64(p0.H), float64(y-p0.Y), scale)
+	if onOHLC(raw, bar, 1e-6) {
+		y = p0.Y + p0.H*0.37
+		raw = kline.LocalYToPrice(float64(p0.H), float64(y-p0.Y), scale)
+	}
+	tt.ClickAt(x, y)
+	line := a.panes[0].overlays.Items()[0]
+	stored := line.Points[0].Price
+	if !onOHLC(stored, bar, 1e-4) {
+		t.Fatalf("strong magnet: stored %v not on bar OHLC (raw %v) %+v", stored, raw, bar)
+	}
+
+	placed := stored
+	if err := tt.Click("Magnet Off"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("Magnet Strong"); err != nil {
+		t.Fatal(err)
+	}
+	after := a.panes[0].overlays.Items()[0].Points[0].Price
+	if math.Abs(after-placed) > 1e-9 {
+		t.Fatalf("mode change rewrote price: %v -> %v", placed, after)
+	}
+
+	y2 := p0.Y + p0.H*0.72
+	lineY := p0.Y + float32(kline.PriceToLocalY(float64(p0.H), stored, scale))
+	tt.Press(x, lineY)
+	tt.Move(x, y2)
+	tt.Release(x, y2)
+	dragged := a.panes[0].overlays.Items()[0].Points[0].Price
+	wantRaw := kline.LocalYToPrice(float64(p0.H), float64(y2-p0.Y), scale)
+	if math.Abs(dragged-wantRaw) > 0.05 {
+		t.Fatalf("body drag should use raw price %v, got %v", wantRaw, dragged)
+	}
+	barAt := a.panes[0].candles[line.Points[0].BarIndex]
+	if onOHLC(wantRaw, barAt, 1e-4) {
+		t.Fatal("pick a drag target between OHLC levels for this test")
+	}
+}
+
 func mustBox(t *testing.T, tt *ui.Tester, label string) ui.Rect {
 	t.Helper()
 	r, ok := tt.Find(label)
