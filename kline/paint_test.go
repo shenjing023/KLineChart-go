@@ -23,4 +23,14 @@ func TestSplitGivesPriceAndVolume(t *testing.T) {
 	if panes.Time.Y < panes.Volume.Y+panes.Volume.H-0.5 {
 		t.Fatalf("time axis %+v volume %+v", panes.Time, panes.Volume)
 	}
+	if panes.Time.H <= 0 {
+		t.Fatal("Split should keep a time axis")
+	}
+	noTime := SplitNoTime(ui.Rect{X: 10, Y: 20, W: 800, H: 500})
+	if noTime.Time.H != 0 {
+		t.Fatalf("SplitNoTime time axis %+v", noTime.Time)
+	}
+	if noTime.Volume.Y <= noTime.Price.Y+noTime.Price.H || noTime.Price.W != panes.Price.W {
+		t.Fatalf("SplitNoTime panes %+v", noTime)
+	}
 }

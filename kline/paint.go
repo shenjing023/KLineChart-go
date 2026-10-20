@@ -28,9 +28,19 @@ type Panes struct {
 
 // Split divides r into a price plot, a volume plot under it, a time
 // axis along the bottom, and a price axis on the right.
-func Split(r ui.Rect) Panes {
+func Split(r ui.Rect) Panes { return split(r, true) }
+
+// SplitNoTime is the same layout without the time axis. A stack of
+// panes uses it for every pane except the bottom one, which keeps the
+// shared time labels.
+func SplitNoTime(r ui.Rect) Panes { return split(r, false) }
+
+func split(r ui.Rect, showTime bool) Panes {
 	axisW := float32(axisWidth)
-	timeH := float32(timeHeight)
+	timeH := float32(0)
+	if showTime {
+		timeH = timeHeight
+	}
 	gap := float32(paneGap)
 	if r.W < axisW+40 {
 		axisW = max(r.W*0.18, 1)
@@ -108,7 +118,12 @@ type Pointer struct {
 
 // Paint draws the series in panes. vp is not modified. ma5 and ma20 may
 // be nil or shorter than cs; NaN samples are skipped.
-func Paint(p *ui.Painter, panes Panes, cs []Candle, ma5, ma20 []float64, vp Viewport, ptr Pointer, style Style) {
+//
+// barIndex draws the vertical crosshair on that bar even when ptr is
+// outside this pane, so several panes can share one bar. -1 draws the
+// vertical line from ptr when ptr is over the plot, and draws nothing
+// when it is not. The horizontal line and the price tag follow ptr only.
+func Paint(p *ui.Painter, panes Panes, cs []Candle, ma5, ma20 []float64, vp Viewport, ptr Pointer, barIndex int, style Style) {
 	price := panes.Price
 	if price.W < 2 || price.H < 2 {
 		return
@@ -139,7 +154,7 @@ func Paint(p *ui.Painter, panes Panes, cs []Candle, ma5, ma20 []float64, vp View
 	p.Clip(panes.Volume, 0, func() {
 		drawVolume(p, panes.Volume, cs, vp, volScale, first, last, style)
 	})
-	drawCrosshair(p, panes, cs, vp, yScale, ptr, style)
+	drawCrosshair(p, panes, cs, vp, yScale, ptr, barIndex, style)
 }
 
 func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volScale chart.Linear, style Style) {
@@ -160,20 +175,23 @@ func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volS
 			drawLabel(p, panes.VolumeAxis.X+6, y, tick.Label, style.Muted, ui.Start)
 		}
 	}
-	if len(cs) == 0 || vp.BarWidth <= 0 || panes.Time.H <= 0 {
-		return
-	}
-	left := TimeAt(cs, vp.Offset)
-	right := TimeAt(cs, vp.Offset+float64(price.W)/vp.BarWidth)
-	for _, tick := range chart.NewTime(left, right).Ticks(6) {
-		if tick.At < 0 || tick.At > 1 {
-			continue
+	if len(cs) > 0 && vp.BarWidth > 0 {
+		left := TimeAt(cs, vp.Offset)
+		right := TimeAt(cs, vp.Offset+float64(price.W)/vp.BarWidth)
+		for _, tick := range chart.NewTime(left, right).Ticks(6) {
+			if tick.At < 0 || tick.At > 1 {
+				continue
+			}
+			x := chart.X(price, tick.At)
+			p.Line(x, price.Y, x, panes.Volume.Y+panes.Volume.H, 1, style.Grid)
+			if panes.Time.H > 0 {
+				drawLabel(p, x, panes.Time.Y+panes.Time.H/2, tick.Label, style.Muted, ui.Center)
+			}
 		}
-		x := chart.X(price, tick.At)
-		p.Line(x, price.Y, x, panes.Volume.Y+panes.Volume.H, 1, style.Grid)
-		drawLabel(p, x, panes.Time.Y+panes.Time.H/2, tick.Label, style.Muted, ui.Center)
 	}
-	p.Line(price.X, panes.Volume.Y-float32(paneGap)/2, price.X+price.W, panes.Volume.Y-float32(paneGap)/2, 1, style.Grid)
+	if panes.Volume.Y > price.Y+price.H {
+		p.Line(price.X, panes.Volume.Y-float32(paneGap)/2, price.X+price.W, panes.Volume.Y-float32(paneGap)/2, 1, style.Grid)
+	}
 }
 
 func drawCandles(p *ui.Painter, plot ui.Rect, cs []Candle, vp Viewport, yScale chart.Linear, first, last int, style Style) {
@@ -264,14 +282,18 @@ func drawVolume(p *ui.Painter, plot ui.Rect, cs []Candle, vp Viewport, volScale 
 	}
 }
 
-func drawCrosshair(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale chart.Linear, ptr Pointer, style Style) {
-	if !ptr.On || len(cs) == 0 {
+func drawCrosshair(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale chart.Linear, ptr Pointer, barIndex int, style Style) {
+	if len(cs) == 0 {
 		return
 	}
 	price := panes.Price
-	localX := float64(ptr.X - price.X)
-	i, ok := vp.IndexAt(localX, len(cs))
-	if !ok {
+	i := barIndex
+	if i < 0 && ptr.On {
+		if hit, ok := vp.IndexAt(float64(ptr.X-price.X), len(cs)); ok {
+			i = hit
+		}
+	}
+	if i < 0 || i >= len(cs) {
 		return
 	}
 	x := price.X + float32(vp.BarLeft(i)+vp.BarWidth/2)
@@ -281,8 +303,10 @@ func drawCrosshair(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale 
 	bottom := panes.Volume.Y + panes.Volume.H
 	p.Line(x, price.Y, x, bottom, 1, style.Cross)
 
-	inPrice := ptr.Y >= price.Y && ptr.Y <= price.Y+price.H
-	inVol := ptr.Y >= panes.Volume.Y && ptr.Y <= bottom
+	// The horizontal line stays on the pane under the pointer. Other
+	// panes only share the vertical line at this bar index.
+	inPrice := ptr.On && ptr.Y >= price.Y && ptr.Y <= price.Y+price.H
+	inVol := ptr.On && ptr.Y >= panes.Volume.Y && ptr.Y <= bottom
 	if inPrice || inVol {
 		p.Line(price.X, ptr.Y, price.X+price.W, ptr.Y, 1, style.Cross)
 	}
