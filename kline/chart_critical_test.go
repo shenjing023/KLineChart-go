@@ -289,9 +289,10 @@ func TestLiveMarshalHopsApply(t *testing.T) {
 	}
 	var chart *Chart
 	hopped := 0
+	// One symbol, so the pushed bar is shown without waiting for BETA.
 	chart = NewChart(ChartOptions{
 		Source:     stub,
-		Symbols:    []string{"ALPHA", "BETA"},
+		Symbols:    []string{"ALPHA"},
 		Period:     hour,
 		Indicators: []string{},
 		Marshal: func(fn func()) {
@@ -330,9 +331,10 @@ func TestLiveOffThreadPushIsFenced(t *testing.T) {
 	}
 	hop := make(chan func(), 4)
 	var chart *Chart
+	// One symbol, so the pushed bar is shown without waiting for BETA.
 	chart = NewChart(ChartOptions{
 		Source:     stub,
-		Symbols:    []string{"ALPHA", "BETA"},
+		Symbols:    []string{"ALPHA"},
 		Period:     hour,
 		Indicators: []string{},
 		Marshal:    func(fn func()) { hop <- fn },

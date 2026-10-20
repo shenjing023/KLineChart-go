@@ -68,7 +68,7 @@ Another module can import the chart and skip this demo's toolbar. `Chart.View` i
 ```go
 chart := kline.NewChart(kline.ChartOptions{
     Source:     src, // nil uses SyntheticSource; LiveSource is optional
-    Symbols:    []string{"ALPHA", "BETA"}, // empty uses ALPHA and BETA
+    Symbols:    []string{"ALPHA", "BETA"}, // unique names; empty uses ALPHA and BETA
     Period:     kline.Period{Span: 1, Unit: kline.UnitHour},
     Layout:     kline.LayoutStack, // or kline.LayoutOverlay
     Indicators: []string{"MA", "MACD"}, // nil keeps MA and MACD; empty turns all off
@@ -191,7 +191,15 @@ _ = chart.SetTool("mark")
 
 ### Data source
 
-History is `DataSource.GetBars`. A feed that can push also implements `LiveSource`. The chart subscribes when `SetSource` or `SetPeriod` sees that interface, and ignores a plain `DataSource`. Older bars are prepended only when every pane that already has bars accepts the same count; otherwise the shared offset stays put and each pane keeps the `more` flag the source reported. A forward `GetBars` error leaves the panes unchanged and is not retried on the next frame. `SyntheticSource` is not a live feed. `StubLiveSource` is the in-memory double. This repo does not open a connection. `kline/host_embed_test.go` has a complete feed: init, forward, subscribe, and one pushed bar.
+History is `DataSource.GetBars`, in ascending open time. A feed that can push also implements `LiveSource`. The chart subscribes when `SetSource` or `SetPeriod` sees that interface, and ignores a plain `DataSource`. Older bars are prepended only when every pane that already has bars accepts the same count; otherwise the shared offset stays put and each pane keeps the `more` flag the source reported. A forward `GetBars` error leaves the panes unchanged and is not retried on the next frame. `SyntheticSource` is not a live feed. `StubLiveSource` is the in-memory double. This repo does not open a connection. `kline/host_embed_test.go` has a complete feed: init, forward, subscribe, and one pushed bar.
+
+Every symbol shares one bar index: bar `i` is the same open time on each pane. That is what lets one viewport, one crosshair, and the overlay base work across symbols, so the chart enforces it wherever bars arrive:
+
+- **Load.** The init windows are trimmed to the open times every symbol has. Bars before the latest first open time are dropped; a forward load brings them back once every symbol has them. Bars after the earliest last open time are held, which covers one feed having opened the next bar before the other. If what is left still differs in open time, or one symbol has no bars while another does, `SetPeriod` and `SetSource` return `ErrMisaligned` and keep the previous bars. `NewChart` reports it through `LoadError`.
+- **Forward.** Only the trailing run of older bars whose open times every symbol shares is prepended. A batch that ends on different open times is left out, and `AlignError` reports it.
+- **Live.** A bar with a new open time is held until every symbol has a bar at that open time. Then those bars are shown together, and a view on the right edge follows them. A revision of a symbol's newest bar, held or shown, replaces it. A held bar that another symbol skipped, because that feed already moved on to a later open time, is dropped, and `AlignError` reports it. A symbol whose feed stops also holds back the other symbols' new bars.
+
+Symbol names must be unique. `NewChart` with a repeated name has no panes, and `LoadError` wraps `ErrDuplicateSymbol`. An empty series pins the viewport to the left margin like any series shorter than the plot.
 
 Indicator series are cached until the candles change. Pan and zoom do not call `Calc`.
 

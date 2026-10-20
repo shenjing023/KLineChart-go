@@ -2,10 +2,54 @@ package kline
 
 import (
 	"errors"
+	"math"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
+
+// histSource serves fixed histories. Init returns the last initN bars of
+// each symbol, and forward up to Limit bars strictly before Anchor.
+type histSource struct {
+	hist  map[string][]Candle
+	initN int
+}
+
+func (h *histSource) GetBars(req BarRequest) ([]Candle, bool, error) {
+	all := h.hist[req.Symbol]
+	switch req.Kind {
+	case KindInit:
+		if len(all) <= h.initN {
+			return cloneCandles(all), false, nil
+		}
+		return cloneCandles(all[len(all)-h.initN:]), true, nil
+	case KindForward:
+		n := 0
+		for n < len(all) && all[n].Time.Before(req.Anchor) {
+			n++
+		}
+		lo := max(0, n-req.Limit)
+		return cloneCandles(all[lo:n]), lo > 0, nil
+	default:
+		return nil, false, ErrUnsupportedKind
+	}
+}
+
+func assertAligned(t *testing.T, a *Chart) {
+	t.Helper()
+	n := a.Bars()
+	for _, s := range a.panes {
+		if len(s.candles) != n {
+			t.Fatalf("%s has %d bars, chart has %d", s.name, len(s.candles), n)
+		}
+		for i := range s.candles {
+			if !s.candles[i].Time.Equal(a.panes[0].candles[i].Time) {
+				t.Fatalf("bar %d: %s at %s, %s at %s", i, s.name, s.candles[i].Time, a.panes[0].name, a.panes[0].candles[i].Time)
+			}
+		}
+	}
+}
 
 // countSource counts GetBars on top of a StubLiveSource that keeps every
 // handler it was given.
@@ -240,5 +284,245 @@ func TestGetBarsBufferIsCopied(t *testing.T) {
 	}
 	if !a.panes[0].candles[forwardBatch].Time.Equal(anchor) {
 		t.Fatal("prepend moved the anchor bar")
+	}
+}
+
+func TestOneSidedLivePushKeepsAlignment(t *testing.T) {
+	hour := Period{Span: 1, Unit: UnitHour}
+	stub := &StubLiveSource{}
+	for _, name := range []string{"ALPHA", "BETA"} {
+		if err := stub.SetBars(name, hour, Generate(300, symbolSeed(name))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := NewChart(ChartOptions{Source: stub, Symbols: []string{"ALPHA", "BETA"}, Period: hour, Indicators: []string{"MA"}})
+	tt := ui.NewTester(a.View, 960, 720)
+	n := a.Bars()
+	assertPinned := func(bars int) {
+		t.Helper()
+		fit := Viewport{BarWidth: a.vp.BarWidth}
+		fit.FitRight(bars, a.plotW)
+		if math.Abs(a.vp.Offset-fit.Offset) > 1e-6 {
+			t.Fatalf("offset %v, right edge for %d bars is %v", a.vp.Offset, bars, fit.Offset)
+		}
+	}
+	assertPinned(n)
+	last := a.panes[0].candles[n-1].Time
+	push := func(symbol string, at time.Time, px float64) {
+		stub.Push(symbol, hour, Candle{Time: at, Open: px, High: px + 1, Low: px - 1, Close: px, Volume: 100})
+	}
+
+	push("ALPHA", last.Add(time.Hour), 120)
+	tt.Frame()
+	if a.Bars() != n || maLineLen(&a.panes[0]) != n {
+		t.Fatalf("ALPHA-only bar was shown: bars %d ma %d", a.Bars(), maLineLen(&a.panes[0]))
+	}
+	assertAligned(t, a)
+	assertPinned(n)
+	if _, right := a.Visible(); right != n-1 {
+		t.Fatalf("rightmost visible bar %d, want %d", right, n-1)
+	}
+	// Where ALPHA's new bar would sit, neither pane has a candle.
+	price := a.painted[0].Price
+	tt.Move(price.X+float32(a.vp.BarLeft(n)+a.vp.BarWidth/2), price.Y+price.H/2)
+	if a.crossIndex != -1 {
+		t.Fatalf("crosshair found bar %d past the shared right edge", a.crossIndex)
+	}
+
+	push("BETA", last.Add(time.Hour), 80)
+	tt.Frame()
+	if a.Bars() != n+1 || maLineLen(&a.panes[0]) != n+1 || maLineLen(&a.panes[1]) != n+1 {
+		t.Fatalf("matched open time: bars %d", a.Bars())
+	}
+	assertAligned(t, a)
+	assertPinned(n + 1)
+	if a.panes[0].candles[n].Close != 120 || a.panes[1].candles[n].Close != 80 {
+		t.Fatal("matched bars are not the pushed ones")
+	}
+
+	// BETA skips an open time ALPHA has. ALPHA's bar there can never be
+	// matched, so it is dropped and the next shared open time is shown.
+	push("ALPHA", last.Add(2*time.Hour), 121)
+	push("ALPHA", last.Add(3*time.Hour), 122)
+	if a.AlignError() != nil {
+		t.Fatalf("held bars reported early: %v", a.AlignError())
+	}
+	push("BETA", last.Add(3*time.Hour), 82)
+	if a.Bars() != n+2 || !a.panes[0].candles[n+1].Time.Equal(last.Add(3*time.Hour)) {
+		t.Fatalf("after the skipped open time: bars %d", a.Bars())
+	}
+	assertAligned(t, a)
+	if len(a.panes[0].held) != 0 || len(a.panes[1].held) != 0 {
+		t.Fatal("bars stayed held")
+	}
+	if !errors.Is(a.AlignError(), ErrMisaligned) {
+		t.Fatalf("dropped bar not reported: %v", a.AlignError())
+	}
+	if err := a.SetPeriod(Period{Span: 4, Unit: UnitHour}); err != nil || a.AlignError() != nil {
+		t.Fatalf("a load should clear AlignError: %v %v", err, a.AlignError())
+	}
+}
+
+func TestLiveBarsFillEmptyChartTogether(t *testing.T) {
+	hour := Period{Span: 1, Unit: UnitHour}
+	stub := &StubLiveSource{}
+	a := NewChart(ChartOptions{Source: stub, Symbols: []string{"ALPHA", "BETA"}, Period: hour, Indicators: []string{}})
+	if a.LoadError() != nil || a.Bars() != 0 {
+		t.Fatalf("empty history: err %v bars %d", a.LoadError(), a.Bars())
+	}
+	at := time.Date(2024, 3, 1, 9, 0, 0, 0, time.UTC)
+	stub.Push("ALPHA", hour, Candle{Time: at, Open: 10, High: 11, Low: 9, Close: 10})
+	if a.Bars() != 0 {
+		t.Fatal("ALPHA's first bar was shown alone")
+	}
+	stub.Push("BETA", hour, Candle{Time: at, Open: 20, High: 21, Low: 19, Close: 20})
+	if a.Bars() != 1 {
+		t.Fatalf("bars %d after both symbols opened the bar", a.Bars())
+	}
+	assertAligned(t, a)
+}
+
+func TestInitWindowsAlignOnOpenTime(t *testing.T) {
+	alpha := Generate(601, 42)
+	beta := Generate(601, 99)
+	// ALPHA's feed has opened the next bar and BETA's has not, so the two
+	// latest-600 windows are one bar apart.
+	src := &histSource{initN: 600, hist: map[string][]Candle{"ALPHA": alpha[1:], "BETA": beta[:600]}}
+	a := NewChart(ChartOptions{Source: src, Symbols: []string{"ALPHA", "BETA"}, Indicators: []string{}})
+	if a.LoadError() != nil || a.Bars() != 599 {
+		t.Fatalf("shifted windows: err %v bars %d", a.LoadError(), a.Bars())
+	}
+	assertAligned(t, a)
+	if !a.panes[0].candles[0].Time.Equal(alpha[1].Time) || !a.panes[0].candles[598].Time.Equal(alpha[599].Time) {
+		t.Fatalf("shared range %s..%s", a.panes[0].candles[0].Time, a.panes[0].candles[598].Time)
+	}
+	if len(a.panes[0].held) != 1 || !a.panes[0].held[0].Time.Equal(alpha[600].Time) || len(a.panes[1].held) != 0 {
+		t.Fatalf("held %d %d", len(a.panes[0].held), len(a.panes[1].held))
+	}
+	if !a.panes[1].more {
+		t.Fatal("BETA's first bar was trimmed, so older bars exist")
+	}
+
+	gap := append(append([]Candle(nil), beta[:300]...), beta[301:600]...)
+	bad := &histSource{initN: 600, hist: map[string][]Candle{"ALPHA": alpha[:600], "BETA": gap}}
+	if err := a.SetSource(bad); !errors.Is(err, ErrMisaligned) {
+		t.Fatalf("interior gap: %v", err)
+	}
+	if a.src != DataSource(src) || a.Bars() != 599 {
+		t.Fatal("a refused load replaced the source or the bars")
+	}
+	none := &histSource{initN: 600, hist: map[string][]Candle{"ALPHA": alpha[:600]}}
+	if err := a.SetSource(none); !errors.Is(err, ErrMisaligned) {
+		t.Fatalf("BETA with no bars: %v", err)
+	}
+	c := NewChart(ChartOptions{Source: bad, Symbols: []string{"ALPHA", "BETA"}, Indicators: []string{}})
+	if !errors.Is(c.LoadError(), ErrMisaligned) || c.Bars() != 0 {
+		t.Fatalf("NewChart on a gap: err %v bars %d", c.LoadError(), c.Bars())
+	}
+}
+
+func TestEmptySeriesCannotDragOther(t *testing.T) {
+	alpha := Generate(300, 42)
+	src := &histSource{initN: 300, hist: map[string][]Candle{"ALPHA": alpha}}
+	a := NewChart(ChartOptions{Source: src, Symbols: []string{"ALPHA", "BETA"}, Indicators: []string{}})
+	if !errors.Is(a.LoadError(), ErrMisaligned) || a.Bars() != 0 || len(a.panes[0].candles) != 0 {
+		t.Fatalf("BETA empty: err %v bars %d ALPHA %d", a.LoadError(), a.Bars(), len(a.panes[0].candles))
+	}
+	tt := ui.NewTester(a.View, 960, 720)
+	box := mustBox(t, tt, "ALPHA chart")
+	for i := 0; i < 4; i++ {
+		tt.Press(box.X+box.W-20, box.Y+40)
+		tt.Move(box.X+20, box.Y+40)
+		tt.Release(box.X+20, box.Y+40)
+	}
+	if a.vp.Offset != -OverscrollBars {
+		t.Fatalf("drag on an empty chart moved offset to %v", a.vp.Offset)
+	}
+
+	b := newApp()
+	bt := ui.NewTester(b.View, 960, 720)
+	n := b.Bars()
+	if err := b.SetSource(src); !errors.Is(err, ErrMisaligned) {
+		t.Fatalf("source with an empty BETA: %v", err)
+	}
+	if b.Bars() != n || len(b.panes[1].candles) != n {
+		t.Fatalf("refused load emptied a pane: bars %d BETA %d", b.Bars(), len(b.panes[1].candles))
+	}
+	bbox := mustBox(t, bt, "ALPHA chart")
+	for i := 0; i < 40; i++ {
+		bt.Press(bbox.X+bbox.W-20, bbox.Y+40)
+		bt.Move(bbox.X+20, bbox.Y+40)
+		bt.Release(bbox.X+20, bbox.Y+40)
+	}
+	if maxOff := float64(n) - b.plotW/b.vp.BarWidth + OverscrollBars; b.vp.Offset > maxOff+1e-9 {
+		t.Fatalf("offset %v past the shared right edge %v", b.vp.Offset, maxOff)
+	}
+}
+
+func TestForwardStopsAtMisalignedOpenTime(t *testing.T) {
+	alpha := Generate(300, 42)
+	full := Generate(300, 99)
+	beta := append(append([]Candle(nil), full[:100]...), full[101:]...)
+	src := &histSource{initN: 50, hist: map[string][]Candle{"ALPHA": alpha, "BETA": beta}}
+	a := NewChart(ChartOptions{Source: src, Symbols: []string{"ALPHA", "BETA"}, Indicators: []string{}})
+	if a.LoadError() != nil || a.Bars() != 50 {
+		t.Fatalf("setup: err %v bars %d", a.LoadError(), a.Bars())
+	}
+	a.fitted = true
+	a.vp.Offset = 2
+	a.ensureForward()
+	// Both batches end at bar 249, but BETA skips bar 100, so only bars
+	// 101 through 249 share open times.
+	if a.Bars() != 199 || a.vp.Offset != 2+149 {
+		t.Fatalf("partial prepend: bars %d offset %v", a.Bars(), a.vp.Offset)
+	}
+	assertAligned(t, a)
+	if !a.panes[0].candles[0].Time.Equal(alpha[101].Time) {
+		t.Fatalf("first bar %s, want %s", a.panes[0].candles[0].Time, alpha[101].Time)
+	}
+	if a.AlignError() != nil || !a.panes[0].more || !a.panes[1].more {
+		t.Fatalf("err %v more %v %v", a.AlignError(), a.panes[0].more, a.panes[1].more)
+	}
+
+	a.vp.Offset = 2
+	a.ensureForward()
+	if a.Bars() != 199 || a.vp.Offset != 2 {
+		t.Fatalf("misaligned batch was prepended: bars %d offset %v", a.Bars(), a.vp.Offset)
+	}
+	if !errors.Is(a.AlignError(), ErrMisaligned) {
+		t.Fatalf("misaligned forward not reported: %v", a.AlignError())
+	}
+}
+
+func TestDuplicateSymbolsRejected(t *testing.T) {
+	gets := 0
+	src := sourceFunc(func(req BarRequest) ([]Candle, bool, error) {
+		gets++
+		return Generate(20, 1), false, nil
+	})
+	a := NewChart(ChartOptions{Source: src, Symbols: []string{"ALPHA", "BETA", "ALPHA"}})
+	if !errors.Is(a.LoadError(), ErrDuplicateSymbol) {
+		t.Fatalf("LoadError %v", a.LoadError())
+	}
+	if gets != 0 || len(a.Symbols()) != 0 || a.Bars() != 0 {
+		t.Fatalf("calls %d symbols %v bars %d", gets, a.Symbols(), a.Bars())
+	}
+	if _, ok := a.Bar("ALPHA", 0); ok {
+		t.Fatal("a refused symbol list returned a bar")
+	}
+	if err := a.SetPeriod(Period{Span: 1, Unit: UnitDay}); !errors.Is(err, ErrDuplicateSymbol) {
+		t.Fatalf("SetPeriod %v", err)
+	}
+	if err := a.SetSource(&SyntheticSource{}); !errors.Is(err, ErrDuplicateSymbol) {
+		t.Fatalf("SetSource %v", err)
+	}
+	if gets != 0 || !errors.Is(a.LoadError(), ErrDuplicateSymbol) {
+		t.Fatalf("a refused chart loaded: calls %d err %v", gets, a.LoadError())
+	}
+	tt := ui.NewTester(a.View, 640, 480)
+	a.SetLayout(LayoutOverlay)
+	tt.Frame()
+	if tt.HasText("ALPHA") {
+		t.Fatalf("texts %q", tt.Texts())
 	}
 }

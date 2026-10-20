@@ -91,8 +91,8 @@ func (v *Viewport) Zoom(dy, anchorX, plotW float64, n int) {
 }
 
 // Clamp keeps BarWidth in range and Offset where at least part of the
-// series can still meet the plot. A series shorter than the plot is
-// pinned to the left margin.
+// series can still meet the plot. A series shorter than the plot,
+// including an empty one, is pinned to the left margin.
 func (v *Viewport) Clamp(n int, plotW float64) {
 	if v.BarWidth < MinBarWidth {
 		v.BarWidth = MinBarWidth
@@ -100,12 +100,12 @@ func (v *Viewport) Clamp(n int, plotW float64) {
 	if v.BarWidth > MaxBarWidth {
 		v.BarWidth = MaxBarWidth
 	}
-	if n <= 0 || plotW <= 0 {
+	if plotW <= 0 {
 		return
 	}
 	minOff := -float64(OverscrollBars)
 	maxOff := float64(n) - plotW/v.BarWidth + float64(OverscrollBars)
-	if maxOff < minOff {
+	if n <= 0 || maxOff < minOff {
 		v.Offset = minOff
 		return
 	}

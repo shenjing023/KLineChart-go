@@ -89,10 +89,12 @@ type BarRequest struct {
 	Limit  int
 }
 
-// DataSource loads chart bars. more is true when bars may still exist
-// beyond the returned window, in the direction of Kind. The chart copies
-// the returned slice before it calls GetBars again, so a source may reuse
-// one buffer across calls and symbols.
+// DataSource loads chart bars. Bars are in ascending open-time order.
+// more is true when bars may still exist beyond the returned window, in
+// the direction of Kind. The chart copies the returned slice before it
+// calls GetBars again, so a source may reuse one buffer across calls and
+// symbols. A chart with several symbols needs the same open times from
+// each of them; see ErrMisaligned.
 type DataSource interface {
 	GetBars(req BarRequest) (bars []Candle, more bool, err error)
 }
@@ -103,6 +105,8 @@ var ErrNilBarHandler = errors.New("kline: nil bar handler")
 // BarHandler receives one bar update. The bar is either a new open time
 // or a revision of the last bar. The caller chooses the goroutine.
 // A handler installed by Chart must not call SetPeriod, SetSource, or View.
+// Chart holds a new open time until every symbol has a bar at that open
+// time, then shows those bars together.
 type BarHandler func(bar Candle)
 
 // LiveSource is an optional extension of DataSource. A feed that can

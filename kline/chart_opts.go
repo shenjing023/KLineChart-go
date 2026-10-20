@@ -37,12 +37,28 @@ var ErrUnknownIndicator = errors.New("kline: unknown indicator")
 // ErrUnknownTool is returned when SetTool does not know the name.
 var ErrUnknownTool = errors.New("kline: unknown tool")
 
+// ErrDuplicateSymbol is LoadError when ChartOptions.Symbols names a symbol
+// twice. Such a chart has no panes, and every load returns this error.
+var ErrDuplicateSymbol = errors.New("kline: duplicate symbol")
+
+// ErrMisaligned is returned when the symbols' bars cannot share one bar
+// index. Every pane uses the same index: bar i is the same open time on
+// each symbol. A load whose windows still disagree after trimming to the
+// open times they share is refused. AlignError reports forward and live
+// bars that had to be left out after a load.
+var ErrMisaligned = errors.New("kline: symbols do not share bar open times")
+
 // ChartOptions configures NewChart. Zero values pick the demo defaults:
 // SyntheticSource, symbols ALPHA and BETA, period 1h, stack layout,
 // MA and MACD on, magnet off, hollow off, and colors from the window theme.
 type ChartOptions struct {
-	Source  DataSource
-	Symbols []string // e.g. ALPHA, BETA
+	Source DataSource
+	// Symbols are the panes, top to bottom, e.g. ALPHA and BETA. A name
+	// may appear once: a repeated name leaves the chart without panes,
+	// and LoadError wraps ErrDuplicateSymbol. Every symbol shares one bar
+	// index, so the source must report the same open times for each; see
+	// ErrMisaligned.
+	Symbols []string
 	Period  Period
 	Layout  string // LayoutStack or LayoutOverlay
 	Style   Style
@@ -78,6 +94,10 @@ func NewChart(opts ChartOptions) *Chart {
 	symbols := append([]string(nil), opts.Symbols...)
 	if len(symbols) == 0 {
 		symbols = []string{"ALPHA", "BETA"}
+	}
+	symbolErr := uniqueSymbols(symbols)
+	if symbolErr != nil {
+		symbols = nil
 	}
 	period := opts.Period
 	if !period.Valid() {
@@ -121,12 +141,24 @@ func NewChart(opts ChartOptions) *Chart {
 		limitPct:   opts.Style.LimitPct,
 		hideHeader: opts.HideHeader,
 		marshal:    opts.Marshal,
+		symbolErr:  symbolErr,
 	}
 	if a.styleSet {
 		a.style = completeStyle(a.style)
 	}
 	a.loadErr = a.setPeriod(period)
 	return a
+}
+
+func uniqueSymbols(symbols []string) error {
+	seen := make(map[string]bool, len(symbols))
+	for _, name := range symbols {
+		if seen[name] {
+			return fmt.Errorf("%w: %s", ErrDuplicateSymbol, name)
+		}
+		seen[name] = true
+	}
+	return nil
 }
 
 func styleSpecified(s Style) bool {
@@ -200,12 +232,19 @@ func (a *Chart) SetPeriod(p Period) error {
 }
 
 // LoadError is why the current period has no bars or no live updates: the
-// GetBars error of the load NewChart ran, or the SubscribeBar error of the
-// load that installed the current bars. It is nil once the current period
-// and source loaded and subscribed. A SetPeriod or SetSource whose GetBars
-// fails returns that error and keeps the previous bars, so it does not
-// change LoadError.
+// GetBars or ErrMisaligned error of the load NewChart ran, the SubscribeBar
+// error of the load that installed the current bars, or ErrDuplicateSymbol.
+// It is nil once the current period and source loaded and subscribed. A
+// SetPeriod or SetSource whose load fails returns that error and keeps the
+// previous bars, so it does not change LoadError.
 func (a *Chart) LoadError() error { return a.loadErr }
+
+// AlignError reports bars left off the shared bar index since the last
+// load, wrapping ErrMisaligned: a forward batch whose open times do not
+// line up with the other symbols' at the left edge, or a held live bar
+// dropped because another symbol skipped its open time. The bars on
+// screen stay aligned either way. A load clears it.
+func (a *Chart) AlignError() error { return a.alignErr }
 
 // Close unsubscribes every live bar and fences handlers already handed
 // to the feed. A handler that runs after Close does not change the chart.
@@ -261,6 +300,9 @@ func (a *Chart) Layout() string {
 func (a *Chart) SetSource(src DataSource) error {
 	if src == nil {
 		return ErrNilSource
+	}
+	if a.symbolErr != nil {
+		return a.symbolErr
 	}
 	if !a.period.Valid() {
 		return ErrInvalidPeriod
@@ -471,8 +513,9 @@ func (a *Chart) ResetView() {
 	a.fitted = false
 }
 
-// Bars is the number of bars the shared viewport can address, the
-// shortest loaded series.
+// Bars is the number of bars every symbol has on screen. Bar i is the
+// same open time on each symbol. Live bars still waiting for another
+// symbol to reach their open time are not counted.
 func (a *Chart) Bars() int { return a.bars() }
 
 // Symbols is the symbol list, in pane order.
