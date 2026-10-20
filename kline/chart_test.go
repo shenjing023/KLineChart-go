@@ -1246,8 +1246,7 @@ func TestLiveBarAppendsRevisesAndRecalculates(t *testing.T) {
 		t.Fatal("the demo source must not implement LiveSource")
 	}
 	stub := stubWithPanes(t, a, a.period)
-	a.src = stub
-	if err := a.SetPeriod(a.period); err != nil {
+	if err := a.SetSource(stub); err != nil {
 		t.Fatal(err)
 	}
 	n := len(a.panes[0].candles)
@@ -1302,8 +1301,7 @@ func TestLiveSubscriptionFollowsPeriodAndSource(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	a.src = stub
-	if err := a.SetPeriod(hour); err != nil {
+	if err := a.SetSource(stub); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.SetPeriod(four); err != nil {
@@ -1335,8 +1333,7 @@ func TestLiveSubscriptionFollowsPeriodAndSource(t *testing.T) {
 func TestLiveBarFollowsRightEdgeOnly(t *testing.T) {
 	a := newApp()
 	stub := stubWithPanes(t, a, a.period)
-	a.src = stub
-	if err := a.SetPeriod(a.period); err != nil {
+	if err := a.SetSource(stub); err != nil {
 		t.Fatal(err)
 	}
 	tt := ui.NewTester(a.View, 960, 720)

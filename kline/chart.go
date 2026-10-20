@@ -151,6 +151,9 @@ type Chart struct {
 	// forwardHold is the earliest time a failed forward load may try again.
 	// The zero time means there is no hold.
 	forwardHold time.Time
+	// loadErr is LoadError: why the bars of the current period and source
+	// are missing or not live. Nil once they loaded and subscribed.
+	loadErr error
 }
 
 // liveSub is one SubscribeBar the window currently holds.
@@ -159,37 +162,74 @@ type liveSub struct {
 	period Period
 }
 
-// setPeriod reloads every pane with Kind=init and fits the latest bars
-// when the plot width is already known. The first frame still fits from
-// paint, because layout has not run yet.
+// setPeriod reloads every pane with Kind=init from the current source.
+// An invalid p is rejected before the source is asked. A failed GetBars
+// leaves the bars, the period, and the subscription as they were.
 func (a *Chart) setPeriod(p Period) error {
-	if a.src == nil {
+	if !p.Valid() {
 		return ErrInvalidPeriod
+	}
+	next, err := a.fetchInit(a.src, p)
+	if err != nil {
+		return err
+	}
+	return a.install(p, next)
+}
+
+// fetchInit loads the latest window of every symbol at p from src. It
+// does not change the chart. Each batch is copied as it arrives, so a
+// source may reuse the slice it returned.
+func (a *Chart) fetchInit(src DataSource, p Period) ([]series, error) {
+	if src == nil {
+		return nil, ErrNilSource
 	}
 	next := make([]series, len(a.panes))
 	for i, s := range a.panes {
-		bars, more, err := a.src.GetBars(BarRequest{
+		bars, more, err := src.GetBars(BarRequest{
 			Symbol: s.name,
 			Period: p,
 			Kind:   KindInit,
 			Limit:  sampleBars,
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
-		next[i] = a.mount(series{name: s.name}, bars, more)
+		next[i] = series{name: s.name, candles: cloneCandles(bars), more: more}
+	}
+	return next, nil
+}
+
+// install replaces the panes with a fresh load and fits the latest bars
+// when the plot width is already known. The first frame still fits from
+// paint, because layout has not run yet. Drawings, the crosshair, and a
+// drawing or drag in progress belong to the old bars and are dropped.
+// The live subscription follows the new period and source.
+func (a *Chart) install(p Period, next []series) error {
+	for i := range next {
+		next[i] = a.mount(next[i], next[i].candles, next[i].more)
 	}
 	a.period = p
 	a.panes = next
 	a.crossIndex = -1
 	a.crossPane = -1
+	a.cancelGesture()
 	a.fitted = false
 	if a.plotW > 1 {
 		a.vp.FitRight(a.bars(), a.plotW)
 		a.fitted = true
 	}
 	a.clearForwardHold()
-	return a.followLive()
+	a.loadErr = a.followLive()
+	return a.loadErr
+}
+
+// cancelGesture drops a segment draft, an overlay drag, and a pan-tool
+// click. Each refers to bars or pixels of the panes it started on.
+func (a *Chart) cancelGesture() {
+	a.draftOn = false
+	a.dragOn = false
+	a.dragNewHLine = false
+	a.pressOn = false
 }
 
 // followLive subscribes when src implements LiveSource and drops any
@@ -347,7 +387,9 @@ func (a *Chart) ensureForward() {
 			a.holdForward()
 			return
 		}
-		bars = strictlyBefore(bars, s.candles[0].Time)
+		// Copy before the next symbol's request: a source may reuse
+		// one buffer for every GetBars.
+		bars = cloneCandles(strictlyBefore(bars, s.candles[0].Time))
 		got[i] = forwardFetch{bars: bars, more: more, ok: true}
 	}
 	n := 0

@@ -90,7 +90,9 @@ type BarRequest struct {
 }
 
 // DataSource loads chart bars. more is true when bars may still exist
-// beyond the returned window, in the direction of Kind.
+// beyond the returned window, in the direction of Kind. The chart copies
+// the returned slice before it calls GetBars again, so a source may reuse
+// one buffer across calls and symbols.
 type DataSource interface {
 	GetBars(req BarRequest) (bars []Candle, more bool, err error)
 }

@@ -66,10 +66,10 @@ type ChartOptions struct {
 }
 
 // NewChart loads the initial window and returns a chart the host can
-// embed. A source that fails the first GetBars leaves the panes empty;
-// SetPeriod reports that error. A SubscribeBar error on this first load
-// is ignored the same way; SetPeriod reports it. NewChart does not open
-// a network connection.
+// embed. A source that fails the first GetBars leaves the panes empty,
+// and a SubscribeBar error leaves the bars without live updates. Either
+// one is LoadError; SetPeriod with the same period tries the load again.
+// NewChart does not open a network connection.
 func NewChart(opts ChartOptions) *Chart {
 	src := opts.Source
 	if src == nil {
@@ -125,7 +125,7 @@ func NewChart(opts ChartOptions) *Chart {
 	if a.styleSet {
 		a.style = completeStyle(a.style)
 	}
-	_ = a.setPeriod(period)
+	a.loadErr = a.setPeriod(period)
 	return a
 }
 
@@ -179,12 +179,33 @@ func (a *Chart) SetLimitPct(pct float64) {
 func (a *Chart) LimitPct() float64 { return a.limitPct }
 
 // SetPeriod reloads every symbol at p and fits the latest bars when the
-// plot width is already known. Drawings are dropped. An invalid period
-// returns ErrInvalidPeriod and leaves the current bars in place. When
-// the source implements LiveSource, a SubscribeBar error is returned
-// after the new bars are loaded. Subscriptions opened for that call are
-// rolled back, and a handler from the previous subscription does not apply.
-func (a *Chart) SetPeriod(p Period) error { return a.setPeriod(p) }
+// plot width is already known. Drawings, a drawing in progress, and the
+// crosshair are dropped. When p is the period already loaded and
+// LoadError is nil, SetPeriod does nothing and returns nil: drawings and
+// the live subscription stay. While LoadError is set, the same period
+// loads again. An invalid period returns ErrInvalidPeriod without asking
+// the source, and leaves the current bars in place. A GetBars error also
+// leaves them in place. When the source implements LiveSource, a
+// SubscribeBar error is returned after the new bars are loaded.
+// Subscriptions opened for that call are rolled back, and a handler from
+// the previous subscription does not apply.
+func (a *Chart) SetPeriod(p Period) error {
+	if !p.Valid() {
+		return ErrInvalidPeriod
+	}
+	if p == a.period && a.loadErr == nil {
+		return nil
+	}
+	return a.setPeriod(p)
+}
+
+// LoadError is why the current period has no bars or no live updates: the
+// GetBars error of the load NewChart ran, or the SubscribeBar error of the
+// load that installed the current bars. It is nil once the current period
+// and source loaded and subscribed. A SetPeriod or SetSource whose GetBars
+// fails returns that error and keeps the previous bars, so it does not
+// change LoadError.
+func (a *Chart) LoadError() error { return a.loadErr }
 
 // Close unsubscribes every live bar and fences handlers already handed
 // to the feed. A handler that runs after Close does not change the chart.
@@ -227,31 +248,29 @@ func (a *Chart) Layout() string {
 	return LayoutStack
 }
 
-// SetSource replaces the bar source and reloads the current period.
-// A live subscription on the previous source is dropped. Nil returns
-// ErrNilSource. A failed GetBars restores the previous source and leaves
-// its subscription in place. A SubscribeBar error is returned after the
-// new source's bars are loaded; that source stays, and subscriptions
-// opened for the call are rolled back. The handler must not call
-// SetPeriod, SetSource, or View.
+// SetSource replaces the bar source and reloads the current period. Like
+// a period change, a successful reload drops drawings, a drawing in
+// progress, and the crosshair. It reloads even when src is the source
+// already in use, which is how a host refreshes a plain DataSource. A
+// live subscription on the previous source is dropped. Nil returns
+// ErrNilSource. A failed GetBars keeps the previous source, its bars,
+// its drawings, and its subscription. A SubscribeBar error is returned
+// after the new source's bars are loaded; that source stays, and
+// subscriptions opened for the call are rolled back. The handler must
+// not call SetPeriod, SetSource, or View.
 func (a *Chart) SetSource(src DataSource) error {
 	if src == nil {
 		return ErrNilSource
 	}
-	prev := a.src
-	prevPanes := a.panes
-	a.src = src
-	if err := a.setPeriod(a.period); err != nil {
-		if samePaneSlice(a.panes, prevPanes) {
-			a.src = prev
-		}
+	if !a.period.Valid() {
+		return ErrInvalidPeriod
+	}
+	next, err := a.fetchInit(src, a.period)
+	if err != nil {
 		return err
 	}
-	return nil
-}
-
-func samePaneSlice(cur, prev []series) bool {
-	return len(cur) == len(prev) && (len(cur) == 0 || &cur[0] == &prev[0])
+	a.src = src
+	return a.install(a.period, next)
 }
 
 // SetHollow draws rising candle bodies as outlines when on is true.

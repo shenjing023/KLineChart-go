@@ -81,6 +81,9 @@ mygo.NewWindow(mygo.WindowOptions{
     Height:  720,
     Content: ui.View(chart.View),
 })
+if err := chart.LoadError(); err != nil {
+    // the first GetBars or SubscribeBar failed; chart.SetPeriod(chart.Period()) retries
+}
 
 _ = chart.SetPeriod(kline.Period{Span: 1, Unit: kline.UnitDay})
 _ = chart.SetIndicators([]string{"MA", "BOLL"}) // nil or empty turns all off; an unknown name changes nothing
@@ -101,7 +104,9 @@ first, last := chart.Visible()
 _, _ = first, last
 ```
 
-`NewChart` with a `Style` that only sets a candle color fills the rest from `DarkDefault`. `EditStyle` starts from the theme you pass (`nil` is dark), keeps the live hollow switch and limit percent, then applies the edit. `SetHollow` and `SetLimitPct` change those two switches without dropping the color override. `Style.CandleBodyColor` is the rule Paint uses: a non-positive `limitPct` always returns `Up` or `Down`. An invalid `SetPeriod` returns `ErrInvalidPeriod` and leaves the loaded bars in place.
+`NewChart` with a `Style` that only sets a candle color fills the rest from `DarkDefault`. `EditStyle` starts from the theme you pass (`nil` is dark), keeps the live hollow switch and limit percent, then applies the edit. `SetHollow` and `SetLimitPct` change those two switches without dropping the color override. `Style.CandleBodyColor` is the rule Paint uses: a non-positive `limitPct` always returns `Up` or `Down`.
+
+`NewChart` has no error result. `LoadError` reports a first load whose `GetBars` failed (the panes stay empty) or whose `SubscribeBar` failed (the bars have no live updates). An invalid `SetPeriod` returns `ErrInvalidPeriod` before the source is asked and leaves the loaded bars in place. `SetPeriod` with the period already loaded does nothing while `LoadError` is nil: drawings, a segment in progress, and the live subscription stay. Earlier versions reloaded and dropped the drawings. While `LoadError` is set, the same period loads again. A real period change and `SetSource` drop drawings, any drawing or drag in progress, and the crosshair. `SetSource` reloads even when it is handed the source already in use, which is how a host refreshes a plain `DataSource`. The chart copies every slice `GetBars` returns, so a source may reuse its buffer.
 
 `ChartOptions.Marshal` hops a live bar onto the UI thread. Pass `win.Update` (`(*mygo.Window).Update`): it runs the callback on the main thread and redraws. `mygo.RunOnMain` hops and waits, and does not redraw, so the host must `Invalidate`. A nil `Marshal` applies the bar on the caller and does not request a frame. `SetPeriod` and `SetSource` return a `SubscribeBar` error; subscriptions opened for that call are rolled back. `Close` unsubscribes and ignores a handler that runs afterward. The live callback must not call `SetPeriod`, `SetSource`, or `View`.
 
