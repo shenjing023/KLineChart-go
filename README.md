@@ -67,12 +67,13 @@ Another module can import the chart and skip this demo's toolbar. `Chart.View` i
 
 ```go
 chart := kline.NewChart(kline.ChartOptions{
-    Source:     src, // DataSource; LiveSource is optional
-    Symbols:    []string{"ALPHA", "BETA"},
+    Source:     src, // nil uses SyntheticSource; LiveSource is optional
+    Symbols:    []string{"ALPHA", "BETA"}, // empty uses ALPHA and BETA
     Period:     kline.Period{Span: 1, Unit: kline.UnitHour},
     Layout:     kline.LayoutStack, // or kline.LayoutOverlay
-    Indicators: []string{"MA", "MACD"}, // nil means MA and MACD
+    Indicators: []string{"MA", "MACD"}, // nil keeps MA and MACD; empty turns all off
     Magnet:     kline.MagnetOff,
+    HideHeader: true, // host draws its own bar; Readout still returns the text
 })
 mygo.NewWindow(mygo.WindowOptions{
     Title:   "Chart",
@@ -81,22 +82,128 @@ mygo.NewWindow(mygo.WindowOptions{
     Content: ui.View(chart.View),
 })
 
-// Host chrome calls the same methods the demo toolbar binds.
 _ = chart.SetPeriod(kline.Period{Span: 1, Unit: kline.UnitDay})
+_ = chart.SetIndicators([]string{"MA", "BOLL"}) // nil or empty turns all off; an unknown name changes nothing
 chart.SetLayout(kline.LayoutOverlay)
-_ = chart.SetSource(src)
-st := chart.Style(nil)
-st.Up = ui.RGB(239, 83, 80) // US-style rising red
-st.LimitPct = 0.10          // close-to-close move that uses LimitUp / LimitDown
-chart.SetStyle(st)
+_ = chart.SetSource(src) // nil returns ErrNilSource; a failed reload keeps the previous source
+chart.EditStyle(nil, func(s *kline.Style) {
+    s.Up = ui.RGB(239, 83, 80) // rising red, rest of the palette stays
+    s.LimitPct = 0.10
+})
+
+symbol, index, ok := chart.Crosshair()
+if ok {
+    bar, _ := chart.Bar(symbol, index)
+    _ = bar
+    _ = chart.Readout(symbol) // OHLCV plus the indicators that are on
+}
+first, last := chart.Visible()
+_, _ = first, last
 ```
 
-`SetStyle` keeps the colors until the next `SetStyle`. `SetHollow` and `SetLimitPct` change those two switches without dropping the override. `Style.CandleBodyColor` is the rule Paint uses: a non-positive `limitPct` always returns `Up` or `Down`.
+`NewChart` with a `Style` that only sets a candle color fills the rest from `DarkDefault`. `EditStyle` starts from the theme you pass (`nil` is dark), keeps the live hollow switch and limit percent, then applies the edit. `SetHollow` and `SetLimitPct` change those two switches without dropping the color override. `Style.CandleBodyColor` is the rule Paint uses: a non-positive `limitPct` always returns `Up` or `Down`. An invalid `SetPeriod` returns `ErrInvalidPeriod` and leaves the loaded bars in place.
+
+`kline/host_embed_test.go` is the same path from an external package: embed with no toolbar, a host `DataSource`/`LiveSource`, a registered indicator, and a registered overlay.
+
+## Extend
+
+Register indicators and drawings before `NewChart`, usually from `init`. A chart that already exists picks up new specs from `SyncIndicators`. Built-in names and tool names stay reserved.
+
+### Indicator
+
+`PaneMain` plus `LinePlot` is the line case. `Series` widens the price scale. Paint strokes those lines in stack and overlay layouts and does not call `DrawMain`, so leave `DrawMain` empty. A main indicator that paints fills or markers instead of lines leaves `Series` nil and implements `DrawMain`. Overlay mode does not call `DrawMain`.
+
+`PaneSub` opens a band under volume, after MACD and KDJ when those are on. Implement `DrawSub`. `SubPlot.Scale` supplies the Y axis; without it the axis is 0..1. `ValueAt` is the header text.
+
+```go
+type band struct {
+    values []float64
+    color  ui.Color
+}
+
+func (b *band) Name() string     { return "BAND" }
+func (b *band) PaneKind() string { return kline.PaneMain }
+func (b *band) Calc(cs []kline.Candle) {
+    b.values = make([]float64, len(cs))
+    for i, c := range cs {
+        b.values[i] = c.Close
+    }
+}
+func (b *band) DrawMain(*ui.Painter, ui.Rect, kline.Viewport, chart.Linear) {}
+func (b *band) DrawSub(*ui.Painter, ui.Rect, kline.Viewport)                 {}
+func (b *band) ValueAt(i int) string {
+    if i < 0 || i >= len(b.values) {
+        return ""
+    }
+    return "BAND " + kline.FormatPrice(b.values[i])
+}
+func (b *band) Series() [][]float64    { return [][]float64{b.values} }
+func (b *band) LineColors() []ui.Color { return []ui.Color{b.color} }
+
+func init() {
+    _ = kline.Register(kline.Spec{
+        Name: "BAND",
+        Kind: kline.PaneMain,
+        New:  func() kline.Indicator { return &band{color: ui.RGB(255, 140, 0)} },
+    })
+}
+```
+
+`Register` returns `ErrDuplicateIndicator` when the name is already in the list. MACD and KDJ keep their existing rects. A host sub-pane is an extra band and does not move those two.
+
+### Overlay
+
+`RegisterOverlay` adds a tool `SetTool` accepts. `Anchors` is 1 (click to place, drag to move) or 2 (two clicks, then drag an endpoint). `hline`, `segment`, `fib`, and `fibonacci` are reserved. Delete and right-click use the same hit test as the built-ins.
+
+```go
+_ = kline.RegisterOverlay(kline.OverlaySpec{
+    Kind:    "mark",
+    Anchors: 1,
+    Draw: func(p *ui.Painter, plot ui.Rect, o kline.Overlay, vp kline.Viewport, scale chart.Linear, cs []kline.Candle, _ kline.Style) {
+        if len(o.Points) == 0 {
+            return
+        }
+        x := plot.X + float32(kline.AnchorX(o.Points[0], vp, cs))
+        y := plot.Y + float32(kline.PriceToLocalY(float64(plot.H), o.Points[0].Price, scale))
+        p.Fill(ui.Rect{X: x - 4, Y: y - 4, W: 8, H: 8}, ui.RGB(0, 220, 255), 1)
+    },
+    Hit: func(o kline.Overlay, x, y, _, plotH float64, vp kline.Viewport, scale chart.Linear, cs []kline.Candle) (int, bool) {
+        if len(o.Points) == 0 {
+            return 0, false
+        }
+        ax := kline.AnchorX(o.Points[0], vp, cs)
+        ay := kline.PriceToLocalY(plotH, o.Points[0].Price, scale)
+        if math.Hypot(x-ax, y-ay) <= kline.HitRadius {
+            return kline.HitBody, true
+        }
+        return 0, false
+    },
+})
+_ = chart.SetTool("mark")
+```
+
+### Data source
+
+History is `DataSource.GetBars`. A feed that can push also implements `LiveSource`. The chart subscribes when `SetSource` or `SetPeriod` sees that interface, and ignores a plain `DataSource`. `SyntheticSource` is not a live feed. `StubLiveSource` is the in-memory double. This repo does not open a connection. `kline/host_embed_test.go` has a complete feed: init, forward, subscribe, and one pushed bar.
+
+Indicator series are cached until the candles change. Pan and zoom do not call `Calc`.
+
+## Performance
+
+Overlay mode used to normalize every bar on each frame. On 8000 bars at 960×720 (`go test ./kline -bench Benchmark -benchtime=400ms -count=1`):
+
+| Path | Before | After |
+| --- | --- | --- |
+| `CompareScales` | 307 µs, 910 KB/op | 10.7 µs, 15 KB/op |
+| Overlay pan frame | 3.50 ms, 2.91 MB/op | 2.64 ms, 194 KB/op |
+| Stack pan frame | 3.24 ms, 190 KB/op | 2.67 ms, 191 KB/op |
+
+Stack paint already walked the visible bars. The stack frame is mostly MyGo layout, so it was left alone. `BenchmarkIndicatorCalc` stays about 0.55 ms for MA, BOLL, MACD, and KDJ on 8000 bars, and it runs only when candles are replaced. `TestCompareScalesAllocationBudget` fails if the overlay scale copies the whole series again (budget 48 KB/op at this window).
 
 ## Layout
 
 - `main.go` — window chrome and the toolbar. The buttons call `kline.Chart`.
-- `kline/chart.go` — embeddable `Chart`: symbols, period, layout, indicators, magnet, drawings, pan, zoom, and the crosshair. `View` does not build a toolbar.
+- `kline/chart.go` — embeddable `Chart`: symbols, period, layout, indicators, magnet, drawings, pan, zoom, and the crosshair. `View` does not build a toolbar. Hosts register indicators with `Register` and drawings with `RegisterOverlay`.
 - `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, `Style` (`style.go`: `StyleFrom`, `DarkDefault`, `LightDefault`, `LimitUp`, `LimitDown`, `CandleBodyColor`), `DataSource` (`Period`, `BarRequest`, `SyntheticSource`), optional `LiveSource` and the in-memory `StubLiveSource`, the indicator list (`MA`, `MACD`, `BOLL`, `KDJ`), magnet snap (`MagnetMode`, `SnapPrice`), overlays (`Layer`, horizontal price line, segment, Fibonacci retracement), and overlay compare (`NormalizeClose`, `IndexBase`, `PaintCompare`). Volume is drawn by `Paint`, not by an indicator. Each symbol keeps its own `Layer`.
 
 Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot. Dragging right decreases `offset` for all panes. The wheel keeps the bar under the pointer fixed while the width changes, and the other pane uses that same width. In Stack, each pane's Y axis is its own `chart.Linear` over that symbol's visible high/low. In Overlay, both series share one index scale: `close[i] / close[base] * 100`, and ALPHA's OHLC uses that same divisor. `Paint` takes the shared bar index so a pane draws the vertical line even when the pointer is on the other one.
