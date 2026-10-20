@@ -23,13 +23,20 @@ const (
 )
 
 // series is one symbol. Panes share one period, so a bar index is the
-// same open time on each.
+// same open time on each. inds is one instance per app slot, calculated
+// for this symbol's bars.
 type series struct {
 	name    string
 	candles []kline.Candle
-	ma5     []float64
-	ma20    []float64
+	inds    []kline.Indicator
 	more    bool
+}
+
+// indicatorSlot is one entry in the app's indicator list. on is the
+// toolbar toggle. The list is filled from kline.Registry at startup.
+type indicatorSlot struct {
+	spec kline.Spec
+	on   bool
 }
 
 // app is the state the window shows. One viewport and one crossIndex
@@ -55,13 +62,26 @@ type app struct {
 	// loading is true while a forward request is in flight. Synthetic
 	// loads return immediately; the flag still drops a re-entrant call.
 	loading bool
+	// slots is the indicator list. Both symbols share the toggles and
+	// keep their own calculated instances on series.inds.
+	slots []indicatorSlot
+	// painted is each symbol's layout from the latest frame.
+	painted []kline.Panes
 }
 
 func newApp() *app {
+	reg := kline.Registry()
+	slots := make([]indicatorSlot, len(reg))
+	for i, spec := range reg {
+		// MA and MACD both start on. MACD's sub-pane is part of the
+		// first frame; turning the toggle off drops that band.
+		slots[i] = indicatorSlot{spec: spec, on: true}
+	}
 	a := &app{
 		src:        &kline.SyntheticSource{},
 		period:     kline.Period{Span: 1, Unit: kline.UnitHour},
 		panes:      []series{{name: "ALPHA"}, {name: "BETA"}},
+		slots:      slots,
 		vp:         kline.Viewport{BarWidth: kline.DefaultBarWidth},
 		crossIndex: -1,
 		crossPane:  -1,
@@ -90,13 +110,7 @@ func (a *app) setPeriod(p kline.Period) error {
 		if err != nil {
 			return err
 		}
-		next[i] = series{
-			name:    s.name,
-			candles: bars,
-			ma5:     kline.SMA(bars, 5),
-			ma20:    kline.SMA(bars, 20),
-			more:    more,
-		}
+		next[i] = a.mount(series{name: s.name}, bars, more)
 	}
 	a.period = p
 	a.panes = next
@@ -183,10 +197,7 @@ func (a *app) ensureForward() {
 		if len(older) > n {
 			older = older[len(older)-n:]
 		}
-		a.panes[i].candles = prependBars(older, a.panes[i].candles)
-		a.panes[i].ma5 = kline.SMA(a.panes[i].candles, 5)
-		a.panes[i].ma20 = kline.SMA(a.panes[i].candles, 20)
-		a.panes[i].more = got[i].more
+		a.panes[i] = a.mount(a.panes[i], prependBars(older, a.panes[i].candles), got[i].more)
 	}
 	a.vp.Offset += float64(n)
 	if a.crossIndex >= 0 {
@@ -218,6 +229,49 @@ func prependBars(older, newer []kline.Candle) []kline.Candle {
 	return out
 }
 
+// mount stores bars on s and recalculates every indicator in the list.
+// Existing instances are kept so a prepend does not allocate a new MA
+// or MACD, only a new value slice inside Calc.
+func (a *app) mount(s series, bars []kline.Candle, more bool) series {
+	s.candles = bars
+	s.more = more
+	if len(s.inds) != len(a.slots) {
+		s.inds = make([]kline.Indicator, len(a.slots))
+		for i, slot := range a.slots {
+			s.inds[i] = slot.spec.New()
+		}
+	}
+	for _, ind := range s.inds {
+		if ind != nil {
+			ind.Calc(bars)
+		}
+	}
+	return s
+}
+
+// active is the indicators whose toolbar toggle is on.
+func (a *app) active(s series) []kline.Indicator {
+	out := make([]kline.Indicator, 0, len(a.slots))
+	for i, slot := range a.slots {
+		if !slot.on || i >= len(s.inds) || s.inds[i] == nil {
+			continue
+		}
+		out = append(out, s.inds[i])
+	}
+	return out
+}
+
+// subOpen reports whether a sub-pane indicator is toggled on. The layout
+// keeps one sub-pane, which is MACD in this list.
+func (a *app) subOpen() bool {
+	for _, slot := range a.slots {
+		if slot.on && slot.spec.Kind == kline.PaneSub {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *app) bars() int {
 	if len(a.panes) == 0 {
 		return 0
@@ -244,6 +298,11 @@ func (a *app) view(c *ui.Context) {
 			ui.Textf(c, "Period %s", a.period).FontSize(12).TextColor(t.TextMuted)
 			ui.Text(c, "MA5").FontSize(12).TextColor(style.MA5)
 			ui.Text(c, "MA20").FontSize(12).TextColor(style.MA20)
+			ui.Text(c, "DIF").FontSize(12).TextColor(style.MA5)
+			ui.Text(c, "DEA").FontSize(12).TextColor(style.MA20)
+			for i := range a.slots {
+				ui.Toggle(c, &a.slots[i].on, a.slots[i].spec.Name)
+			}
 			for _, choice := range periodChoices {
 				var b ui.Element
 				if a.period == choice.period {
@@ -336,12 +395,13 @@ func (a *app) onInput(ev ui.InputEvent) bool {
 }
 
 func (a *app) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime bool) {
-	var panes kline.Panes
-	if showTime {
-		panes = kline.Split(r)
-	} else {
-		panes = kline.SplitNoTime(r)
+	panes := kline.SplitStack(r, showTime, a.subOpen())
+	if i >= len(a.painted) {
+		next := make([]kline.Panes, i+1)
+		copy(next, a.painted)
+		a.painted = next
 	}
+	a.painted[i] = panes
 	a.plotW = float64(panes.Price.W)
 	// The plot width is only known once layout has run, which is inside
 	// Draw. Fitting here puts the latest bars on screen on the first
@@ -356,7 +416,7 @@ func (a *app) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime b
 		ptr = kline.Pointer{On: true, X: r.X + a.hoverX, Y: r.Y + a.hoverY}
 	}
 	s := a.panes[i]
-	kline.Paint(p, panes, s.candles, s.ma5, s.ma20, a.vp, ptr, a.crossIndex, kline.StyleFrom(t))
+	kline.Paint(p, panes, s.candles, a.active(s), a.vp, ptr, a.crossIndex, kline.StyleFrom(t))
 }
 
 func (a *app) readout(i int) string {
@@ -374,14 +434,13 @@ func (a *app) readout(i int) string {
 		idx = a.crossIndex
 		label = "Hover"
 	}
-	ma5, ma20 := math.NaN(), math.NaN()
-	if idx < len(s.ma5) {
-		ma5 = s.ma5[idx]
+	line := label + "  " + kline.FormatBar(s.candles[idx], math.NaN(), math.NaN())
+	for _, ind := range a.active(s) {
+		if v := ind.ValueAt(idx); v != "" {
+			line += "  " + v
+		}
 	}
-	if idx < len(s.ma20) {
-		ma20 = s.ma20[idx]
-	}
-	return label + "  " + kline.FormatBar(s.candles[idx], ma5, ma20)
+	return line
 }
 
 func main() {
@@ -390,9 +449,9 @@ func main() {
 		mygo.NewWindow(mygo.WindowOptions{
 			Title:     "K-line",
 			Width:     1100,
-			Height:    900,
+			Height:    1000,
 			MinWidth:  640,
-			MinHeight: 640,
+			MinHeight: 720,
 			StateKey:  "kline",
 			Content:   ui.View(a.view),
 		})
