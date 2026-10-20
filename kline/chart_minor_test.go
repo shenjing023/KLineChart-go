@@ -67,3 +67,47 @@ func TestChartPriceDecimalsAndLocation(t *testing.T) {
 		t.Fatalf("default format changed: %q", got)
 	}
 }
+
+func TestClickBeforeFirstPaintIsKept(t *testing.T) {
+	a := NewChart(ChartOptions{Symbols: []string{"ALPHA"}, Indicators: []string{}})
+	if len(a.painted) != 0 {
+		t.Fatal("paint ran before the click")
+	}
+	if err := a.SetTool(ToolHLine); err != nil {
+		t.Fatal(err)
+	}
+	ev := ui.InputEvent{Kind: ui.InputPointerDown, Button: 0, X: 80, Y: 30}
+	if !a.onChartInput(0, ev) {
+		t.Fatal("click before the first paint was refused")
+	}
+	if len(a.panes[0].overlays.Items()) != 0 {
+		t.Fatal("line placed before a price rect exists")
+	}
+	_ = ui.NewTester(a.View, 900, 640)
+	items := a.panes[0].overlays.Items()
+	if len(items) != 1 || items[0].Kind != OverlayHLine {
+		t.Fatalf("first click dropped: %+v", items)
+	}
+}
+
+func TestClickAfterIndicatorChangeUsesNewPriceRect(t *testing.T) {
+	a := NewChart(ChartOptions{Symbols: []string{"ALPHA"}, Indicators: []string{"MACD"}})
+	tt := ui.NewTester(a.View, 900, 700)
+	if err := a.SetTool(ToolHLine); err != nil {
+		t.Fatal(err)
+	}
+	old := a.painted[0].Price
+	if old.H < 40 {
+		t.Fatalf("price plot %+v", old)
+	}
+	if err := a.SetIndicator("MACD", false); err != nil {
+		t.Fatal(err)
+	}
+	// Just under the old price plot. MACD is still in the stored split,
+	// and this Y is on the price plot only after that pane closes.
+	tt.ClickAt(old.X+40, old.Y+old.H+6)
+	items := a.panes[0].overlays.Items()
+	if len(items) != 1 || items[0].Kind != OverlayHLine {
+		t.Fatalf("click in the grown price plot was refused: old %+v now %+v drawings %+v", old, a.painted[0].Price, items)
+	}
+}

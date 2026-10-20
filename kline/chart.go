@@ -177,6 +177,27 @@ type Chart struct {
 	digitsSet   bool
 	// zone formats bar times in the header and the crosshair tag. Nil is UTC.
 	zone *time.Location
+	// frames is the outer box of each pane from the last paint. Hit
+	// testing relayouts from it so a click after an indicator toggle
+	// uses the new price rect before the next Draw.
+	frames []paneFrame
+	// pending is a press that arrived before any price rect existed.
+	// The next paint applies it once the plot size is known.
+	pending deferredPointer
+}
+
+// paneFrame is one chart box from the last paint.
+type paneFrame struct {
+	box      ui.Rect
+	showTime bool
+}
+
+// deferredPointer is a press held until paint knows the price rect.
+type deferredPointer struct {
+	on     bool
+	pane   int
+	button int
+	x, y   float64
 }
 
 func priceDigitsOf(digits *int) int {
@@ -1029,10 +1050,16 @@ func (a *Chart) onChartInput(pane int, ev ui.InputEvent) bool {
 // later release selects when the pointer did not move.
 func (a *Chart) pointerDown(pane int, ev ui.InputEvent) bool {
 	x, y, in := a.plotLocal(pane, ev)
-	if ev.Button == 1 {
-		if !in {
-			return false
+	if !in {
+		// The first press can arrive before Draw has a price rect.
+		// Keep it and place it once that rect exists.
+		if ev.Button <= 1 && a.tool != toolPan && !a.frameReady(pane) {
+			a.pending = deferredPointer{on: true, pane: pane, button: ev.Button, x: x, y: y}
+			return true
 		}
+		return false
+	}
+	if ev.Button == 1 {
 		hit, ok := a.hit(pane, x, y)
 		if !ok {
 			return false
@@ -1045,14 +1072,9 @@ func (a *Chart) pointerDown(pane int, ev ui.InputEvent) bool {
 		return false
 	}
 	if a.tool == toolPan {
-		if in {
-			a.pressOn = true
-			a.pressPane = pane
-			a.pressX, a.pressY = x, y
-		}
-		return false
-	}
-	if !in {
+		a.pressOn = true
+		a.pressPane = pane
+		a.pressX, a.pressY = x, y
 		return false
 	}
 	hit, hitOK := a.hit(pane, x, y)
@@ -1193,10 +1215,60 @@ func (a *Chart) hit(pane int, x, y float64) (Hit, bool) {
 	return a.panes[pane].overlays.Hit(x, y, float64(price.W), float64(price.H), a.vp, a.priceScale(pane), a.panes[pane].candles)
 }
 
+func (a *Chart) rememberFrame(i int, box ui.Rect, showTime bool) {
+	if i < 0 {
+		return
+	}
+	if i >= len(a.frames) {
+		next := make([]paneFrame, i+1)
+		copy(next, a.frames)
+		a.frames = next
+	}
+	a.frames[i] = paneFrame{box: box, showTime: showTime}
+}
+
+func (a *Chart) frameReady(i int) bool {
+	return i >= 0 && i < len(a.frames) && a.frames[i].box.W > 1 && a.frames[i].box.H > 1
+}
+
+// syncPainted rebuilds pane i's rects from the last outer box and the
+// indicators that are on now. A click in the same frame as SetIndicator
+// then sees the price plot Draw is about to use.
+func (a *Chart) syncPainted(i int) {
+	if !a.frameReady(i) {
+		return
+	}
+	panes := a.layoutPanes(a.frames[i].box, a.frames[i].showTime)
+	if i >= len(a.painted) {
+		next := make([]Panes, i+1)
+		copy(next, a.painted)
+		a.painted = next
+	}
+	a.painted[i] = panes
+	if panes.Price.W > 1 {
+		a.plotW = float64(panes.Price.W)
+	}
+}
+
+// applyDeferred places a press that arrived before the first price rect.
+// The drag that placement starts is cleared: the button is not held.
+func (a *Chart) applyDeferred(pane int) {
+	d := a.pending
+	if !d.on || d.pane != pane {
+		return
+	}
+	a.pending.on = false
+	ev := ui.InputEvent{Kind: ui.InputPointerDown, Button: d.button, X: float32(d.x), Y: float32(d.y)}
+	a.pointerDown(pane, ev)
+	a.dragOn = false
+	a.dragNewHLine = false
+}
+
 // plotLocal converts a pointer event to price-plot DIPs. The price plot
 // starts at the chart box's top-left, so the event's local axes match it.
 // in is false over the volume strip, the sub-panes, and the axes.
 func (a *Chart) plotLocal(pane int, ev ui.InputEvent) (x, y float64, in bool) {
+	a.syncPainted(pane)
 	if pane < 0 || pane >= len(a.painted) {
 		return 0, 0, false
 	}
@@ -1276,6 +1348,7 @@ func (a *Chart) pointAt(pane int, x, y float64) Point {
 }
 
 func (a *Chart) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime bool) {
+	a.rememberFrame(i, r, showTime)
 	panes := a.layoutPanes(r, showTime)
 	if i >= len(a.painted) {
 		next := make([]Panes, i+1)
@@ -1305,12 +1378,14 @@ func (a *Chart) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime
 		rubber = &Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}
 	}
 	DrawOverlays(p, panes.Price, s.overlays.live(), a.vp, scale, s.candles, style, rubber)
+	a.applyDeferred(i)
 }
 
 // paintCompare draws both symbols in one column. Volume, MACD, KDJ, and
 // drawings belong to the primary symbol. The second symbol is the
 // close line painted by PaintCompare.
 func (a *Chart) paintCompare(p *ui.Painter, r ui.Rect, t *ui.Theme) {
+	a.rememberFrame(0, r, true)
 	panes := a.layoutPanes(r, true)
 	a.painted = []Panes{panes}
 	a.plotW = float64(panes.Price.W)
@@ -1332,6 +1407,7 @@ func (a *Chart) paintCompare(p *ui.Painter, r ui.Rect, t *ui.Theme) {
 		rubber = &Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}
 	}
 	DrawOverlays(p, panes.Price, a.panes[0].overlays.live(), a.vp, scale, primary, style, rubber)
+	a.applyDeferred(0)
 }
 
 // chartStyle is the window theme's chart colors, or the style passed to
