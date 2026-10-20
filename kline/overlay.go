@@ -16,6 +16,9 @@ const (
 	OverlayHLine = "hline"
 	// OverlaySegment is a straight segment between two points.
 	OverlaySegment = "segment"
+	// OverlayFibonacci is a retracement between two anchors. Standard
+	// ratios are drawn as horizontal lines across the anchor span.
+	OverlayFibonacci = "fibonacci"
 	// HitRadius is how close the pointer must be, in DIPs, to hit an
 	// overlay. Endpoints use the same radius as the line.
 	HitRadius = 6
@@ -243,16 +246,20 @@ func HitOverlay(o Overlay, x, y, plotW, plotH float64, vp Viewport, scale chart.
 		return hitHLine(o, x, y, plotW, plotH, scale)
 	case OverlaySegment:
 		return hitSegment(o, x, y, plotW, plotH, vp, scale, cs)
+	case OverlayFibonacci:
+		return hitFibonacci(o, x, y, plotW, plotH, vp, scale, cs)
 	default:
 		return 0, false
 	}
 }
 
-// Rubber is the unfinished end of a segment: From is the first click,
-// and X, Y are the pointer in price-plot DIPs.
+// Rubber is the unfinished end of a drawing: From is the first click,
+// and X, Y are the pointer in price-plot DIPs. Kind is the tool being
+// placed; the zero value keeps the segment rubber band.
 type Rubber struct {
 	From Point
 	X, Y float64
+	Kind string
 }
 
 // DrawOverlays paints items on the price plot. rubber, when set, is the
@@ -269,6 +276,8 @@ func DrawOverlays(p *ui.Painter, plot ui.Rect, items []Overlay, vp Viewport, sca
 				drawHLine(p, plot, o, scale, style)
 			case OverlaySegment:
 				drawSegment(p, plot, o, vp, scale, cs, style)
+			case OverlayFibonacci:
+				drawFibonacci(p, plot, o, vp, scale, cs, style)
 			}
 		}
 		if rubber != nil {

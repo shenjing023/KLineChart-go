@@ -28,6 +28,7 @@ const (
 	toolPan = iota
 	toolHLine
 	toolSegment
+	toolFib
 )
 
 const (
@@ -92,7 +93,7 @@ type app struct {
 	slots []indicatorSlot
 	// painted is each symbol's layout from the latest frame.
 	painted []kline.Panes
-	// tool is Pan, H-Line, or Segment. Draw tools do not pan: the
+	// tool is Pan, H-Line, Segment, or Fib. Draw tools do not pan: the
 	// pointer places and moves overlays instead.
 	tool int
 	// magnet snaps new points and endpoint drags to OHLC. Body drags
@@ -625,6 +626,7 @@ var toolChoices = []struct {
 	{"Pan", toolPan},
 	{"H-Line", toolHLine},
 	{"Segment", toolSegment},
+	{"Fib", toolFib},
 }
 
 var magnetChoices = []struct {
@@ -757,6 +759,29 @@ func (a *app) pointerDown(pane int, ev ui.InputEvent) bool {
 		a.draftPane = pane
 		a.dragOn = false
 		return true
+	case toolFib:
+		if a.draftOn && a.draftPane == pane {
+			a.panes[pane].overlays.Add(kline.OverlayFibonacci, a.draft, a.pointAt(pane, x, y))
+			a.draftOn = false
+			a.dragOn = false
+			return true
+		}
+		if hitOK && a.overlayKind(pane, hit.ID) == kline.OverlayFibonacci && hit.Part >= 0 {
+			a.panes[pane].overlays.Select(hit.ID)
+			a.draftOn = false
+			a.startDrag(pane, hit.ID, hit.Part)
+			return true
+		}
+		if hitOK {
+			a.panes[pane].overlays.Select(hit.ID)
+			a.draftOn = false
+			return true
+		}
+		a.draft = a.pointAt(pane, x, y)
+		a.draftOn = true
+		a.draftPane = pane
+		a.dragOn = false
+		return true
 	default:
 		return false
 	}
@@ -810,6 +835,13 @@ func (a *app) overlayKind(pane int, id string) string {
 		return ""
 	}
 	return o.Kind
+}
+
+func (a *app) draftRubberKind() string {
+	if a.tool == toolFib {
+		return kline.OverlayFibonacci
+	}
+	return ""
 }
 
 func (a *app) hit(pane int, x, y float64) (kline.Hit, bool) {
@@ -918,7 +950,7 @@ func (a *app) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime b
 	kline.Paint(p, panes, s.candles, active, a.vp, ptr, a.crossIndex, style)
 	var rubber *kline.Rubber
 	if a.draftOn && a.draftPane == i && a.crossPane == i {
-		rubber = &kline.Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY)}
+		rubber = &kline.Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}
 	}
 	scale := kline.MainScale(s.candles, active, a.vp, a.plotW)
 	kline.DrawOverlays(p, panes.Price, s.overlays.Items(), a.vp, scale, s.candles, style, rubber)
@@ -951,7 +983,7 @@ func (a *app) paintCompare(p *ui.Painter, r ui.Rect, t *ui.Theme) {
 	indexed := kline.PaintCompare(p, panes, primary.candles, compare, active, a.vp, ptr, a.crossIndex, style)
 	var rubber *kline.Rubber
 	if a.draftOn && a.draftPane == 0 && a.crossPane == 0 {
-		rubber = &kline.Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY)}
+		rubber = &kline.Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}
 	}
 	scale := kline.MainScale(primary.candles, active, a.vp, a.plotW)
 	if indexed {
