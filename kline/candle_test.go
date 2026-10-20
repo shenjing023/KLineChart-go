@@ -65,4 +65,16 @@ func TestFormatBar(t *testing.T) {
 	if want := "2024-03-05 14:30  O 10.00  H 12.00  L 9.00  C 11.00  V 1500  MA5 10.50"; s != want {
 		t.Fatalf("format %q", s)
 	}
+	loc := time.FixedZone("UTC+8", 8*3600)
+	got := FormatBarIn(c, 10.5, math.NaN(), 4, loc)
+	want := "2024-03-05 22:30  O 10.0000  H 12.0000  L 9.0000  C 11.0000  V 1500  MA5 10.5000"
+	if got != want {
+		t.Fatalf("FormatBarIn %q", got)
+	}
+	if FormatPriceDigits(1.2, 0) != "1" {
+		t.Fatalf("zero digits %q", FormatPriceDigits(1.2, 0))
+	}
+	if FormatPriceDigits(math.NaN(), 4) != "—" {
+		t.Fatal("NaN")
+	}
 }

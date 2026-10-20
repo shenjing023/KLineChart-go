@@ -88,6 +88,19 @@ func TestPriceDomainAndTime(t *testing.T) {
 	if got := TimeAt(cs, -1); !got.Equal(cs[0].Time.Add(-time.Hour)) {
 		t.Fatalf("extrapolated time %s", got)
 	}
+	// A short first gap must not label empty space past the right edge.
+	// The right-hand step is the last pair, four hours here.
+	gap := []Candle{
+		{Time: cs[0].Time, Open: 1, High: 1, Low: 1, Close: 1},
+		{Time: cs[0].Time.Add(time.Hour), Open: 1, High: 1, Low: 1, Close: 1},
+		{Time: cs[0].Time.Add(5 * time.Hour), Open: 1, High: 1, Low: 1, Close: 1},
+	}
+	if got := TimeAt(gap, 3); !got.Equal(gap[2].Time.Add(4 * time.Hour)) {
+		t.Fatalf("right extrapolation %s, want %s", got, gap[2].Time.Add(4*time.Hour))
+	}
+	if got := TimeAt(gap, -1); !got.Equal(gap[0].Time.Add(-time.Hour)) {
+		t.Fatalf("left extrapolation %s", got)
+	}
 	if got := VolumeMax(cs, 0, 2); got != 1 {
 		t.Fatalf("zero volumes should floor at 1, got %v", got)
 	}

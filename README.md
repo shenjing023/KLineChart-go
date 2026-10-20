@@ -23,8 +23,8 @@ It is a demo of the interaction in [KLineChart](https://github.com/klinecharts/K
 - **Reset view** returns both panes to the latest bars at the default width.
 - **1h / 4h / 1d** reload both panes from the data source and fit the latest bars. The default **1h** series is the same walk as before (ALPHA seed 42, BETA seed 99).
 - Dragging to the left edge loads older bars, prepends them, and shifts the shared offset by that count so the bars on screen stay put. A load already in flight does not start another.
-- **Pan / H-Line / Segment / Fib.** Pan drags the chart. H-Line places a horizontal price line with one click; dragging it changes the price. Segment takes two clicks, with a rubber band between them. **Fib** takes two clicks and draws seven standard retracement levels (0 through 1) across the horizontal span between the anchors, with a level preview while the second click is pending. Ratio 0 is the second click and ratio 1 is the first click. A draw tool turns pan off. The selected drawing is highlighted. Delete removes it, and a right-click removes the drawing under the pointer. Drawings belong to the pane that was clicked. In Overlay, new drawings are stored on ALPHA in raw price, and BETA's existing lines stay hidden until you return to Stack.
-- **Magnet Off / Weak / Strong.** Off leaves the pointer price alone. Weak snaps to the nearest Open, High, Low, or Close on the bar under the pointer when that OHLC is within 6 DIPs in local Y. Strong always snaps to the nearest OHLC. New points snap, including the press that places a new H-Line, and so do endpoint drags on Segment and Fib. Dragging an existing H-Line body does not. Changing the mode does not rewrite lines already placed. Default is Off.
+- **Pan / H-Line / Segment / Fib.** Pan drags the chart. H-Line places a horizontal price line with one click; dragging it changes the price. Segment takes two clicks, with a rubber band between them. **Fib** takes two clicks and draws seven standard retracement levels (0 through 1) across the horizontal span between the anchors, with a level preview while the second click is pending. Ratio 0 is the second click and ratio 1 is the first click. A draw tool turns pan off. The selected drawing is highlighted. Delete removes it. Escape cancels a drawing that does not have its second point yet, and so does a right-click; that right-click does not also delete a finished drawing. With no draft up, a right-click removes the drawing under the pointer. A press that arrives before the first frame is applied once the price plot has a size. Turning a sub-pane off grows that plot before the next frame, and a click in the new area is accepted. Drawings belong to the pane that was clicked. In Overlay, new drawings are stored on ALPHA in raw price, and BETA's existing lines stay hidden until you return to Stack.
+- **Magnet Off / Weak / Strong.** Off leaves the pointer price alone. Weak snaps to the nearest Open, High, Low, or Close on the bar under the pointer when that OHLC is within 6 DIPs in local Y. Strong always snaps to the nearest OHLC. Any other `MagnetMode` does not snap. `SetMagnet` returns `ErrUnknownMagnet` for a value other than those three and leaves the current mode. `NewChart` treats an out-of-range `ChartOptions.Magnet` as off. New points snap, including the press that places a new H-Line, and so do endpoint drags on Segment and Fib. Dragging an existing H-Line body does not. Changing the mode does not rewrite lines already placed. Default is Off.
 
 ## Run
 
@@ -74,6 +74,7 @@ chart := kline.NewChart(kline.ChartOptions{
     Indicators: []string{"MA", "MACD"}, // nil keeps MA and MACD; empty turns all off
     Magnet:     kline.MagnetOff,
     HideHeader: true, // host draws its own bar; Readout still returns the text
+    // PriceDecimals: &digits, // nil keeps two decimals; Location nil is UTC
 })
 mygo.NewWindow(mygo.WindowOptions{
     Title:   "Chart",
@@ -87,7 +88,7 @@ if err := chart.LoadError(); err != nil {
 
 _ = chart.SetPeriod(kline.Period{Span: 1, Unit: kline.UnitDay})
 _ = chart.SetIndicators([]string{"MA", "BOLL"}) // nil or empty turns all off; an unknown name changes nothing
-chart.SetLayout(kline.LayoutOverlay)
+_ = chart.SetLayout(kline.LayoutOverlay) // unknown name returns ErrUnknownLayout and keeps the current layout
 _ = chart.SetSource(src) // nil returns ErrNilSource; a failed reload keeps the previous source
 chart.EditStyle(nil, func(s *kline.Style) {
     s.Up = ui.RGB(239, 83, 80) // rising red, rest of the palette stays
@@ -104,7 +105,9 @@ first, last := chart.Visible()
 _, _ = first, last
 ```
 
-`NewChart` with a `Style` that only sets a candle color fills the rest from `DarkDefault`. `EditStyle` starts from the theme you pass (`nil` is dark), keeps the live hollow switch and limit percent, then applies the edit. `SetHollow` and `SetLimitPct` change those two switches without dropping the color override. `Style.CandleBodyColor` is the rule Paint uses: a non-positive `limitPct` always returns `Up` or `Down`.
+`NewChart` with a `Style` that only sets a candle color fills the rest from `DarkDefault`. A zero color on that partial style means "not set". `Style.Clear` names fields that should stay transparent, for example `ClearGrid`. A style that sets `Plot`, `Grid`, or `Text` is kept as given, so a transparent field there needs no bit. `EditStyle` starts from the theme you pass (`nil` is dark), keeps the live hollow switch and limit percent, then applies the edit. `SetHollow` and `SetLimitPct` change those two switches without dropping the color override, and both write the stored style when one is set. `Style.CandleBodyColor` is the rule Paint uses: a non-positive `limitPct` always returns `Up` or `Down`.
+
+`ChartOptions.PriceDecimals` is the number of digits after the decimal in `Readout` and in the crosshair price tags. Nil, or a negative value, keeps two decimals (`FormatPrice`). Zero prints a whole number. `FormatPriceDigits` and `FormatBarIn` are the same formatting for a host that draws its own label. `ChartOptions.Location` is the time zone of those times. Nil is UTC. A direct `Paint` or `PaintCompare` call stays at two decimals and UTC. Indicator `ValueAt` strings still use `FormatPrice`.
 
 `NewChart` has no error result. `LoadError` reports a first load whose `GetBars` failed (the panes stay empty) or whose `SubscribeBar` failed (the bars have no live updates). An invalid `SetPeriod` returns `ErrInvalidPeriod` before the source is asked and leaves the loaded bars in place. `SetPeriod` with the period already loaded does nothing while `LoadError` is nil: drawings, a segment in progress, and the live subscription stay. Earlier versions reloaded and dropped the drawings. While `LoadError` is set, the same period loads again. A real period change and `SetSource` drop drawings, any drawing or drag in progress, and the crosshair. `SetSource` reloads even when it is handed the source already in use, which is how a host refreshes a plain `DataSource`. The chart copies every slice `GetBars` returns, so a source may reuse its buffer.
 
@@ -114,7 +117,7 @@ _, _ = first, last
 
 ## Extend
 
-Register indicators and drawings before `NewChart`, usually from `init`. A chart that already exists picks up new specs from `SyncIndicators`, which keeps every existing toggle in place: a `*bool` from `IndicatorEnabled` that a `ui.Toggle` holds stays bound. Built-in names and tool names stay reserved. `ChartOptions.Indicators` and `SetIndicators` read nil differently: nil options keep MA and MACD, and `SetIndicators(nil)` turns everything off.
+Register indicators and drawings before `NewChart`, usually from `init`. A chart that already exists picks up new specs from `SyncIndicators`, which keeps every existing toggle in place: a `*bool` from `IndicatorEnabled` that a `ui.Toggle` holds stays bound. `Unregister` and `UnregisterOverlay` remove a host entry; the chart drops an indicator on the next `SyncIndicators`. Built-in names and tool names stay reserved, and `UnregisterOverlay` does not remove them. The lists are safe to read and update from more than one goroutine. `ChartOptions.Indicators` and `SetIndicators` read nil differently: nil options keep MA and MACD, and `SetIndicators(nil)` turns everything off.
 
 ### Indicator
 
@@ -162,11 +165,11 @@ func init() {
 }
 ```
 
-`Register` returns `ErrDuplicateIndicator` when the name is already in the list. MACD and KDJ keep their existing rects. A host sub-pane is an extra band and does not move those two.
+`Register` returns `ErrDuplicateIndicator` when the name is already in the list. `New().PaneKind` must equal `Spec.Kind`; a mismatch returns `ErrIndicatorKind` and is not registered. Layout uses the instance kind, which is then the same value the spec declared. MACD and KDJ keep their existing rects. A host sub-pane is an extra band and does not move those two.
 
 ### Overlay
 
-`RegisterOverlay` adds a tool `SetTool` accepts. `Anchors` is 1 (click to place, drag to move) or 2 (two clicks, then drag an endpoint). `hline`, `segment`, `fib`, and `fibonacci` are reserved. Delete and right-click use the same hit test as the built-ins. `Draw` must not change `o.Points`: the chart passes the layer's own slice.
+`RegisterOverlay` adds a tool `SetTool` accepts. `Anchors` is 1 (click to place, drag to move) or 2 (two clicks, then drag an endpoint). `pan`, `hline`, `segment`, `fib`, and `fibonacci` are reserved. `ToolFib` and `OverlayFibonacci` are both `"fibonacci"`, and `SetTool("fib")` selects that same tool, so `Tool()` matches `Overlay.Kind` on a Fibonacci drawing. Delete and right-click use the same hit test as the built-ins. `Draw` must not change `o.Points`: the chart passes the layer's own slice.
 
 ```go
 _ = kline.RegisterOverlay(kline.OverlaySpec{
@@ -197,7 +200,7 @@ _ = chart.SetTool("mark")
 
 ### Data source
 
-History is `DataSource.GetBars`, in ascending open time. A feed that can push also implements `LiveSource`. The chart subscribes when `SetSource` or `SetPeriod` sees that interface, and ignores a plain `DataSource`. Older bars are prepended only when every pane that already has bars accepts the same count; otherwise the shared offset stays put and each pane keeps the `more` flag the source reported. A forward `GetBars` error leaves the panes unchanged and is not retried on the next frame. `SyntheticSource` is not a live feed. `StubLiveSource` is the in-memory double. This repo does not open a connection. `kline/host_embed_test.go` has a complete feed: init, forward, subscribe, and one pushed bar.
+History is `DataSource.GetBars`, in ascending open time. The chart sends `KindInit` and `KindForward` only. `KindBackward` is reserved and is never requested. A feed that can push also implements `LiveSource`. The chart subscribes when `SetSource` or `SetPeriod` sees that interface, and ignores a plain `DataSource`. Older bars are prepended only when every pane that already has bars accepts the same count; otherwise the shared offset stays put and each pane keeps the `more` flag the source reported. A forward `GetBars` error leaves the panes unchanged and is not retried on the next frame. `SyntheticSource` is not a live feed. `StubLiveSource` is the in-memory double. This repo does not open a connection. `kline/host_embed_test.go` has a complete feed: init, forward, subscribe, and one pushed bar.
 
 Every symbol shares one bar index: bar `i` is the same open time on each pane. That is what lets one viewport, one crosshair, and the overlay base work across symbols, so the chart enforces it wherever bars arrive:
 
@@ -251,7 +254,7 @@ Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot.
 能做：
 
 - 通过 `kline.DataSource.GetBars` 取数。当前只有 `SyntheticSource`（本地合成，不访问网络）。
-- `init` 取最新一段（默认 600 根）。`forward` 取锚点之前的更早 K 线，时间不重叠。`backward` 只留在接口里，合成源返回错误。
+- `init` 取最新一段（默认 600 根）。`forward` 取锚点之前的更早 K 线，时间不重叠。`backward` 只留在接口里，图表不会发出这个请求，合成源返回错误。
 - 工具条 `1h` / `4h` / `1d`。切换时 ALPHA 和 BETA 一起重新加载，再 `FitRight`。
 - 共享 `Offset < 5` 且还有更早数据时，prepend 一批并加上同样的根数，画面不跳。加载过程中不重复请求。
 
@@ -420,10 +423,10 @@ func (f *feed) UnsubscribeBar(symbol string, period kline.Period) error {
 
 能做：
 
-- `kline.NewChart`。选项有 `Source`、`Symbols`、`Period`、`Layout`（`"stack"` 或 `"overlay"`）、`Style`、`Hollow`、`Indicators`、`Magnet`。没填的项用演示默认值：合成源、ALPHA 和 BETA、1h、Stack、MA 和 MACD 开、磁吸关、颜色跟窗口主题。
+- `kline.NewChart`。选项有 `Source`、`Symbols`、`Period`、`Layout`（`"stack"` 或 `"overlay"`）、`Style`、`Hollow`、`Indicators`、`Magnet`、`PriceDecimals`、`Location`。没填的项用演示默认值：合成源、ALPHA 和 BETA、1h、Stack、MA 和 MACD 开、磁吸关、价格两位小数、时间 UTC、颜色跟窗口主题。`PriceDecimals` 管表头和十字线价格；指标自己的 `ValueAt` 仍是两位。`Location` 为 nil 时用 UTC。
 - `View` 是 MyGo 的视图函数。单独做窗口时用 `ui.View(chart.View)`。宿主有自己的工具条时，在那一栏下面调用 `chart.View(ctx)`。没有工具条也会画出 Stack 的 K 线、量柱和选中的指标，平移、缩放、十字线都能用。
-- `SetPeriod`、`SetLayout`、`SetSource`、`Close`。换周期会重新加载并清掉画线。`SetSource(nil)` 返回错误。`GetBars` 失败时保留原来的源。`SubscribeBar` 失败时返回错误，并退掉这一轮已经订上的 symbol。源实现了 `LiveSource` 仍会订阅，没有实现就只走 `GetBars`。`Close` 退订。
-- 工具条还绑定了 `SetTool`、`SetMagnet`、`SetIndicator`、`SetHollow`、`ResetView`。指标开关和 Hollow 也可以直接拿 `IndicatorEnabled` / `HollowEnabled` 的 `*bool` 交给 `ui.Toggle`。
+- `SetPeriod`、`SetLayout`、`SetSource`、`Close`。换周期会重新加载并清掉画线。`SetSource(nil)` 返回错误。`SetLayout` 只接受 `"stack"` 和 `"overlay"`，别的字符串返回 `ErrUnknownLayout`，布局保持不变。`GetBars` 失败时保留原来的源。`SubscribeBar` 失败时返回错误，并退掉这一轮已经订上的 symbol。源实现了 `LiveSource` 仍会订阅，没有实现就只走 `GetBars`。`Close` 退订。
+- 工具条还绑定了 `SetTool`、`SetMagnet`、`SetIndicator`、`SetHollow`、`ResetView`。`SetMagnet` 只接受关、弱、强，别的值返回 `ErrUnknownMagnet`，当前模式不变。指标开关和 Hollow 也可以直接拿 `IndicatorEnabled` / `HollowEnabled` 的 `*bool` 交给 `ui.Toggle`。
 - `SetStyle` 换成一整套颜色。`SetLimitPct` 单独改涨跌停阈值。`Style.CandleBodyColor` 的规则是：`limitPct <= 0` 时只用 `Up` / `Down`（收盘不低于开盘为涨）。`limitPct > 0` 且上一根收盘为正时，`(close-prevClose)/prevClose >= limitPct` 用 `LimitUp`，`<= -limitPct` 用 `LimitDown`。收盘等于最高价本身不算涨停。量柱和 MACD 柱仍用 `Up` / `Down`。
 - 演示工具条 **Classic / US / Contrast** 改 K 线颜色。**Limit 10%** 把阈值设为 0.10，再点一次关掉。默认阈值是 0，所以涨跌停色先备着，不画上去。Hollow 仍然只描涨的实体，涨停那根若收盘不低于开盘，描的是 `LimitUp`。
 

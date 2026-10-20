@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -25,8 +26,11 @@ const (
 	ToolHLine = "hline"
 	// ToolSegment places a two-point segment.
 	ToolSegment = "segment"
-	// ToolFib places a two-point Fibonacci retracement.
-	ToolFib = "fib"
+	// ToolFib places a two-point Fibonacci retracement. It is the same
+	// string as OverlayFibonacci, the kind stored on the drawing, so
+	// Tool() compares equal to Overlay.Kind. SetTool also accepts the
+	// older name "fib".
+	ToolFib = OverlayFibonacci
 )
 
 // ErrNilSource is returned when SetSource is called with a nil source.
@@ -37,6 +41,14 @@ var ErrUnknownIndicator = errors.New("kline: unknown indicator")
 
 // ErrUnknownTool is returned when SetTool does not know the name.
 var ErrUnknownTool = errors.New("kline: unknown tool")
+
+// ErrUnknownLayout is returned when SetLayout is not given LayoutStack
+// or LayoutOverlay. The layout already in use stays.
+var ErrUnknownLayout = errors.New("kline: unknown layout")
+
+// ErrUnknownMagnet is returned when SetMagnet is not given MagnetOff,
+// MagnetWeak, or MagnetStrong. The mode already in use stays.
+var ErrUnknownMagnet = errors.New("kline: unknown magnet mode")
 
 // ErrDuplicateSymbol is LoadError when ChartOptions.Symbols names a symbol
 // twice. Such a chart has no panes, and every load returns this error.
@@ -82,6 +94,15 @@ type ChartOptions struct {
 	// what tests use. The func passed to Marshal must not call SetPeriod,
 	// SetSource, or View.
 	Marshal func(func())
+	// PriceDecimals is the number of digits after the decimal in prices
+	// the chart formats: Readout (FormatBar) and the crosshair price tags.
+	// Nil keeps two decimals, which is FormatPrice. A negative value also
+	// keeps two. Zero prints a whole number. Indicator ValueAt strings
+	// still call FormatPrice and stay at two decimals.
+	PriceDecimals *int
+	// Location formats the times in Readout and the crosshair time tag.
+	// Nil is UTC. Candle.Time itself is not rewritten.
+	Location *time.Location
 }
 
 // NewChart loads the initial window and returns a chart the host can
@@ -129,25 +150,30 @@ func NewChart(opts ChartOptions) *Chart {
 		panes[i] = series{name: name}
 	}
 	a := &Chart{
-		src:        src,
-		period:     period,
-		panes:      panes,
-		slots:      slots,
-		vp:         Viewport{BarWidth: DefaultBarWidth},
-		crossIndex: -1,
-		crossPane:  -1,
-		magnet:     opts.Magnet,
-		layout:     layout,
-		hollowUp:   opts.Hollow || opts.Style.HollowUp,
-		style:      opts.Style,
-		styleSet:   styleSpecified(opts.Style),
-		limitPct:   opts.Style.LimitPct,
-		hideHeader: opts.HideHeader,
-		marshal:    opts.Marshal,
-		symbolErr:  symbolErr,
+		src:         src,
+		period:      period,
+		panes:       panes,
+		slots:       slots,
+		vp:          Viewport{BarWidth: DefaultBarWidth},
+		crossIndex:  -1,
+		crossPane:   -1,
+		magnet:      knownMagnet(opts.Magnet),
+		layout:      layout,
+		hollowUp:    opts.Hollow || opts.Style.HollowUp,
+		style:       opts.Style,
+		styleSet:    styleSpecified(opts.Style),
+		limitPct:    opts.Style.LimitPct,
+		hideHeader:  opts.HideHeader,
+		marshal:     opts.Marshal,
+		symbolErr:   symbolErr,
+		priceDigits: priceDigitsOf(opts.PriceDecimals),
+		digitsSet:   true,
+		zone:        opts.Location,
 	}
 	if a.styleSet {
 		a.style = completeStyle(a.style)
+		a.style.HollowUp = a.hollowUp
+		a.style.LimitPct = a.limitPct
 	}
 	a.loadErr = a.setPeriod(period)
 	return a
@@ -165,8 +191,12 @@ func uniqueSymbols(symbols []string) error {
 }
 
 func styleSpecified(s Style) bool {
+	if s.Clear != 0 {
+		return true
+	}
 	s.HollowUp = false
 	s.LimitPct = 0
+	s.Clear = 0
 	return s != Style{}
 }
 
@@ -263,8 +293,10 @@ func (a *Chart) Close() error {
 func (a *Chart) Period() Period { return a.period }
 
 // SetLayout switches between LayoutStack and LayoutOverlay. Any other
-// string leaves the layout as it is. A change clears an in-progress drawing.
-func (a *Chart) SetLayout(layout string) {
+// string returns ErrUnknownLayout and leaves the layout as it is. A
+// change clears an in-progress drawing. NewChart still treats an empty
+// or unknown Layout option as stack; this method is what reports a typo.
+func (a *Chart) SetLayout(layout string) error {
 	next := a.layout
 	switch layout {
 	case LayoutStack:
@@ -272,14 +304,15 @@ func (a *Chart) SetLayout(layout string) {
 	case LayoutOverlay:
 		next = layoutOverlay
 	default:
-		return
+		return fmt.Errorf("%w: %s", ErrUnknownLayout, layout)
 	}
 	if next == a.layout {
-		return
+		return nil
 	}
 	a.layout = next
 	a.draftOn = false
 	a.dragOn = false
+	return nil
 }
 
 // Layout is LayoutStack or LayoutOverlay.
@@ -319,7 +352,15 @@ func (a *Chart) SetSource(src DataSource) error {
 }
 
 // SetHollow draws rising candle bodies as outlines when on is true.
-func (a *Chart) SetHollow(on bool) { a.hollowUp = on }
+// When the chart has its own style, the stored Style.HollowUp is
+// updated too, the same way SetLimitPct writes Style.LimitPct.
+// chartStyle still paints from the live switch.
+func (a *Chart) SetHollow(on bool) {
+	a.hollowUp = on
+	if a.styleSet {
+		a.style.HollowUp = on
+	}
+}
 
 // Hollow reports whether rising bodies are outlines.
 func (a *Chart) Hollow() bool { return a.hollowUp }
@@ -474,15 +515,25 @@ func (a *Chart) IndicatorEnabled(name string) *bool {
 }
 
 // SetMagnet sets how new overlay points snap. It does not move points
-// already placed.
-func (a *Chart) SetMagnet(mode MagnetMode) { a.magnet = mode }
+// already placed. A mode other than off, weak, or strong returns
+// ErrUnknownMagnet and leaves the current mode in place.
+func (a *Chart) SetMagnet(mode MagnetMode) error {
+	switch mode {
+	case MagnetOff, MagnetWeak, MagnetStrong:
+		a.magnet = mode
+		return nil
+	default:
+		return fmt.Errorf("%w: %d", ErrUnknownMagnet, mode)
+	}
+}
 
 // Magnet is the current snap mode.
 func (a *Chart) Magnet() MagnetMode { return a.magnet }
 
-// SetTool selects pan, hline, segment, fib, or a kind passed to
-// RegisterOverlay. A change clears an in-progress drawing. Unknown
-// names return ErrUnknownTool and leave the current tool in place.
+// SetTool selects pan, hline, segment, fibonacci, or a kind passed to
+// RegisterOverlay. "fib" is the older name of the Fibonacci tool and
+// selects the same tool. A change clears an in-progress drawing.
+// Unknown names return ErrUnknownTool and leave the current tool in place.
 func (a *Chart) SetTool(name string) error {
 	var tool int
 	custom := ""
@@ -493,7 +544,7 @@ func (a *Chart) SetTool(name string) error {
 		tool = toolHLine
 	case ToolSegment:
 		tool = toolSegment
-	case ToolFib:
+	case ToolFib, "fib":
 		tool = toolFib
 	default:
 		if _, ok := overlayByKind(name); !ok {

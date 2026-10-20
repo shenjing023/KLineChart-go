@@ -86,11 +86,40 @@ func SMA(cs []Candle, period int) []float64 {
 }
 
 // FormatPrice renders a price with two decimals.
-func FormatPrice(v float64) string {
+func FormatPrice(v float64) string { return formatPrice(v, 2) }
+
+// FormatPriceDigits renders a price with digits after the decimal.
+// Negative digits use two, the same as FormatPrice. Zero digits is a
+// whole number.
+func FormatPriceDigits(v float64, digits int) string { return formatPrice(v, digits) }
+
+func formatPrice(v float64, digits int) string {
 	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return "—"
 	}
-	return strconv.FormatFloat(v, 'f', 2, 64)
+	if digits < 0 {
+		digits = 2
+	}
+	return strconv.FormatFloat(v, 'f', digits, 64)
+}
+
+// labelFmt is the chart's price precision and time zone. A nil loc is UTC.
+type labelFmt struct {
+	digits int
+	loc    *time.Location
+}
+
+func defaultLabels() labelFmt { return labelFmt{digits: 2} }
+
+func (f labelFmt) price(v float64) string { return formatPrice(v, f.digits) }
+
+func (f labelFmt) when(t time.Time, layout string) string { return formatWhen(t, layout, f.loc) }
+
+func formatWhen(t time.Time, layout string, loc *time.Location) string {
+	if loc == nil || loc == time.UTC {
+		return t.UTC().Format(layout)
+	}
+	return t.In(loc).Format(layout)
 }
 
 // FormatVolume renders a volume as a whole number.
@@ -102,17 +131,31 @@ func FormatVolume(v float64) string {
 }
 
 // FormatBar is the HUD line for one bar: time, OHLCV, and any finite
-// moving averages. Times are UTC.
+// moving averages. Times are UTC and prices use two decimals.
+// FormatBarIn takes the precision and location ChartOptions uses.
 func FormatBar(c Candle, ma5, ma20 float64) string {
+	return formatBar(c, ma5, ma20, defaultLabels())
+}
+
+// FormatBarIn is FormatBar with an explicit price precision and time
+// zone. Negative digits use two. A nil loc is UTC.
+func FormatBarIn(c Candle, ma5, ma20 float64, digits int, loc *time.Location) string {
+	if digits < 0 {
+		digits = 2
+	}
+	return formatBar(c, ma5, ma20, labelFmt{digits: digits, loc: loc})
+}
+
+func formatBar(c Candle, ma5, ma20 float64, labels labelFmt) string {
 	s := fmt.Sprintf("%s  O %s  H %s  L %s  C %s  V %s",
-		c.Time.UTC().Format("2006-01-02 15:04"),
-		FormatPrice(c.Open), FormatPrice(c.High), FormatPrice(c.Low), FormatPrice(c.Close),
+		labels.when(c.Time, "2006-01-02 15:04"),
+		labels.price(c.Open), labels.price(c.High), labels.price(c.Low), labels.price(c.Close),
 		FormatVolume(c.Volume))
 	if !math.IsNaN(ma5) {
-		s += "  MA5 " + FormatPrice(ma5)
+		s += "  MA5 " + labels.price(ma5)
 	}
 	if !math.IsNaN(ma20) {
-		s += "  MA20 " + FormatPrice(ma20)
+		s += "  MA20 " + labels.price(ma20)
 	}
 	return s
 }

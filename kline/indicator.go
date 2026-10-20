@@ -3,6 +3,7 @@ package kline
 import (
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/chart"
@@ -59,6 +60,12 @@ type SubPlot interface {
 // name that is already in the list.
 var ErrDuplicateIndicator = errors.New("kline: duplicate indicator")
 
+// ErrIndicatorKind is returned when Spec.Kind is not the PaneKind of
+// the indicator New returns. Layout follows the instance, so a spec
+// registered as a sub-pane whose constructor returns a main-pane
+// indicator would draw on the wrong plot. Register refuses that.
+var ErrIndicatorKind = errors.New("kline: indicator kind does not match its constructor")
+
 // Spec is one entry in the indicator list. New returns a fresh
 // indicator for one symbol.
 type Spec struct {
@@ -67,13 +74,18 @@ type Spec struct {
 	New  func() Indicator
 }
 
-var registry []Spec
+var (
+	registryMu sync.RWMutex
+	registry   []Spec
+)
 
 // Register appends an indicator. Name, Kind, and New are required.
-// Kind is PaneMain or PaneSub. A repeated name returns
-// ErrDuplicateIndicator and leaves the list unchanged. Call it from
-// an init function, before NewChart. A chart that already exists
-// picks the spec up from SyncIndicators.
+// Kind is PaneMain or PaneSub, and New().PaneKind must return that
+// same kind. A mismatch returns ErrIndicatorKind and does not
+// register. A repeated name returns ErrDuplicateIndicator and leaves
+// the list unchanged. Call it from an init function, before NewChart.
+// A chart that already exists picks the spec up from SyncIndicators.
+// Register, Unregister, and Registry can be called from any goroutine.
 func Register(spec Spec) error {
 	if spec.Name == "" || spec.New == nil {
 		return fmt.Errorf("kline: indicator %q needs a name and constructor", spec.Name)
@@ -81,6 +93,15 @@ func Register(spec Spec) error {
 	if spec.Kind != PaneMain && spec.Kind != PaneSub {
 		return fmt.Errorf("kline: indicator %q kind %q", spec.Name, spec.Kind)
 	}
+	ind := spec.New()
+	if ind == nil {
+		return fmt.Errorf("kline: indicator %q constructor returned nil", spec.Name)
+	}
+	if got := ind.PaneKind(); got != spec.Kind {
+		return fmt.Errorf("%w: %s registered %s, constructor returned %s", ErrIndicatorKind, spec.Name, spec.Kind, got)
+	}
+	registryMu.Lock()
+	defer registryMu.Unlock()
 	for _, have := range registry {
 		if have.Name == spec.Name {
 			return fmt.Errorf("%w: %s", ErrDuplicateIndicator, spec.Name)
@@ -88,6 +109,21 @@ func Register(spec Spec) error {
 	}
 	registry = append(registry, spec)
 	return nil
+}
+
+// Unregister removes name from the indicator list. An unknown name is
+// a no-op. A chart that already copied the spec keeps it until
+// SyncIndicators.
+func Unregister(name string) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	next := make([]Spec, 0, len(registry))
+	for _, spec := range registry {
+		if spec.Name != name {
+			next = append(next, spec)
+		}
+	}
+	registry = next
 }
 
 func mustRegister(spec Spec) {
@@ -98,6 +134,8 @@ func mustRegister(spec Spec) {
 
 // Registry returns a copy of the registered indicator list.
 func Registry() []Spec {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
 	out := make([]Spec, len(registry))
 	copy(out, registry)
 	return out

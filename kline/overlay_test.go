@@ -1,10 +1,13 @@
 package kline
 
 import (
+	"fmt"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/chart"
 )
 
@@ -182,5 +185,44 @@ func TestLayerSelectAndDelete(t *testing.T) {
 	}
 	if l.Delete("missing") {
 		t.Fatal("missing delete")
+	}
+}
+
+func TestOverlayRegistryReadRacesRegister(t *testing.T) {
+	const n = 80
+	names := make([]string, n)
+	for i := range names {
+		names[i] = fmt.Sprintf("raceov%04d", i)
+	}
+	t.Cleanup(func() {
+		for _, name := range names {
+			UnregisterOverlay(name)
+		}
+	})
+	draw := func(*ui.Painter, ui.Rect, Overlay, Viewport, chart.Linear, []Candle, Style) {}
+	hit := func(Overlay, float64, float64, float64, float64, Viewport, chart.Linear, []Candle) (int, bool) {
+		return 0, false
+	}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for _, name := range names {
+			_ = RegisterOverlay(OverlaySpec{Kind: name, Anchors: 1, Draw: draw, Hit: hit})
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < n; i++ {
+			_, _ = overlayByKind(names[i%len(names)])
+		}
+	}()
+	wg.Wait()
+	UnregisterOverlay(names[0])
+	if _, ok := overlayByKind(names[0]); ok {
+		t.Fatal("unregistered overlay still looked up")
+	}
+	if err := RegisterOverlay(OverlaySpec{Kind: names[0], Anchors: 1, Draw: draw, Hit: hit}); err != nil {
+		t.Fatal(err)
 	}
 }

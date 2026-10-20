@@ -1,6 +1,6 @@
 # KLineChart-go 能力补齐 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Historical record.** P0–P9 are already on `main`. This file is not a work queue. Do not re-implement a task from it. The file map below is the structure that landed. Volume stayed in `paint.go`; there is no `paint_price.go`, `paint_volume.go`, or `ind_vol.go`. `main.go` is the thin demo. Chart behavior lives in `kline/chart.go`, `chart_opts.go`, `chart_load.go`, `chart_live.go`, and `chart_input.go`. Checked boxes below record what landed, not a new assignment.
 
 **Goal:** 在保持 MyGo Native `ui.View`（无 WebView）的前提下，按打谱/交易优先级，把 [KLineChart-go](https://github.com/shenjing023/KLineChart-go) 从「看图骨架」补到可用的数据加载、副图指标、画线、同轴叠加与基础样式层。
 
@@ -28,7 +28,7 @@
 | ALPHA / BETA 双图 | 各价轴，非同轴叠加 |
 | 数据 | `kline.Generate` 固定 600 根小时线 |
 
-关键文件：`main.go`（窗体与联动）、`kline/candle.go`、`kline/viewport.go`、`kline/paint.go`。
+写计划时的关键文件：`main.go`（当时的窗体与联动）、`kline/candle.go`、`kline/viewport.go`、`kline/paint.go`。窗体逻辑后来收进 `kline/chart*.go`。
 
 ## 目标分期总览
 
@@ -49,23 +49,33 @@
 ```
 kline/
   candle.go          # Candle、Generate（保留作 SyntheticSource）
-  viewport.go        # 视窗（基本不动，P0 可加按 timestamp 定位）
-  paint.go           # 拆：主图蜡烛/量；指标与 overlay 另文件绘制
-  paint_price.go     # P1 起：价区绘制
-  paint_volume.go    # P1：量区（可被 Indicator VOL 替代或复用）
+  viewport.go        # 视窗
+  paint.go           # 价区、量柱、十字线。量柱留在这里，没有单独的量指标文件
+  compare.go         # 同轴叠加绘制
   layout.go          # Split / SplitNoTime / 多副图垂直分割
-  data.go            # P0：Period、BarRequest、DataSource
-  synthetic.go       # P0：SyntheticSource（包装 Generate + 周期重采样或 regenerated）
-  indicator.go       # P1：Indicator 接口与注册表
-  ind_ma.go          # P1：MA / EMA（先 MA）
-  ind_macd.go        # P1：MACD
-  ind_vol.go         # P1：VOL（或把现有量柱迁入）
-  overlay.go         # P2：Overlay 模型与命中
-  ov_segment.go      # P2：线段
-  ov_hline.go        # P2：水平线 / 价线
-  style.go           # P4（P0 可先抽出 StyleFrom）
-main.go              # 窗体、工具条（周期/指标开关）、联动状态
+  data.go            # Period、BarRequest、DataSource、LiveSource
+  synthetic.go       # SyntheticSource
+  live_stub.go       # 内存实时 stub
+  indicator.go       # Indicator 接口与注册表
+  ind_ma.go          # MA
+  ind_macd.go        # MACD
+  ind_boll.go        # BOLL
+  ind_kdj.go         # KDJ
+  overlay.go         # Overlay 模型与命中
+  ov_segment.go      # 线段
+  ov_hline.go        # 水平线
+  ov_fibonacci.go    # 斐波那契
+  magnet.go          # 价格磁吸
+  style.go           # Style
+  chart.go           # Chart 类型、View、绘制、读数
+  chart_opts.go      # 选项与 setter
+  chart_load.go      # 周期重载与 forward
+  chart_live.go      # 订阅与 live bar
+  chart_input.go     # 指针、草稿、命中几何
+main.go              # 薄 demo：NewChart + 窗口 chrome + 工具条
 ```
+
+未建且不要补的文件：`paint_price.go`、`paint_volume.go`、`ind_vol.go`。P1 把 VOL 留在 `paint.go`。
 
 P0 不必一次建齐空文件；按阶段新增。
 
@@ -85,7 +95,7 @@ P0 不必一次建齐空文件；按阶段新增。
 - Create: `kline/data_test.go`
 - Modify: `kline/candle.go`（Generate 可被 synthetic 调用，或迁入 synthetic）
 
-- [ ] 定义：
+- [x] 定义：
 
 ```go
 type Period struct {
@@ -108,9 +118,9 @@ type DataSource interface {
 }
 ```
 
-- [ ] 实现 `SyntheticSource`：`init` 返回 `Limit` 根（默认 600）；`forward` 在更早时间续生成；两 symbol 不同 seed。
-- [ ] 测试：init 长度与时间单调；forward 接在现有最早 bar 之前且不重叠；非法 Period 返回 error。
-- [ ] `go test ./kline -count=1` 通过后提交（云端 PR 内 commit）。
+- [x] 实现 `SyntheticSource`：`init` 返回 `Limit` 根（默认 600）；`forward` 在更早时间续生成；两 symbol 不同 seed。
+- [x] 测试：init 长度与时间单调；forward 接在现有最早 bar 之前且不重叠；非法 Period 返回 error。
+- [x] `go test ./kline -count=1` 通过后提交（云端 PR 内 commit）。
 
 ### Task P0.2：app 接入 DataSource + 周期切换 UI
 
@@ -119,12 +129,12 @@ type DataSource interface {
 - Modify: `main_test.go`
 - Modify: `README.md`
 
-- [ ] `app` 增加 `src DataSource`、`period Period`、`symbol` 仍用 ALPHA/BETA 两路（可共享同一 Period）。
-- [ ] 启动时 `Kind=init` 填两路 candles，再算 MA（暂留硬编码，P1 再指标化）。
-- [ ] 工具条增加周期按钮：`1h` / `4h` / `1d`（最少三个）；点击后两 pane 一起 reload + `fitted=false` + `FitRight`。
-- [ ] 测试：切换 period 后 bars 时间步长变化；Reset 仍可用。
-- [ ] Tester 或实窗截图：工具条可见、切换后轴标签变化。
-- [ ] README：写清 DataSource 与当前仅 Synthetic。
+- [x] `app` 增加 `src DataSource`、`period Period`、`symbol` 仍用 ALPHA/BETA 两路（可共享同一 Period）。
+- [x] 启动时 `Kind=init` 填两路 candles，再算 MA（暂留硬编码，P1 再指标化）。
+- [x] 工具条增加周期按钮：`1h` / `4h` / `1d`（最少三个）；点击后两 pane 一起 reload + `fitted=false` + `FitRight`。
+- [x] 测试：切换 period 后 bars 时间步长变化；Reset 仍可用。
+- [x] Tester 或实窗截图：工具条可见、切换后轴标签变化。
+- [x] README：写清 DataSource 与当前仅 Synthetic。
 
 ### Task P0.3：边缘加载 forward（最小）
 
@@ -132,10 +142,10 @@ type DataSource interface {
 - Modify: `main.go` / `kline/viewport.go`（可选 hook）
 - Modify: `main_test.go`
 
-- [ ] 当 `Offset` 接近左边界（例如 `Offset < 5`）且 `more==true`，调用 `forward`，将更早 bars **prepend**，并调整 `Offset += prependedCount` 保持画面不跳。
-- [ ] 测试：prepend 后同一根时间的屏幕位置不变（允许 1px 误差用 index 断言）。
-- [ ] 节流：加载中不加重复请求。
-- [ ] PR 标题建议：`P0: DataSource, period switch, forward load`；合入后进 P1。
+- [x] 当 `Offset` 接近左边界（例如 `Offset < 5`）且 `more==true`，调用 `forward`，将更早 bars **prepend**，并调整 `Offset += prependedCount` 保持画面不跳。
+- [x] 测试：prepend 后同一根时间的屏幕位置不变（允许 1px 误差用 index 断言）。
+- [x] 节流：加载中不加重复请求。
+- [x] PR 标题建议：`P0: DataSource, period switch, forward load`；合入后进 P1。
 
 **P0 不做：** 真实行情 HTTP、websocket、`subscribeBar` 推送、缺会话空隙压缩。
 
@@ -217,8 +227,8 @@ type Indicator interface {
 - Create: `kline/overlay.go`, `kline/ov_hline.go`
 - Modify: `main.go`（工具条 Draw 模式）
 
-- [ ] 点击价区放置水平线；拖动改价；选中高亮。
-- [ ] 测试：像素↔价格往返；命中半径。
+- [x] 点击价区放置水平线；拖动改价；选中高亮。
+- [x] 测试：像素↔价格往返；命中半径。
 
 ### Task P2.2：线段 segment
 
@@ -226,9 +236,9 @@ type Indicator interface {
 - Create: `kline/ov_segment.go`
 - Modify: `main.go`
 
-- [ ] 两击完成线段；未完成时橡皮筋；与 pan 手势冲突时：**Draw 模式下禁用 pan** 或要求按住空格/工具切换（选工具切换，简单明确）。
-- [ ] 截图：两 pane 上各有线（overlay 默认只画在触发 pane；文档写明「先 per-pane」）。
-- [ ] PR：`P2: overlay hline + segment`。
+- [x] 两击完成线段；未完成时橡皮筋；与 pan 手势冲突时：**Draw 模式下禁用 pan** 或要求按住空格/工具切换（选工具切换，简单明确）。
+- [x] 截图：两 pane 上各有线（overlay 默认只画在触发 pane；文档写明「先 per-pane」）。
+- [x] PR：`P2: overlay hline + segment`。
 
 **P2 不做：** 斐波那契全集、brush、磁吸弱/强全档、跨 pane 复用同一 overlay（可 backlog）。
 
@@ -243,12 +253,12 @@ type Indicator interface {
 **Files:**
 - Modify: `main.go`, `kline/paint*.go`, `README.md`
 
-- [ ] 工具条：`Layout: Stack | Overlay`。
-- [ ] Overlay：主图两色蜡烛或第二序列用线（线更清晰，推荐 **主序列蜡烛 + 第二序列收盘折线**）。
-- [ ] 归一：`close[i]/close[0]*100`；Y 域跟归一后范围。
-- [ ] 十字线读数显示两 symbol 值。
-- [ ] 测试 + 截图。
-- [ ] PR：`P3: same-pane overlay compare mode`。
+- [x] 工具条：`Layout: Stack | Overlay`。
+- [x] Overlay：主图两色蜡烛或第二序列用线（线更清晰，推荐 **主序列蜡烛 + 第二序列收盘折线**）。
+- [x] 归一：`close[i]/close[0]*100`；Y 域跟归一后范围。
+- [x] 十字线读数显示两 symbol 值。
+- [x] 测试 + 截图。
+- [x] PR：`P3: same-pane overlay compare mode`。
 
 ---
 
@@ -262,21 +272,21 @@ type Indicator interface {
 - Create/Move: `kline/style.go`
 - Modify: paint / README
 
-- [ ] `Style` 含涨跌色、网格、十字线、MA/MACD 色；`StyleFrom(theme)` + `DarkDefault`/`LightDefault`。
-- [ ] 空心阳线开关（涨：框、跌：实心）——A 股常见习惯可配置。
-- [ ] 截图明暗或空心对比。
-- [ ] PR：`P4: chart styles and hollow candles`。
+- [x] `Style` 含涨跌色、网格、十字线、MA/MACD 色；`StyleFrom(theme)` + `DarkDefault`/`LightDefault`。
+- [x] 空心阳线开关（涨：框、跌：实心）——A 股常见习惯可配置。
+- [x] 截图明暗或空心对比。
+- [x] PR：`P4: chart styles and hollow candles`。
 
 ---
 
 ## 验证清单（每阶段通用）
 
-- [ ] `go test ./... -count=1`
-- [ ] `go build -o /tmp/klinechart-go .`
-- [ ] 无 WebView：源码检索 +（可选）`ldd` 无 WebKit
-- [ ] Tester 帧或 GTK 实窗截图进 artifacts
-- [ ] README「能做 / 不做」更新
-- [ ] Squash 合入 `main` 后再开下一阶段
+- [x] `go test ./... -count=1`
+- [x] `go build -o /tmp/klinechart-go .`
+- [x] 无 WebView：源码检索 +（可选）`ldd` 无 WebKit
+- [x] Tester 帧或 GTK 实窗截图进 artifacts
+- [x] README「能做 / 不做」更新
+- [x] Squash 合入 `main` 后再开下一阶段
 
 ## Backlog（本方案明确延期）
 
