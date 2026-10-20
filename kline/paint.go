@@ -25,6 +25,9 @@ func MainScale(cs []Candle, inds []Indicator, vp Viewport, plotW float64) chart.
 		if ma, ok := ind.(*MA); ok {
 			extra = append(extra, ma.Lines()...)
 		}
+		if boll, ok := ind.(*BOLL); ok {
+			extra = append(extra, boll.Mid, boll.Up, boll.Low)
+		}
 	}
 	first, last := vp.Visible(len(cs), plotW)
 	lo, hi := PriceDomain(cs, first, last, extra...)
@@ -39,16 +42,16 @@ type Pointer struct {
 
 // Paint draws the series in panes. vp is not modified. inds are the
 // indicators mounted on this symbol; nil entries are skipped. Main
-// indicators overlay the price plot. The first sub indicator is drawn
-// in panes.MACD when that rect has a height. Volume stays the built-in
-// VOL strip.
+// indicators overlay the price plot. MACD is drawn in panes.MACD and
+// KDJ in panes.KDJ when those rects have a height. Volume stays the
+// built-in VOL strip.
 //
 // barIndex draws the vertical crosshair on that bar even when ptr is
 // outside this pane, so several panes can share one bar. -1 draws the
 // vertical line from ptr when ptr is over the plot, and draws nothing
 // when it is not. The horizontal line and the price tag follow ptr only.
 // The vertical line runs through the price plot, the volume strip, and
-// the MACD sub-pane.
+// each open sub-pane.
 func Paint(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, style Style) {
 	price := panes.Price
 	if price.W < 2 || price.H < 2 {
@@ -57,25 +60,7 @@ func Paint(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewpor
 	p.Fill(ui.Rect{X: price.X, Y: price.Y, W: price.W + panes.PriceAxis.W, H: panes.Time.Y + panes.Time.H - price.Y}, style.Plot, 0)
 	p.Fill(panes.Volume, style.VolumeBg, 0)
 
-	var sub Indicator
-	for _, ind := range inds {
-		if ind == nil {
-			continue
-		}
-		switch ind.PaneKind() {
-		case PaneMain:
-			if ma, ok := ind.(*MA); ok {
-				ma.SetColors([]ui.Color{style.MA5, style.MA20})
-			}
-		case PaneSub:
-			if sub == nil && panes.MACD.H > 1 {
-				if macd, ok := ind.(*MACD); ok {
-					macd.SetColors(style.MACDDIF, style.MACDDEA, style.Up, style.Down, style.MACDZero)
-				}
-				sub = ind
-			}
-		}
-	}
+	macdInd, kdjInd := applyIndicatorStyle(inds, panes, style)
 
 	// chart.Linear maps a value to a fraction that grows upward.
 	// chart.Y turns that fraction into a window Y, with 0 at the
@@ -93,14 +78,14 @@ func Paint(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewpor
 	}
 
 	var macdScale chart.Linear
-	hasMACD := false
-	if sub != nil {
-		if scaled, ok := sub.(interface {
-			Scale(first, last int) chart.Linear
-		}); ok {
-			macdScale = scaled.Scale(first, last)
-			hasMACD = true
-		}
+	hasMACD := macdInd != nil
+	if hasMACD {
+		macdScale = macdInd.Scale(first, last)
+	}
+	var kdjScale chart.Linear
+	hasKDJ := kdjInd != nil
+	if hasKDJ {
+		kdjScale = kdjInd.Scale(first, last)
 	}
 
 	drawGrid(p, panes, cs, vp, yScale, volScale, style)
@@ -115,15 +100,46 @@ func Paint(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewpor
 	p.Clip(panes.Volume, 0, func() {
 		drawVolume(p, panes.Volume, cs, vp, volScale, first, last, style)
 	})
-	if sub != nil {
-		if hasMACD {
-			drawMACDAxis(p, panes, macdScale, style)
-		}
+	if hasMACD {
+		drawSubAxis(p, panes.MACD, panes.MACDAxis, macdScale, style)
 		p.Clip(panes.MACD, 0, func() {
-			sub.DrawSub(p, panes.MACD, vp)
+			macdInd.DrawSub(p, panes.MACD, vp)
 		})
 	}
-	drawCrosshair(p, panes, cs, vp, yScale, macdScale, hasMACD, ptr, barIndex, style)
+	if hasKDJ {
+		drawSubAxis(p, panes.KDJ, panes.KDJAxis, kdjScale, style)
+		p.Clip(panes.KDJ, 0, func() {
+			kdjInd.DrawSub(p, panes.KDJ, vp)
+		})
+	}
+	drawCrosshair(p, panes, cs, vp, yScale, macdScale, hasMACD, kdjScale, hasKDJ, ptr, barIndex, style)
+}
+
+// applyIndicatorStyle copies theme colors onto the indicators Paint
+// knows how to draw, and returns the sub-pane series whose rect is open.
+func applyIndicatorStyle(inds []Indicator, panes Panes, style Style) (macd *MACD, kdj *KDJ) {
+	for _, ind := range inds {
+		if ind == nil {
+			continue
+		}
+		switch v := ind.(type) {
+		case *MA:
+			v.SetColors([]ui.Color{style.MA5, style.MA20})
+		case *BOLL:
+			v.SetColors(style.BOLLMid, style.BOLLUp, style.BOLLLow)
+		case *MACD:
+			if panes.MACD.H > 1 {
+				v.SetColors(style.MACDDIF, style.MACDDEA, style.Up, style.Down, style.MACDZero)
+				macd = v
+			}
+		case *KDJ:
+			if panes.KDJ.H > 1 {
+				v.SetColors(style.KDJK, style.KDJD, style.KDJJ)
+				kdj = v
+			}
+		}
+	}
+	return macd, kdj
 }
 
 func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volScale chart.Linear, style Style) {
@@ -164,26 +180,39 @@ func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volS
 	if panes.MACD.H > 0 && panes.MACD.Y > panes.Volume.Y+panes.Volume.H {
 		p.Line(price.X, panes.MACD.Y-float32(paneGap)/2, price.X+price.W, panes.MACD.Y-float32(paneGap)/2, 1, style.Grid)
 	}
+	if panes.KDJ.H > 0 {
+		above := panes.Volume.Y + panes.Volume.H
+		if panes.MACD.H > 0 {
+			above = panes.MACD.Y + panes.MACD.H
+		}
+		if panes.KDJ.Y > above {
+			p.Line(price.X, panes.KDJ.Y-float32(paneGap)/2, price.X+price.W, panes.KDJ.Y-float32(paneGap)/2, 1, style.Grid)
+		}
+	}
 }
 
-func drawMACDAxis(p *ui.Painter, panes Panes, scale chart.Linear, style Style) {
-	if panes.MACD.H < 8 {
+func drawSubAxis(p *ui.Painter, plot, axis ui.Rect, scale chart.Linear, style Style) {
+	if plot.H < 8 {
 		return
 	}
 	for _, tick := range scale.Ticks(3) {
 		if tick.At < -0.01 || tick.At > 1.01 {
 			continue
 		}
-		y := chart.Y(panes.MACD, tick.At)
-		drawLabel(p, panes.MACDAxis.X+6, y, tick.Label, style.Muted, ui.Start)
+		y := chart.Y(plot, tick.At)
+		drawLabel(p, axis.X+6, y, tick.Label, style.Muted, ui.Start)
 	}
 }
 
 func bandsBottom(panes Panes) float32 {
-	if panes.MACD.H > 0 {
-		return panes.MACD.Y + panes.MACD.H
+	bottom := panes.Volume.Y + panes.Volume.H
+	if panes.MACD.H > 0 && panes.MACD.Y+panes.MACD.H > bottom {
+		bottom = panes.MACD.Y + panes.MACD.H
 	}
-	return panes.Volume.Y + panes.Volume.H
+	if panes.KDJ.H > 0 && panes.KDJ.Y+panes.KDJ.H > bottom {
+		bottom = panes.KDJ.Y + panes.KDJ.H
+	}
+	return bottom
 }
 
 func drawCandles(p *ui.Painter, plot ui.Rect, cs []Candle, vp Viewport, yScale chart.Linear, first, last int, style Style) {
@@ -281,7 +310,7 @@ func drawVolume(p *ui.Painter, plot ui.Rect, cs []Candle, vp Viewport, volScale 
 	}
 }
 
-func drawCrosshair(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, macdScale chart.Linear, hasMACD bool, ptr Pointer, barIndex int, style Style) {
+func drawCrosshair(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, macdScale chart.Linear, hasMACD bool, kdjScale chart.Linear, hasKDJ bool, ptr Pointer, barIndex int, style Style) {
 	if len(cs) == 0 {
 		return
 	}
@@ -304,11 +333,12 @@ func drawCrosshair(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale,
 
 	// The horizontal line stays on the pane under the pointer. Other
 	// panes only share the vertical line at this bar index. The vertical
-	// line continues through the MACD sub-pane.
+	// line continues through each open sub-pane.
 	inPrice := ptr.On && ptr.Y >= price.Y && ptr.Y <= price.Y+price.H
 	inVol := ptr.On && ptr.Y >= panes.Volume.Y && ptr.Y <= panes.Volume.Y+panes.Volume.H
 	inMACD := hasMACD && ptr.On && ptr.Y >= panes.MACD.Y && ptr.Y <= panes.MACD.Y+panes.MACD.H
-	if inPrice || inVol || inMACD {
+	inKDJ := hasKDJ && ptr.On && ptr.Y >= panes.KDJ.Y && ptr.Y <= panes.KDJ.Y+panes.KDJ.H
+	if inPrice || inVol || inMACD || inKDJ {
 		p.Line(price.X, ptr.Y, price.X+price.W, ptr.Y, 1, style.Cross)
 	}
 	if inPrice && price.H > 0 {
@@ -321,6 +351,10 @@ func drawCrosshair(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale,
 	if inMACD && panes.MACD.H > 0 {
 		frac := float32((panes.MACD.Y+panes.MACD.H)-ptr.Y) / panes.MACD.H
 		drawTag(p, panes.MACDAxis.X+4, ptr.Y, FormatPrice(macdScale.Invert(frac)), style)
+	}
+	if inKDJ && panes.KDJ.H > 0 {
+		frac := float32((panes.KDJ.Y+panes.KDJ.H)-ptr.Y) / panes.KDJ.H
+		drawTag(p, panes.KDJAxis.X+4, ptr.Y, FormatPrice(kdjScale.Invert(frac)), style)
 	}
 	if panes.Time.H > 0 {
 		drawTag(p, x, panes.Time.Y+panes.Time.H/2, cs[i].Time.UTC().Format("01-02 15:04"), style)

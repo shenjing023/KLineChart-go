@@ -334,6 +334,93 @@ func TestIndicatorsAndMACDPane(t *testing.T) {
 	}
 }
 
+func TestBOLLAndKDJStack(t *testing.T) {
+	const viewW, viewH = 1100, 1000
+	a := newApp()
+	tt := ui.NewTester(a.view, viewW, viewH)
+	if !tt.HasText("BOLL") || !tt.HasText("KDJ") {
+		t.Fatalf("toolbar texts %q", tt.Texts())
+	}
+	for _, panes := range a.painted {
+		if panes.KDJ.H != 0 {
+			t.Fatalf("KDJ starts off: %+v", panes.KDJ)
+		}
+	}
+	if strings.Contains(a.readout(0), "MID ") || strings.Contains(a.readout(0), "K ") {
+		t.Fatalf("BOLL and KDJ readouts start off: %q", a.readout(0))
+	}
+	if err := tt.Click("BOLL"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("KDJ"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.painted) != 2 {
+		t.Fatalf("painted panes %d", len(a.painted))
+	}
+	for i, panes := range a.painted {
+		if panes.Price.H <= 1 || panes.Volume.H <= 1 || panes.MACD.H <= 1 || panes.KDJ.H <= 1 {
+			t.Fatalf("pane %d empty band %+v", i, panes)
+		}
+		if panes.Volume.Y < panes.Price.Y+panes.Price.H || panes.MACD.Y < panes.Volume.Y+panes.Volume.H {
+			t.Fatalf("pane %d price/volume/MACD %+v", i, panes)
+		}
+		if panes.KDJ.Y < panes.MACD.Y+panes.MACD.H {
+			t.Fatalf("pane %d KDJ should sit under MACD %+v", i, panes)
+		}
+	}
+	if a.painted[0].Time.H != 0 {
+		t.Fatal("the upper symbol should leave the time axis to the bottom one")
+	}
+	bottom := a.painted[1]
+	if bottom.Time.H <= 0 || bottom.Time.Y < bottom.KDJ.Y+bottom.KDJ.H-1 {
+		t.Fatalf("time axis %+v kdj %+v", bottom.Time, bottom.KDJ)
+	}
+	for _, part := range []string{"MID ", "UP ", "LOW ", "K ", "D ", "J "} {
+		if !strings.Contains(a.readout(0), part) || !strings.Contains(a.readout(1), part) {
+			t.Fatalf("readout missing %s\n%s\n%s", part, a.readout(0), a.readout(1))
+		}
+	}
+	kdj := a.painted[0].KDJ
+	tt.Move(kdj.X+90, kdj.Y+kdj.H/2)
+	if a.crossPane != 0 || a.crossIndex < 0 {
+		t.Fatalf("hover in the KDJ band index %d pane %d", a.crossIndex, a.crossPane)
+	}
+	if !strings.Contains(a.readout(0), "Hover") || !strings.Contains(a.readout(1), "K ") {
+		t.Fatalf("linked KDJ readout\n%s\n%s", a.readout(0), a.readout(1))
+	}
+	assertCrosshairThroughMACD(t, tt.Image(), viewW, viewH, a, 0)
+
+	if err := tt.Click("KDJ"); err != nil {
+		t.Fatal(err)
+	}
+	if a.painted[0].KDJ.H != 0 || strings.Contains(a.readout(0), "K ") {
+		t.Fatalf("KDJ off still open: h %v readout %q", a.painted[0].KDJ.H, a.readout(0))
+	}
+	if !strings.Contains(a.readout(0), "MID ") || a.painted[0].MACD.H <= 1 {
+		t.Fatalf("BOLL and MACD should stay: h %v readout %q", a.painted[0].MACD.H, a.readout(0))
+	}
+	if a.painted[1].Time.Y < a.painted[1].MACD.Y+a.painted[1].MACD.H-1 {
+		t.Fatalf("time should return under MACD: %+v", a.painted[1])
+	}
+
+	if err := tt.Click("Overlay"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("KDJ"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.painted) != 1 || a.painted[0].KDJ.H <= 1 || a.painted[0].KDJ.Y < a.painted[0].MACD.Y+a.painted[0].MACD.H {
+		t.Fatalf("overlay should keep one KDJ band under MACD: %+v", a.painted[0])
+	}
+	if !strings.Contains(a.readout(0), "MID ") || !strings.Contains(a.readout(0), "K ") {
+		t.Fatalf("primary readout %q", a.readout(0))
+	}
+	if strings.Contains(a.readout(1), "MID ") || strings.Contains(a.readout(1), "K ") {
+		t.Fatalf("compare readout should omit BOLL and KDJ: %q", a.readout(1))
+	}
+}
+
 func assertCrosshairThroughMACD(t *testing.T, img *image.RGBA, viewW, viewH int, a *app, pane int) {
 	t.Helper()
 	if img == nil {
@@ -946,6 +1033,22 @@ func TestRenderFrames(t *testing.T) {
 	writePNG(t, dir+"/p4-light-hollow.png", p4t.Image())
 	if !p4.hollowUp {
 		t.Fatal("hollow frame was painted solid")
+	}
+
+	p6 := newApp()
+	p6t := ui.NewTester(p6.view, 1100, 1000)
+	if err := p6t.Click("BOLL"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p6t.Click("KDJ"); err != nil {
+		t.Fatal(err)
+	}
+	writePNG(t, dir+"/p6-boll-kdj-stack.png", p6t.Image())
+	if len(p6.painted) != 2 || p6.painted[0].KDJ.H <= 1 || p6.painted[0].KDJ.Y < p6.painted[0].MACD.Y+p6.painted[0].MACD.H {
+		t.Fatalf("stack frame should show KDJ under MACD: %+v", p6.painted)
+	}
+	if !strings.Contains(p6.readout(0), "MID ") || !strings.Contains(p6.readout(0), "K ") {
+		t.Fatalf("stack frame readout %q", p6.readout(0))
 	}
 }
 

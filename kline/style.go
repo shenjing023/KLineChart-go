@@ -7,16 +7,20 @@ import "github.com/egoist/mygo/ui"
 // Down. HollowUp draws that rising body as an outline and keeps a
 // falling body filled, which is the usual A-share candle.
 type Style struct {
-	Up, Down       ui.Color
-	MA5, MA20      ui.Color
-	MACDDIF        ui.Color
-	MACDDEA        ui.Color
-	MACDZero       ui.Color
-	Grid, Cross    ui.Color
-	Text, Muted    ui.Color
-	Plot, VolumeBg ui.Color
-	LabelFill      ui.Color
-	LabelText      ui.Color
+	Up, Down  ui.Color
+	MA5, MA20 ui.Color
+	MACDDIF   ui.Color
+	MACDDEA   ui.Color
+	MACDZero  ui.Color
+	// BOLLMid is the SMA. BOLLUp and BOLLLow are the bands around it.
+	BOLLMid, BOLLUp, BOLLLow ui.Color
+	// KDJK, KDJD, and KDJJ are the three stochastic lines.
+	KDJK, KDJD, KDJJ ui.Color
+	Grid, Cross      ui.Color
+	Text, Muted      ui.Color
+	Plot, VolumeBg   ui.Color
+	LabelFill        ui.Color
+	LabelText        ui.Color
 	// Overlay is a drawing that is not selected. OverlayHot is the
 	// selected one, including its handles.
 	Overlay, OverlayHot ui.Color
@@ -56,6 +60,12 @@ func StyleFrom(t *ui.Theme) Style {
 		MACDDIF:    t.Accent,
 		MACDDEA:    t.Warning,
 		MACDZero:   t.Border,
+		BOLLMid:    t.Text,
+		BOLLUp:     t.Accent,
+		BOLLLow:    t.Warning,
+		KDJK:       t.Accent,
+		KDJD:       t.Warning,
+		KDJJ:       t.Text,
 		Grid:       t.Border,
 		Cross:      t.TextMuted,
 		Text:       t.Text,

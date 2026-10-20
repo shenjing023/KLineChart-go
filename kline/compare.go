@@ -138,12 +138,21 @@ func CompareScales(primary, compare []Candle, inds []Indicator, vp Viewport, plo
 	}
 	baseClose := primary[base].Close
 	for _, ind := range inds {
-		ma, ok := ind.(*MA)
-		if !ok || ma == nil || ma.PaneKind() != PaneMain {
-			continue
-		}
-		for _, line := range ma.Lines() {
-			extra = append(extra, scaleLine(line, baseClose))
+		switch v := ind.(type) {
+		case *MA:
+			if v == nil || v.PaneKind() != PaneMain {
+				continue
+			}
+			for _, line := range v.Lines() {
+				extra = append(extra, scaleLine(line, baseClose))
+			}
+		case *BOLL:
+			if v == nil || v.PaneKind() != PaneMain {
+				continue
+			}
+			for _, line := range [][]float64{v.Mid, v.Up, v.Low} {
+				extra = append(extra, scaleLine(line, baseClose))
+			}
 		}
 	}
 	lo, hi := PriceDomain(norm, first, last, extra...)
@@ -179,8 +188,8 @@ func scaleLine(series []float64, baseClose float64) []float64 {
 
 // PaintCompare draws primary as candles and compare as a close line on
 // one price plot. Both are indexed to 100 at the first visible common
-// bar. The volume strip and the MACD sub-pane stay on the primary
-// series, in raw units. It returns false when the base close cannot be
+// bar. The volume strip and the MACD and KDJ sub-panes stay on the
+// primary series, in raw units. It returns false when the base close cannot be
 // indexed, and then draws the primary series with Paint instead.
 func PaintCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, style Style) bool {
 	price := panes.Price
@@ -197,25 +206,7 @@ func PaintCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []
 	p.Fill(ui.Rect{X: price.X, Y: price.Y, W: price.W + panes.PriceAxis.W, H: panes.Time.Y + panes.Time.H - price.Y}, style.Plot, 0)
 	p.Fill(panes.Volume, style.VolumeBg, 0)
 
-	var sub Indicator
-	for _, ind := range inds {
-		if ind == nil {
-			continue
-		}
-		switch ind.PaneKind() {
-		case PaneMain:
-			if ma, ok := ind.(*MA); ok {
-				ma.SetColors([]ui.Color{style.MA5, style.MA20})
-			}
-		case PaneSub:
-			if sub == nil && panes.MACD.H > 1 {
-				if macd, ok := ind.(*MACD); ok {
-					macd.SetColors(style.MACDDIF, style.MACDDEA, style.Up, style.Down, style.MACDZero)
-				}
-				sub = ind
-			}
-		}
-	}
+	macdInd, kdjInd := applyIndicatorStyle(inds, panes, style)
 
 	first, last := vp.Visible(len(norm), float64(price.W))
 	volScale := chart.NewLinear(0, VolumeMax(primary, first, last)).Nice(3)
@@ -227,14 +218,14 @@ func PaintCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []
 	}
 
 	var macdScale chart.Linear
-	hasMACD := false
-	if sub != nil {
-		if scaled, ok := sub.(interface {
-			Scale(first, last int) chart.Linear
-		}); ok {
-			macdScale = scaled.Scale(first, last)
-			hasMACD = true
-		}
+	hasMACD := macdInd != nil
+	if hasMACD {
+		macdScale = macdInd.Scale(first, last)
+	}
+	var kdjScale chart.Linear
+	hasKDJ := kdjInd != nil
+	if hasKDJ {
+		kdjScale = kdjInd.Scale(first, last)
 	}
 
 	drawGrid(p, panes, norm, vp, index, volScale, style)
@@ -247,33 +238,51 @@ func PaintCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []
 			}
 		}
 		for _, ind := range inds {
-			ma, ok := ind.(*MA)
-			if !ok || ma == nil {
-				continue
-			}
-			for i, line := range ma.Lines() {
-				color := ui.Color{}
-				if i < len(ma.colors) {
-					color = ma.colors[i]
-				}
-				if color == (ui.Color{}) {
+			switch v := ind.(type) {
+			case *MA:
+				if v == nil {
 					continue
 				}
-				drawMA(p, price, scaleLine(line, baseClose), vp, index, first, last, color)
+				for i, line := range v.Lines() {
+					color := ui.Color{}
+					if i < len(v.colors) {
+						color = v.colors[i]
+					}
+					if color == (ui.Color{}) {
+						continue
+					}
+					drawMA(p, price, scaleLine(line, baseClose), vp, index, first, last, color)
+				}
+			case *BOLL:
+				if v == nil {
+					continue
+				}
+				lines := [][]float64{v.Mid, v.Up, v.Low}
+				colors := []ui.Color{v.MidColor, v.UpColor, v.LowColor}
+				for i, line := range lines {
+					if colors[i] == (ui.Color{}) {
+						continue
+					}
+					drawMA(p, price, scaleLine(line, baseClose), vp, index, first, last, colors[i])
+				}
 			}
 		}
 	})
 	p.Clip(panes.Volume, 0, func() {
 		drawVolume(p, panes.Volume, primary, vp, volScale, first, last, style)
 	})
-	if sub != nil {
-		if hasMACD {
-			drawMACDAxis(p, panes, macdScale, style)
-		}
+	if hasMACD {
+		drawSubAxis(p, panes.MACD, panes.MACDAxis, macdScale, style)
 		p.Clip(panes.MACD, 0, func() {
-			sub.DrawSub(p, panes.MACD, vp)
+			macdInd.DrawSub(p, panes.MACD, vp)
 		})
 	}
-	drawCrosshair(p, panes, norm, vp, index, macdScale, hasMACD, ptr, barIndex, style)
+	if hasKDJ {
+		drawSubAxis(p, panes.KDJ, panes.KDJAxis, kdjScale, style)
+		p.Clip(panes.KDJ, 0, func() {
+			kdjInd.DrawSub(p, panes.KDJ, vp)
+		})
+	}
+	drawCrosshair(p, panes, norm, vp, index, macdScale, hasMACD, kdjScale, hasKDJ, ptr, barIndex, style)
 	return true
 }

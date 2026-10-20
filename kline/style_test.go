@@ -33,6 +33,12 @@ func TestDarkAndLightDefaultsFollowTheme(t *testing.T) {
 	if dark.MACDDIF == (ui.Color{}) || dark.MACDDEA == (ui.Color{}) || dark.MACDZero == (ui.Color{}) {
 		t.Fatalf("MACD colors %+v %+v %+v", dark.MACDDIF, dark.MACDDEA, dark.MACDZero)
 	}
+	if dark.BOLLMid == (ui.Color{}) || dark.BOLLUp == (ui.Color{}) || dark.BOLLLow == (ui.Color{}) {
+		t.Fatalf("BOLL colors %+v %+v %+v", dark.BOLLMid, dark.BOLLUp, dark.BOLLLow)
+	}
+	if dark.KDJK == (ui.Color{}) || dark.KDJD == (ui.Color{}) || dark.KDJJ == (ui.Color{}) {
+		t.Fatalf("KDJ colors %+v %+v %+v", dark.KDJK, dark.KDJD, dark.KDJJ)
+	}
 	if dark.MA5 == light.MA5 && dark.MACDDIF == light.MACDDIF {
 		t.Fatal("MA and MACD colors should follow each theme's accent")
 	}

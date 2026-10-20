@@ -42,6 +42,33 @@ func TestHollowUpOutlinesRisingBody(t *testing.T) {
 	}
 }
 
+func TestPaintCopiesBOLLAndKDJColorsFromStyle(t *testing.T) {
+	cs := Generate(80, 42)
+	boll := NewBOLL(20, 2)
+	boll.Calc(cs)
+	kdj := NewKDJ(9, 3, 3)
+	kdj.Calc(cs)
+	style := LightDefault()
+	style.BOLLMid = ui.RGB(1, 2, 3)
+	style.BOLLUp = ui.RGB(4, 5, 6)
+	style.BOLLLow = ui.RGB(7, 8, 9)
+	style.KDJK = ui.RGB(10, 11, 12)
+	style.KDJD = ui.RGB(13, 14, 15)
+	style.KDJJ = ui.RGB(16, 17, 18)
+	paintAt(t, 480, 420, func(p *ui.Painter, r ui.Rect) {
+		panes := SplitStack(r, false, true, true)
+		vp := Viewport{BarWidth: 12}
+		vp.FitRight(len(cs), float64(panes.Price.W))
+		Paint(p, panes, cs, []Indicator{boll, kdj}, vp, Pointer{}, -1, style)
+	})
+	if boll.MidColor != style.BOLLMid || boll.UpColor != style.BOLLUp || boll.LowColor != style.BOLLLow {
+		t.Fatalf("boll lines %+v %+v %+v", boll.MidColor, boll.UpColor, boll.LowColor)
+	}
+	if kdj.KColor != style.KDJK || kdj.DColor != style.KDJD || kdj.JColor != style.KDJJ {
+		t.Fatalf("kdj lines %+v %+v %+v", kdj.KColor, kdj.DColor, kdj.JColor)
+	}
+}
+
 func TestPaintCopiesMACDColorsFromStyle(t *testing.T) {
 	cs := Generate(80, 42)
 	macd := NewMACD(12, 26, 9)
@@ -84,7 +111,7 @@ func bodyInterior(t *testing.T, cs []Candle, style Style) (up, down color.RGBA) 
 func paintSeries(t *testing.T, cs []Candle, inds []Indicator, style Style) {
 	t.Helper()
 	paintAt(t, 480, 320, func(p *ui.Painter, r ui.Rect) {
-		panes := SplitStack(r, false, true)
+		panes := SplitStack(r, false, true, false)
 		vp := Viewport{BarWidth: 12}
 		vp.FitRight(len(cs), float64(panes.Price.W))
 		Paint(p, panes, cs, inds, vp, Pointer{}, -1, style)
