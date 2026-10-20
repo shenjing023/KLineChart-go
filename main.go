@@ -7,6 +7,7 @@ package main
 import (
 	"log"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -129,12 +130,12 @@ type liveSub struct {
 }
 
 func newApp() *app {
-	reg := kline.Registry()
+	reg := orderedSpecs(kline.Registry())
 	slots := make([]indicatorSlot, len(reg))
 	for i, spec := range reg {
-		// MA and MACD both start on. MACD's sub-pane is part of the
-		// first frame; turning the toggle off drops that band.
-		slots[i] = indicatorSlot{spec: spec, on: true}
+		// MA and MACD start on. BOLL and KDJ start off so the first
+		// frame stays price, volume, and MACD.
+		slots[i] = indicatorSlot{spec: spec, on: spec.Name == "MA" || spec.Name == "MACD"}
 	}
 	a := &app{
 		src:        &kline.SyntheticSource{},
@@ -398,15 +399,46 @@ func (a *app) active(s series) []kline.Indicator {
 	return out
 }
 
-// subOpen reports whether a sub-pane indicator is toggled on. The layout
-// keeps one sub-pane, which is MACD in this list.
-func (a *app) subOpen() bool {
+// subPanes reports which sub-pane toggles are on. MACD sits under volume.
+// KDJ sits under MACD when both are on, or under volume when MACD is off.
+func (a *app) subPanes() (macd, kdj bool) {
 	for _, slot := range a.slots {
-		if slot.on && slot.spec.Kind == kline.PaneSub {
-			return true
+		if !slot.on {
+			continue
+		}
+		switch slot.spec.Name {
+		case "MACD":
+			macd = true
+		case "KDJ":
+			kdj = true
 		}
 	}
-	return false
+	return macd, kdj
+}
+
+// orderedSpecs keeps the toolbar in a stable order: the indicators that
+// shipped first, then BOLL and KDJ. Registry order follows file name,
+// which would put the new names first.
+func orderedSpecs(in []kline.Spec) []kline.Spec {
+	rank := func(name string) int {
+		switch name {
+		case "MA":
+			return 0
+		case "MACD":
+			return 1
+		case "BOLL":
+			return 2
+		case "KDJ":
+			return 3
+		default:
+			return 100
+		}
+	}
+	out := append([]kline.Spec(nil), in...)
+	sort.SliceStable(out, func(i, j int) bool {
+		return rank(out[i].Name) < rank(out[j].Name)
+	})
+	return out
 }
 
 func (a *app) bars() int {
@@ -767,7 +799,7 @@ func (a *app) hit(pane int, x, y float64) (kline.Hit, bool) {
 
 // plotLocal converts a pointer event to price-plot DIPs. The price plot
 // starts at the chart box's top-left, so the event's local axes match it.
-// in is false over the volume strip, the MACD pane, and the axes.
+// in is false over the volume strip, the sub-panes, and the axes.
 func (a *app) plotLocal(pane int, ev ui.InputEvent) (x, y float64, in bool) {
 	if pane < 0 || pane >= len(a.painted) {
 		return 0, 0, false
@@ -832,7 +864,8 @@ func (a *app) pointAt(pane int, x, y float64) kline.Point {
 }
 
 func (a *app) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime bool) {
-	panes := kline.SplitStack(r, showTime, a.subOpen())
+	macdOn, kdjOn := a.subPanes()
+	panes := kline.SplitStack(r, showTime, macdOn, kdjOn)
 	if i >= len(a.painted) {
 		next := make([]kline.Panes, i+1)
 		copy(next, a.painted)
@@ -864,11 +897,12 @@ func (a *app) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime b
 	kline.DrawOverlays(p, panes.Price, s.overlays.Items(), a.vp, scale, s.candles, style, rubber)
 }
 
-// paintCompare draws both symbols in one column. Volume, MACD, and
+// paintCompare draws both symbols in one column. Volume, MACD, KDJ, and
 // drawings belong to the primary symbol. The second symbol is the
 // close line painted by PaintCompare.
 func (a *app) paintCompare(p *ui.Painter, r ui.Rect, t *ui.Theme) {
-	panes := kline.SplitStack(r, true, a.subOpen())
+	macdOn, kdjOn := a.subPanes()
+	panes := kline.SplitStack(r, true, macdOn, kdjOn)
 	a.painted = []kline.Panes{panes}
 	a.plotW = float64(panes.Price.W)
 	if !a.fitted && panes.Price.W > 1 {

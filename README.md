@@ -6,17 +6,19 @@ It is a demo of the interaction in [KLineChart](https://github.com/klinecharts/K
 
 ## What you can do
 
-- **Stack / Overlay.** Stack is the default: ALPHA and BETA each get a price plot, a volume strip, and a MACD sub-pane, on their own price scales. Overlay puts both symbols on one price plot.
+- **Stack / Overlay.** Stack is the default: ALPHA and BETA each get a price plot, a volume strip, and a MACD sub-pane, on their own price scales. Turning **KDJ** on adds a KDJ sub-pane under MACD. Overlay puts both symbols on one price plot.
 - In Overlay, ALPHA stays candles and BETA is a close line. Both are divided by their own close at the first visible bar where both closes are positive, so that bar is 100 on the shared Y axis. Panning or zooming moves that base with the window. The header shows each symbol's own OHLCV at the crosshair index, plus that index (`idx`).
-- Overlay keeps one volume strip and one MACD sub-pane, both for ALPHA. BETA's volume and MACD are not drawn. BETA's header is the bar's OHLCV and index, not BETA's MA or MACD.
+- Overlay keeps one volume strip and the open sub-panes (MACD, and KDJ when that toggle is on), all for ALPHA. BETA's volume, MACD, and KDJ are not drawn. BETA's header is the bar's OHLCV and index, not BETA's MA, BOLL, MACD, or KDJ.
 - The panes share one horizontal viewport in both layouts. Dragging or scrolling pans and zooms that viewport, so the same bar indexes stay aligned.
-- One crosshair. In Stack, moving the pointer in either pane selects one bar index and draws that vertical line through that symbol's price plot, volume strip, and MACD sub-pane, and through the other symbol as well. The symbol under the pointer also draws the horizontal line. Each header shows that symbol's own OHLCV, and the MA and MACD values when those indicators are on. The time axis is drawn once, under the lower symbol. In Overlay the same index drives both headers, and the vertical line runs through the one price plot, the ALPHA volume strip, and the ALPHA MACD sub-pane.
+- One crosshair. In Stack, moving the pointer in either pane selects one bar index and draws that vertical line through that symbol's price plot, volume strip, and open sub-panes, and through the other symbol as well. The symbol under the pointer also draws the horizontal line. Each header shows that symbol's own OHLCV, and the MA, BOLL, MACD, and KDJ values when those indicators are on. The time axis is drawn once, under the lower symbol. In Overlay the same index drives both headers, and the vertical line runs through the one price plot, the ALPHA volume strip, and ALPHA's open sub-panes.
 - Candles with wicks. Green when close is at or above open, red otherwise (KLineChart's default). **Hollow** draws a rising body as an outline and keeps a falling body filled. Off, both bodies are filled. Volume bars and the MACD histogram stay filled either way.
 - MA5 and MA20 on each price plot. The **MA** toggle turns both lines off together. It starts on.
 - MACD(12, 26, 9) in a sub-pane under each volume strip: DIF, DEA, and a histogram of `2*(DIF-DEA)`, on that pane's own Y scale. The **MACD** toggle starts on. Turning it off removes the sub-pane and the MACD readout.
-- Volume is the built-in VOL strip between price and MACD. It is not a separate indicator and has no toggle.
+- **BOLL(20, 2)** on the price plot: the middle line is SMA20, and the upper and lower lines are that average ± 2 population standard deviations. The **BOLL** toggle starts off. The crosshair readout shows `MID`, `UP`, and `LOW`.
+- **KDJ(9, 3, 3)** in its own sub-pane under MACD (or under volume when MACD is off). The Y scale covers 0–100 and widens when K, D, or J leaves that range. The **KDJ** toggle starts off. The readout shows `K`, `D`, and `J`.
+- Volume is the built-in VOL strip between price and the sub-panes. It is not a separate indicator and has no toggle.
 - Colors come from `kline.Style`, built from the window theme by `StyleFrom`. Light and dark each get their own plot, grid, crosshair, and MA / MACD colors. Rising stays green and falling stays red on both. `DarkDefault` and `LightDefault` are those two styles.
-- In Stack, the price scale of each pane follows that symbol's visible bars. In Overlay, the one price scale follows the indexed range of both series, including ALPHA's moving averages when MA is on.
+- In Stack, the price scale of each pane follows that symbol's visible bars, including BOLL when that toggle is on. In Overlay, the one price scale follows the indexed range of both series, including ALPHA's moving averages and Bollinger bands when those toggles are on.
 - **Reset view** returns both panes to the latest bars at the default width.
 - **1h / 4h / 1d** reload both panes from the data source and fit the latest bars. The default **1h** series is the same walk as before (ALPHA seed 42, BETA seed 99).
 - Dragging to the left edge loads older bars, prepends them, and shifts the shared offset by that count so the bars on screen stay put. A load already in flight does not start another.
@@ -60,7 +62,7 @@ Native UI draws with Direct3D 11 on Windows, Metal on macOS, and OpenGL on Linux
 ## Layout
 
 - `main.go` — window, one readout per symbol, the shared viewport and crosshair index, and the period, layout, and indicator toggles.
-- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, `Style` (`style.go`: `StyleFrom`, `DarkDefault`, `LightDefault`), `DataSource` (`Period`, `BarRequest`, `SyntheticSource`), optional `LiveSource` and the in-memory `StubLiveSource`, the indicator list (`MA`, `MACD`), overlays (`Layer`, horizontal price line, segment), and overlay compare (`NormalizeClose`, `IndexBase`, `PaintCompare`). Volume is drawn by `Paint`, not by an indicator. Each symbol keeps its own `Layer`.
+- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, `Style` (`style.go`: `StyleFrom`, `DarkDefault`, `LightDefault`), `DataSource` (`Period`, `BarRequest`, `SyntheticSource`), optional `LiveSource` and the in-memory `StubLiveSource`, the indicator list (`MA`, `MACD`, `BOLL`, `KDJ`), overlays (`Layer`, horizontal price line, segment), and overlay compare (`NormalizeClose`, `IndexBase`, `PaintCompare`). Volume is drawn by `Paint`, not by an indicator. Each symbol keeps its own `Layer`.
 
 Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot. Dragging right decreases `offset` for all panes. The wheel keeps the bar under the pointer fixed while the width changes, and the other pane uses that same width. In Stack, each pane's Y axis is its own `chart.Linear` over that symbol's visible high/low. In Overlay, both series share one index scale: `close[i] / close[base] * 100`, and ALPHA's OHLC uses that same divisor. `Paint` takes the shared bar index so a pane draws the vertical line even when the pointer is on the other one.
 
@@ -196,6 +198,25 @@ func (f *feed) UnsubscribeBar(symbol string, period kline.Period) error {
 - HTTP、WebSocket，以及任何券商或行情客户端
 - A 股 / 港股协议、鉴权、账号
 - 在本仓库里替 dapu 接真实行情
+
+## P6
+
+本阶段加上打谱常用的两条：主图布林带，副图 KDJ。两条默认都关着，第一帧仍是价格、量柱、MACD。
+
+能做：
+
+- **BOLL(20, 2)** 画在价格区。中轨是收盘的 SMA20。上下轨是中轨 ± 2×标准差。标准差是窗口内 `(close − mid)²` 的平均再开方，除以 N，和 KLineChart 一致。三条线在窗口满 20 根时一起出现。
+- 工具条 **BOLL**。默认关。打开后十字线读数带上 `MID` / `UP` / `LOW`。价格轴把上下轨算进去，带不会被裁掉。Overlay 里这三条跟着 ALPHA 的归一化价格走。
+- **KDJ(9, 3, 3)** 单独占一条副图。RSV 用 9 根里的最高价和最低价；最高价等于最低价时分母按 1。K、D 的递推是 `((周期−1)×前值 + 当日值) / 周期`，没有前值时用 50。通常参数下就是 `(2×前值 + 当日值) / 3`。J = `3K − 2D`。和 KLineChart 的算法一致。
+- 副图 Y 轴通常覆盖 0–100。K、D 或 J 超出这个范围时轴跟着拉开。
+- 工具条 **KDJ**。默认关。Stack 里每个 symbol 自上而下是：价格、量柱、MACD（开着时）、KDJ（开着时）。只开 KDJ 时，它紧挨在量柱下面。Overlay 里副图仍只画 ALPHA 的。关掉后这一行消失，时间轴回到上面一条。
+- 十字线的竖线穿过 KDJ。指针停在 KDJ 上时，右侧标出该副图的 Y 值。两个 symbol 的抬头都显示这一根的 `K` / `D` / `J`。
+
+明确不做：
+
+- RSI、SAR，以及其余指标
+- 自定义脚本指标
+- P7 磁吸和斐波那契
 
 ## Out of scope
 

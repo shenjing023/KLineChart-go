@@ -89,20 +89,20 @@ type LiveSource interface {
 
 **Files:** Create `kline/ind_boll.go`, `kline/ind_boll_test.go`；Modify registry / `main.go` / layout if needed；README
 
-- [ ] BOLL(20, 2)：中轨 SMA20，上下轨 = 中轨 ± 2×标准差；`PaneMain`；三条线。
-- [ ] 工具条 **BOLL** 开关；默认关（避免主图过挤）。
-- [ ] 测试：短 fixture 断言中轨与已知 SMA 一致；上下轨对称。
-- [ ] 十字线 `ValueAt` 含 MID/UP/LOW。
+- [x] BOLL(20, 2)：中轨 SMA20，上下轨 = 中轨 ± 2×标准差；`PaneMain`；三条线。
+- [x] 工具条 **BOLL** 开关；默认关（避免主图过挤）。
+- [x] 测试：短 fixture 断言中轨与已知 SMA 一致；上下轨对称。
+- [x] 十字线 `ValueAt` 含 MID/UP/LOW。
 
 ### Task P6.2：KDJ
 
 **Files:** Create `kline/ind_kdj.go`, `kline/ind_kdj_test.go`；Modify layout（第二副图或与 MACD 互斥/并存——**推荐并存：price | vol | MACD | KDJ**，KDJ 默认可关）
 
-- [ ] KDJ(9, 3, 3)：RSV → K/D/J；副图自有 Y（通常 0–100）。
-- [ ] 工具条 **KDJ**；默认关。
-- [ ] 测试：fixture 断言 K/D/J 公式。
-- [ ] 截图：BOLL+KDJ 打开时 Stack 布局。
-- [ ] PR：`P6: BOLL main + KDJ sub-pane`。
+- [x] KDJ(9, 3, 3)：RSV → K/D/J；副图自有 Y（通常 0–100）。
+- [x] 工具条 **KDJ**；默认关。
+- [x] 测试：fixture 断言 K/D/J 公式。
+- [x] 截图：BOLL+KDJ 打开时 Stack 布局。
+- [x] PR：`P6: BOLL main + KDJ sub-pane`。
 
 **P6 不做：** RSI/SAR 等其余指标；自定义脚本指标。
 
