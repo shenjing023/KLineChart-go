@@ -225,11 +225,12 @@ func drawCandles(p *ui.Painter, plot ui.Rect, cs []Candle, vp Viewport, yScale c
 	}
 	for i := first; i <= last; i++ {
 		c := cs[i]
-		up := c.Close >= c.Open
-		color := style.Down
-		if up {
-			color = style.Up
+		prev := math.NaN()
+		if i > 0 {
+			prev = cs[i-1].Close
 		}
+		up := c.Close >= c.Open
+		color := style.CandleBodyColor(c, prev, style.LimitPct)
 		cx := plot.X + float32(vp.BarLeft(i)+vp.BarWidth/2)
 		// High is a larger price, so its fraction is larger and its
 		// window Y is smaller than Low's.

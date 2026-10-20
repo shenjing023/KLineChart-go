@@ -42,6 +42,36 @@ func TestHollowUpOutlinesRisingBody(t *testing.T) {
 	}
 }
 
+func TestLimitPctPaintsLimitUpBody(t *testing.T) {
+	cs := []Candle{
+		{Time: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), Open: 100, Close: 100, High: 101, Low: 99, Volume: 5},
+		{Time: time.Date(2024, 1, 1, 1, 0, 0, 0, time.UTC), Open: 100, Close: 110, High: 112, Low: 100, Volume: 5},
+	}
+	style := DarkDefault()
+	style.Plot = ui.RGB(8, 8, 12)
+	style.VolumeBg = ui.RGB(8, 8, 12)
+	style.Grid = ui.RGB(8, 8, 12)
+	style.Up = ui.RGB(0, 80, 40)
+	style.Down = ui.RGB(80, 20, 20)
+	style.LimitUp = ui.RGB(0, 255, 80)
+	style.LimitDown = ui.RGB(255, 40, 40)
+	style.LimitPct = 0
+	_, offUp := bodyInterior(t, cs, style)
+	if !nearUI(offUp, style.Up) {
+		t.Fatalf("limit off should keep Up: %+v", offUp)
+	}
+	style.LimitPct = 0.10
+	_, onUp := bodyInterior(t, cs, style)
+	if !nearUI(onUp, style.LimitUp) {
+		t.Fatalf("second bar is +10%% and should be LimitUp: %+v", onUp)
+	}
+	style.HollowUp = true
+	_, hollow := bodyInterior(t, cs, style)
+	if nearUI(hollow, style.LimitUp) {
+		t.Fatalf("hollow limit-up body should be an outline, interior %+v", hollow)
+	}
+}
+
 func TestPaintCopiesBOLLAndKDJColorsFromStyle(t *testing.T) {
 	cs := Generate(80, 42)
 	boll := NewBOLL(20, 2)
