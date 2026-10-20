@@ -51,12 +51,12 @@ type Pointer struct {
 // The vertical line runs through the price plot, the volume strip, and
 // each open sub-pane.
 func Paint(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, style Style) {
-	drawPrice(p, panes, cs, inds, vp, ptr, barIndex, style)
+	drawPrice(p, panes, cs, inds, vp, ptr, barIndex, style, defaultLabels())
 }
 
 // drawPrice is Paint, and it returns the price scale it used. A plot
 // smaller than 2 DIPs draws nothing and returns a zero scale.
-func drawPrice(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, style Style) chart.Linear {
+func drawPrice(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, style Style, labels labelFmt) chart.Linear {
 	price := panes.Price
 	if price.W < 2 || price.H < 2 {
 		return chart.Linear{}
@@ -107,7 +107,7 @@ func drawPrice(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Vie
 			ind.DrawSub(p, rect, vp)
 		})
 	}
-	drawCrosshair(p, panes, cs, vp, yScale, layers, ptr, barIndex, style)
+	drawCrosshair(p, panes, cs, vp, yScale, layers, ptr, barIndex, style, labels)
 	return yScale
 }
 
@@ -445,7 +445,7 @@ func drawVolume(p *ui.Painter, plot ui.Rect, cs []Candle, vp Viewport, volScale 
 	}
 }
 
-func drawCrosshair(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale chart.Linear, layers []subLayer, ptr Pointer, barIndex int, style Style) {
+func drawCrosshair(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale chart.Linear, layers []subLayer, ptr Pointer, barIndex int, style Style, labels labelFmt) {
 	if len(cs) == 0 {
 		return
 	}
@@ -486,15 +486,15 @@ func drawCrosshair(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale 
 		// Fraction up the plot: 0 at the bottom, 1 at the top, which
 		// is the space chart.Linear.Invert reads.
 		frac := float32((price.Y+price.H)-ptr.Y) / price.H
-		label := FormatPrice(yScale.Invert(frac))
+		label := labels.price(yScale.Invert(frac))
 		drawTag(p, panes.PriceAxis.X+4, ptr.Y, label, style)
 	}
 	if hitLayer != nil && hitLayer.plot.H > 0 {
 		frac := float32((hitLayer.plot.Y+hitLayer.plot.H)-ptr.Y) / hitLayer.plot.H
-		drawTag(p, hitLayer.axis.X+4, ptr.Y, FormatPrice(hitLayer.scale.Invert(frac)), style)
+		drawTag(p, hitLayer.axis.X+4, ptr.Y, labels.price(hitLayer.scale.Invert(frac)), style)
 	}
 	if panes.Time.H > 0 {
-		drawTag(p, x, panes.Time.Y+panes.Time.H/2, cs[i].Time.UTC().Format("01-02 15:04"), style)
+		drawTag(p, x, panes.Time.Y+panes.Time.H/2, labels.when(cs[i].Time, "01-02 15:04"), style)
 	}
 }
 

@@ -74,6 +74,7 @@ chart := kline.NewChart(kline.ChartOptions{
     Indicators: []string{"MA", "MACD"}, // nil keeps MA and MACD; empty turns all off
     Magnet:     kline.MagnetOff,
     HideHeader: true, // host draws its own bar; Readout still returns the text
+    // PriceDecimals: &digits, // nil keeps two decimals; Location nil is UTC
 })
 mygo.NewWindow(mygo.WindowOptions{
     Title:   "Chart",
@@ -105,6 +106,8 @@ _, _ = first, last
 ```
 
 `NewChart` with a `Style` that only sets a candle color fills the rest from `DarkDefault`. `EditStyle` starts from the theme you pass (`nil` is dark), keeps the live hollow switch and limit percent, then applies the edit. `SetHollow` and `SetLimitPct` change those two switches without dropping the color override. `Style.CandleBodyColor` is the rule Paint uses: a non-positive `limitPct` always returns `Up` or `Down`.
+
+`ChartOptions.PriceDecimals` is the number of digits after the decimal in `Readout` and in the crosshair price tags. Nil, or a negative value, keeps two decimals (`FormatPrice`). Zero prints a whole number. `FormatPriceDigits` and `FormatBarIn` are the same formatting for a host that draws its own label. `ChartOptions.Location` is the time zone of those times. Nil is UTC. A direct `Paint` or `PaintCompare` call stays at two decimals and UTC. Indicator `ValueAt` strings still use `FormatPrice`.
 
 `NewChart` has no error result. `LoadError` reports a first load whose `GetBars` failed (the panes stay empty) or whose `SubscribeBar` failed (the bars have no live updates). An invalid `SetPeriod` returns `ErrInvalidPeriod` before the source is asked and leaves the loaded bars in place. `SetPeriod` with the period already loaded does nothing while `LoadError` is nil: drawings, a segment in progress, and the live subscription stay. Earlier versions reloaded and dropped the drawings. While `LoadError` is set, the same period loads again. A real period change and `SetSource` drop drawings, any drawing or drag in progress, and the crosshair. `SetSource` reloads even when it is handed the source already in use, which is how a host refreshes a plain `DataSource`. The chart copies every slice `GetBars` returns, so a source may reuse its buffer.
 
@@ -420,7 +423,7 @@ func (f *feed) UnsubscribeBar(symbol string, period kline.Period) error {
 
 能做：
 
-- `kline.NewChart`。选项有 `Source`、`Symbols`、`Period`、`Layout`（`"stack"` 或 `"overlay"`）、`Style`、`Hollow`、`Indicators`、`Magnet`。没填的项用演示默认值：合成源、ALPHA 和 BETA、1h、Stack、MA 和 MACD 开、磁吸关、颜色跟窗口主题。
+- `kline.NewChart`。选项有 `Source`、`Symbols`、`Period`、`Layout`（`"stack"` 或 `"overlay"`）、`Style`、`Hollow`、`Indicators`、`Magnet`、`PriceDecimals`、`Location`。没填的项用演示默认值：合成源、ALPHA 和 BETA、1h、Stack、MA 和 MACD 开、磁吸关、价格两位小数、时间 UTC、颜色跟窗口主题。`PriceDecimals` 管表头和十字线价格；指标自己的 `ValueAt` 仍是两位。`Location` 为 nil 时用 UTC。
 - `View` 是 MyGo 的视图函数。单独做窗口时用 `ui.View(chart.View)`。宿主有自己的工具条时，在那一栏下面调用 `chart.View(ctx)`。没有工具条也会画出 Stack 的 K 线、量柱和选中的指标，平移、缩放、十字线都能用。
 - `SetPeriod`、`SetLayout`、`SetSource`、`Close`。换周期会重新加载并清掉画线。`SetSource(nil)` 返回错误。`SetLayout` 只接受 `"stack"` 和 `"overlay"`，别的字符串返回 `ErrUnknownLayout`，布局保持不变。`GetBars` 失败时保留原来的源。`SubscribeBar` 失败时返回错误，并退掉这一轮已经订上的 symbol。源实现了 `LiveSource` 仍会订阅，没有实现就只走 `GetBars`。`Close` 退订。
 - 工具条还绑定了 `SetTool`、`SetMagnet`、`SetIndicator`、`SetHollow`、`ResetView`。`SetMagnet` 只接受关、弱、强，别的值返回 `ErrUnknownMagnet`，当前模式不变。指标开关和 Hollow 也可以直接拿 `IndicatorEnabled` / `HollowEnabled` 的 `*bool` 交给 `ui.Toggle`。

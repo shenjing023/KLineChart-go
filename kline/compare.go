@@ -239,7 +239,7 @@ func commonLen(primary, compare []Candle) int {
 // primary series, in raw units. It returns false when the base close cannot be
 // indexed, and then draws the primary series with Paint instead.
 func PaintCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, style Style) bool {
-	_, ok := drawCompare(p, panes, primary, compare, inds, vp, ptr, barIndex, style)
+	_, ok := drawCompare(p, panes, primary, compare, inds, vp, ptr, barIndex, style, defaultLabels())
 	return ok
 }
 
@@ -247,7 +247,7 @@ func PaintCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []
 // That is the raw scale on an indexed plot, and MainScale when the base
 // close cannot be indexed. An empty primary draws nothing and still
 // returns MainScale.
-func drawCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, style Style) (chart.Linear, bool) {
+func drawCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, style Style, labels labelFmt) (chart.Linear, bool) {
 	price := panes.Price
 	if price.W < 2 || price.H < 2 {
 		return chart.Linear{}, false
@@ -259,7 +259,7 @@ func drawCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []I
 	}
 	index, raw, base := CompareScales(primary, compare, inds, vp, float64(price.W))
 	if !indexable(primary, base) {
-		return drawPrice(p, panes, primary, inds, vp, ptr, barIndex, style), false
+		return drawPrice(p, panes, primary, inds, vp, ptr, barIndex, style, labels), false
 	}
 	baseClose := primary[base].Close
 
@@ -310,7 +310,7 @@ func drawCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []I
 			ind.DrawSub(p, rect, vp)
 		})
 	}
-	drawCrosshair(p, panes, primary, vp, index, layers, ptr, barIndex, style)
+	drawCrosshair(p, panes, primary, vp, index, layers, ptr, barIndex, style, labels)
 	// Drawings are stored in raw price. raw is the scale that puts them
 	// on the indexed candles this function just painted.
 	return raw, true

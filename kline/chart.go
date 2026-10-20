@@ -169,6 +169,27 @@ type Chart struct {
 	// symbolErr is set when NewChart refused the symbol list. The chart
 	// then has no panes, and every load returns it.
 	symbolErr error
+	// priceDigits is the Readout and crosshair precision. digitsSet
+	// distinguishes a whole-number precision of 0 from a zero Chart,
+	// which still prints two decimals.
+	priceDigits int
+	digitsSet   bool
+	// zone formats bar times in the header and the crosshair tag. Nil is UTC.
+	zone *time.Location
+}
+
+func priceDigitsOf(digits *int) int {
+	if digits == nil || *digits < 0 {
+		return 2
+	}
+	return *digits
+}
+
+func (a *Chart) labels() labelFmt {
+	if a == nil || !a.digitsSet {
+		return defaultLabels()
+	}
+	return labelFmt{digits: a.priceDigits, loc: a.zone}
 }
 
 // liveSub is one SubscribeBar the window currently holds.
@@ -1277,7 +1298,7 @@ func (a *Chart) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime
 	s := &a.panes[i]
 	style := a.chartStyle(t)
 	active := a.active(s)
-	scale := drawPrice(p, panes, s.candles, active, a.vp, ptr, a.crossIndex, style)
+	scale := drawPrice(p, panes, s.candles, active, a.vp, ptr, a.crossIndex, style, a.labels())
 	var rubber *Rubber
 	if a.draftOn && a.draftPane == i && a.crossPane == i {
 		rubber = &Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}
@@ -1304,7 +1325,7 @@ func (a *Chart) paintCompare(p *ui.Painter, r ui.Rect, t *ui.Theme) {
 	primary, compare := a.overlayPair()
 	style := a.chartStyle(t)
 	active := a.active(&a.panes[0])
-	scale, _ := drawCompare(p, panes, primary, compare, active, a.vp, ptr, a.crossIndex, style)
+	scale, _ := drawCompare(p, panes, primary, compare, active, a.vp, ptr, a.crossIndex, style, a.labels())
 	var rubber *Rubber
 	if a.draftOn && a.draftPane == 0 && a.crossPane == 0 {
 		rubber = &Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}
@@ -1340,13 +1361,14 @@ func (a *Chart) readout(i int) string {
 		idx = a.crossIndex
 		label = "Hover"
 	}
-	line := label + "  " + FormatBar(s.candles[idx], math.NaN(), math.NaN())
+	labels := a.labels()
+	line := label + "  " + formatBar(s.candles[idx], math.NaN(), math.NaN(), labels)
 	if a.layout == layoutOverlay {
 		// Symbols after the second are not on the overlay plot.
 		if i > 1 {
 			return line
 		}
-		line += "  idx " + FormatPrice(a.indexValue(i, idx))
+		line += "  idx " + labels.price(a.indexValue(i, idx))
 		// The compare series is a close line. Its MA and MACD are not
 		// drawn, so they stay off this header.
 		if i != 0 {

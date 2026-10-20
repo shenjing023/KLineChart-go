@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -93,6 +94,15 @@ type ChartOptions struct {
 	// what tests use. The func passed to Marshal must not call SetPeriod,
 	// SetSource, or View.
 	Marshal func(func())
+	// PriceDecimals is the number of digits after the decimal in prices
+	// the chart formats: Readout (FormatBar) and the crosshair price tags.
+	// Nil keeps two decimals, which is FormatPrice. A negative value also
+	// keeps two. Zero prints a whole number. Indicator ValueAt strings
+	// still call FormatPrice and stay at two decimals.
+	PriceDecimals *int
+	// Location formats the times in Readout and the crosshair time tag.
+	// Nil is UTC. Candle.Time itself is not rewritten.
+	Location *time.Location
 }
 
 // NewChart loads the initial window and returns a chart the host can
@@ -140,22 +150,25 @@ func NewChart(opts ChartOptions) *Chart {
 		panes[i] = series{name: name}
 	}
 	a := &Chart{
-		src:        src,
-		period:     period,
-		panes:      panes,
-		slots:      slots,
-		vp:         Viewport{BarWidth: DefaultBarWidth},
-		crossIndex: -1,
-		crossPane:  -1,
-		magnet:     knownMagnet(opts.Magnet),
-		layout:     layout,
-		hollowUp:   opts.Hollow || opts.Style.HollowUp,
-		style:      opts.Style,
-		styleSet:   styleSpecified(opts.Style),
-		limitPct:   opts.Style.LimitPct,
-		hideHeader: opts.HideHeader,
-		marshal:    opts.Marshal,
-		symbolErr:  symbolErr,
+		src:         src,
+		period:      period,
+		panes:       panes,
+		slots:       slots,
+		vp:          Viewport{BarWidth: DefaultBarWidth},
+		crossIndex:  -1,
+		crossPane:   -1,
+		magnet:      knownMagnet(opts.Magnet),
+		layout:      layout,
+		hollowUp:    opts.Hollow || opts.Style.HollowUp,
+		style:       opts.Style,
+		styleSet:    styleSpecified(opts.Style),
+		limitPct:    opts.Style.LimitPct,
+		hideHeader:  opts.HideHeader,
+		marshal:     opts.Marshal,
+		symbolErr:   symbolErr,
+		priceDigits: priceDigitsOf(opts.PriceDecimals),
+		digitsSet:   true,
+		zone:        opts.Location,
 	}
 	if a.styleSet {
 		a.style = completeStyle(a.style)
