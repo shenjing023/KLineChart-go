@@ -198,7 +198,20 @@ Overlay mode used to normalize every bar on each frame. On 8000 bars at 960×720
 | Overlay pan frame | 3.50 ms, 2.91 MB/op | 2.64 ms, 194 KB/op |
 | Stack pan frame | 3.24 ms, 190 KB/op | 2.67 ms, 191 KB/op |
 
-Stack paint already walked the visible bars. The stack frame is mostly MyGo layout, so it was left alone. `BenchmarkIndicatorCalc` stays about 0.55 ms for MA, BOLL, MACD, and KDJ on 8000 bars, and it runs only when candles are replaced. `TestCompareScalesAllocationBudget` fails if the overlay scale copies the whole series again (budget 48 KB/op at this window).
+Stack paint already walked the visible bars. The stack frame is mostly MyGo layout, so it was left alone. `BenchmarkIndicatorCalc/8k` is MA, BOLL, MACD, and KDJ on 8000 bars, and it runs only when candles are replaced. `TestCompareScalesAllocationBudget` fails if the overlay scale copies the whole series again (budget 48 KB/op at this window). That table is the P9 before/after. Later runs compare against `bench/baseline.txt`.
+
+## Benchmarking
+
+`kline/perf_bench_test.go` is a fixed matrix: 1k, 8k, and 20k bars from `Generate`, at 960×720. Names look like `BenchmarkPanFrames/stack_8k` and `BenchmarkOverlayPanFrames/8k`. The same file also times zoom frames, crosshair moves, and a `StubLiveSource` revise of the last bar plus one paint. Pan and zoom alternate direction so the window does not walk into the clamp. `go test` does not run these; pass `-bench`.
+
+```bash
+go test ./kline -run '^$' -bench . -benchmem -count=6
+./bench/run.sh                  # writes bench/baseline.txt
+go test ./kline -run '^$' -bench . -benchmem -count=6 > bench/new.txt
+go tool benchstat bench/baseline.txt bench/new.txt
+```
+
+`benchstat` is the `golang.org/x/perf/cmd/benchstat` tool in `go.mod`. Compare runs from the same OS, architecture, and Go version. Machine notes and the column list are in `bench/README.md`.
 
 ## Layout
 
