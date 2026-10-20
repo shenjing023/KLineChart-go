@@ -619,6 +619,205 @@ func countNear(img *image.RGBA, r ui.Rect, target ui.Color) int {
 	return n
 }
 
+func TestOverlayLayoutShowsBothSymbolsOnOnePlot(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	if _, ok := tt.Find("ALPHA chart"); !ok {
+		t.Fatal("stack mode should keep the ALPHA pane")
+	}
+	if _, ok := tt.Find("BETA chart"); !ok {
+		t.Fatal("stack mode should keep the BETA pane")
+	}
+	if err := tt.Click("Overlay"); err != nil {
+		t.Fatal(err)
+	}
+	if a.layout != layoutOverlay {
+		t.Fatalf("layout %d", a.layout)
+	}
+	if _, ok := tt.Find("ALPHA chart"); ok {
+		t.Fatal("overlay mode should replace the two panes with one plot")
+	}
+	if _, ok := tt.Find("BETA chart"); ok {
+		t.Fatal("overlay mode should not keep a second pane")
+	}
+	box := mustBox(t, tt, "Compare chart")
+	if len(a.painted) != 1 {
+		t.Fatalf("painted panes %d", len(a.painted))
+	}
+	panes := a.painted[0]
+	if panes.Price.H < 80 || panes.Volume.H < 16 {
+		t.Fatalf("overlay needs one price plot and one volume strip: %+v", panes)
+	}
+	if panes.MACD.H < 16 {
+		t.Fatalf("overlay keeps the primary MACD strip: %+v", panes.MACD)
+	}
+	if panes.Volume.Y < panes.Price.Y+panes.Price.H || panes.MACD.Y < panes.Volume.Y+panes.Volume.H {
+		t.Fatalf("bands out of order: %+v", panes)
+	}
+	if box.H < 400 {
+		t.Fatalf("the compare plot should use the window, box %+v", box)
+	}
+	if !tt.HasText("BETA line") {
+		t.Fatalf("toolbar should name the compare line, texts %q", tt.Texts())
+	}
+
+	// One volume strip and one MACD band: turning MACD off removes that
+	// band and leaves the primary volume strip.
+	if err := tt.Click("MACD"); err != nil {
+		t.Fatal(err)
+	}
+	if a.painted[0].MACD.H != 0 || a.painted[0].Volume.H < 16 {
+		t.Fatalf("MACD off should leave primary volume only: %+v", a.painted[0])
+	}
+	if err := tt.Click("MACD"); err != nil {
+		t.Fatal(err)
+	}
+
+	img := tt.Image()
+	line := countNear(img, a.painted[0].Price, kline.StyleFrom(nil).Compare)
+	if line < 40 {
+		t.Fatalf("BETA close line pixels %d in %+v", line, a.painted[0].Price)
+	}
+	candles := countNear(img, a.painted[0].Price, kline.StyleFrom(nil).Up) +
+		countNear(img, a.painted[0].Price, kline.StyleFrom(nil).Down)
+	if candles < 40 {
+		t.Fatalf("primary candles pixels %d", candles)
+	}
+
+	if err := tt.Click("Stack"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := tt.Find("ALPHA chart"); !ok {
+		t.Fatal("stack should restore ALPHA")
+	}
+	if _, ok := tt.Find("BETA chart"); !ok {
+		t.Fatal("stack should restore BETA")
+	}
+}
+
+func TestOverlayReadoutAndSharedViewport(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	if err := tt.Click("Overlay"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	first, last := a.vp.Visible(a.bars(), a.plotW)
+	base := kline.IndexBase(first, last, a.panes[0].candles, a.panes[1].candles)
+	if base != first {
+		t.Fatalf("synthetic series should index the first visible bar, base %d first %d", base, first)
+	}
+	if math.Abs(a.indexValue(0, base)-100) > 1e-6 || math.Abs(a.indexValue(1, base)-100) > 1e-6 {
+		t.Fatalf("index at base: %v %v", a.indexValue(0, base), a.indexValue(1, base))
+	}
+	later := base + 8
+	if later > last {
+		t.Fatalf("visible window %d..%d is too short", first, last)
+	}
+	want0 := a.panes[0].candles[later].Close / a.panes[0].candles[base].Close * 100
+	want1 := a.panes[1].candles[later].Close / a.panes[1].candles[base].Close * 100
+	if math.Abs(a.indexValue(0, later)-want0) > 1e-6 || math.Abs(a.indexValue(1, later)-want1) > 1e-6 {
+		t.Fatalf("later index %v %v, want %v %v", a.indexValue(0, later), a.indexValue(1, later), want0, want1)
+	}
+
+	price := a.painted[0].Price
+	x := price.X + float32(a.vp.BarLeft(later)+a.vp.BarWidth/2)
+	tt.Move(x, price.Y+price.H*0.4)
+	if a.crossIndex != later {
+		t.Fatalf("cross index %d, want %d", a.crossIndex, later)
+	}
+	r0, r1 := a.readout(0), a.readout(1)
+	when := a.panes[0].candles[later].Time.UTC().Format("2006-01-02 15:04")
+	if !strings.Contains(r0, "Hover") || !strings.Contains(r1, "Hover") || !strings.Contains(r0, when) || !strings.Contains(r1, when) {
+		t.Fatalf("both readouts should follow the same bar:\n%s\n%s", r0, r1)
+	}
+	p0 := kline.FormatPrice(a.panes[0].candles[later].Close)
+	p1 := kline.FormatPrice(a.panes[1].candles[later].Close)
+	if !strings.Contains(r0, "C "+p0) || !strings.Contains(r1, "C "+p1) {
+		t.Fatalf("each readout should show that symbol's close:\n%s\n%s", r0, r1)
+	}
+	if !strings.Contains(r0, "idx "+kline.FormatPrice(want0)) || !strings.Contains(r1, "idx "+kline.FormatPrice(want1)) {
+		t.Fatalf("readouts should show the index:\n%s\n%s", r0, r1)
+	}
+	if !strings.Contains(r0, "DIF") || strings.Contains(r1, "DIF") {
+		t.Fatalf("MACD stays on the primary readout:\n%s\n%s", r0, r1)
+	}
+	if !tt.HasText(r0) || !tt.HasText(r1) {
+		t.Fatalf("headers missing both readouts, texts %q", tt.Texts())
+	}
+
+	offset := a.vp.Offset
+	tt.Press(price.X+40, price.Y+30)
+	tt.Move(price.X+160, price.Y+30)
+	tt.Release(price.X+160, price.Y+30)
+	if a.vp.Offset >= offset-1 {
+		t.Fatalf("drag on the compare plot should pan the shared viewport: %v, was %v", a.vp.Offset, offset)
+	}
+	moved := a.vp.Offset
+	if err := tt.Click("Stack"); err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(a.vp.Offset-moved) > 1e-9 {
+		t.Fatalf("leaving overlay changed the viewport: %v, was %v", a.vp.Offset, moved)
+	}
+
+	// Panning to a later window rebases both series to 100 at the new
+	// first visible bar.
+	if err := tt.Click("Overlay"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	anchored, _ := a.vp.Visible(a.bars(), a.plotW)
+	a.vp.Offset = float64(anchored + 40)
+	a.vp.Clamp(a.bars(), a.plotW)
+	tt.Frame()
+	next, _ := a.vp.Visible(a.bars(), a.plotW)
+	if next <= anchored {
+		t.Fatalf("window did not move: %d then %d", anchored, next)
+	}
+	if math.Abs(a.indexValue(0, next)-100) > 1e-6 || math.Abs(a.indexValue(1, next)-100) > 1e-6 {
+		t.Fatalf("rebased index %v %v at %d", a.indexValue(0, next), a.indexValue(1, next), next)
+	}
+	if math.Abs(a.indexValue(0, anchored)-100) < 0.05 {
+		t.Fatalf("old base stayed at 100: %v", a.indexValue(0, anchored))
+	}
+}
+
+func TestOverlayHLineStoresPrimaryPrice(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	if err := tt.Click("Overlay"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("H-Line"); err != nil {
+		t.Fatal(err)
+	}
+	price := a.painted[0].Price
+	x := price.X + 180
+	y := price.Y + price.H*0.4
+	tt.ClickAt(x, y)
+	items := a.panes[0].overlays.Items()
+	if len(items) != 1 || len(a.panes[1].overlays.Items()) != 0 {
+		t.Fatalf("overlay drawings %d %d", len(items), len(a.panes[1].overlays.Items()))
+	}
+	got := items[0].Points[0].Price
+	want := kline.LocalYToPrice(float64(price.H), float64(y-price.Y), a.priceScale(0))
+	if math.Abs(got-want) > 0.05 {
+		t.Fatalf("stored %v, pointer price %v", got, want)
+	}
+	// The stored value is a raw price. An index near 100 would mean the
+	// click was written in normalized units.
+	if math.Abs(got-100) < 1 && math.Abs(want-a.panes[0].candles[len(a.panes[0].candles)-1].Close) > 5 {
+		t.Fatalf("stored price %v looks like an index, last close %v", got, a.panes[0].candles[len(a.panes[0].candles)-1].Close)
+	}
+	if err := tt.Click("Stack"); err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(a.panes[0].overlays.Items()[0].Points[0].Price-got) > 1e-9 {
+		t.Fatal("returning to stack changed the stored price")
+	}
+}
+
 func TestRenderFrames(t *testing.T) {
 	dir := os.Getenv("KLINE_FRAMES")
 	if dir == "" {
@@ -663,6 +862,28 @@ func TestRenderFrames(t *testing.T) {
 	writePNG(t, dir+"/p2-hline-segment.png", tt.Image())
 	if len(a.panes[0].overlays.Items()) != 2 || len(a.panes[1].overlays.Items()) != 1 {
 		t.Fatalf("frame overlays %d %d", len(a.panes[0].overlays.Items()), len(a.panes[1].overlays.Items()))
+	}
+
+	ov := newApp()
+	ovt := ui.NewTester(ov.view, 1100, 1000)
+	if err := ovt.Click("Overlay"); err != nil {
+		t.Fatal(err)
+	}
+	ovt.Move(10, 10)
+	writePNG(t, dir+"/p3-overlay.png", ovt.Image())
+	if len(ov.painted) != 1 || ov.painted[0].Price.H < 80 || ov.painted[0].Volume.H < 16 {
+		t.Fatal("overlay frame has no single price plot")
+	}
+	price := ov.painted[0].Price
+	_, last := ov.vp.Visible(ov.bars(), ov.plotW)
+	x := price.X + float32(ov.vp.BarLeft(last)+ov.vp.BarWidth/2)
+	if x < price.X || x > price.X+price.W {
+		x = price.X + price.W*0.7
+	}
+	ovt.Move(x, price.Y+price.H*0.45)
+	writePNG(t, dir+"/p3-overlay-crosshair.png", ovt.Image())
+	if ov.crossIndex < 0 || !strings.Contains(ov.readout(0), "Hover") || !strings.Contains(ov.readout(1), "Hover") {
+		t.Fatalf("overlay crosshair readouts %q %q", ov.readout(0), ov.readout(1))
 	}
 }
 

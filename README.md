@@ -6,18 +6,20 @@ It is a demo of the interaction in [KLineChart](https://github.com/klinecharts/K
 
 ## What you can do
 
-- Two symbols, ALPHA and BETA, stacked in one window. Each symbol is price, then a volume strip, then a MACD sub-pane. They are not drawn on one price scale.
-- The panes share one horizontal viewport. Dragging or scrolling either pane pans and zooms both, so the same bar indexes stay aligned.
-- One crosshair. Moving the pointer in either pane selects one bar index and draws that vertical line through that symbol's price plot, volume strip, and MACD sub-pane, and through the other symbol as well. The symbol under the pointer also draws the horizontal line. Each header shows that symbol's own OHLCV, and the MA and MACD values when those indicators are on. The time axis is drawn once, under the lower symbol.
+- **Stack / Overlay.** Stack is the default: ALPHA and BETA each get a price plot, a volume strip, and a MACD sub-pane, on their own price scales. Overlay puts both symbols on one price plot.
+- In Overlay, ALPHA stays candles and BETA is a close line. Both are divided by their own close at the first visible bar where both closes are positive, so that bar is 100 on the shared Y axis. Panning or zooming moves that base with the window. The header shows each symbol's own OHLCV at the crosshair index, plus that index (`idx`).
+- Overlay keeps one volume strip and one MACD sub-pane, both for ALPHA. BETA's volume and MACD are not drawn. BETA's header is the bar's OHLCV and index, not BETA's MA or MACD.
+- The panes share one horizontal viewport in both layouts. Dragging or scrolling pans and zooms that viewport, so the same bar indexes stay aligned.
+- One crosshair. In Stack, moving the pointer in either pane selects one bar index and draws that vertical line through that symbol's price plot, volume strip, and MACD sub-pane, and through the other symbol as well. The symbol under the pointer also draws the horizontal line. Each header shows that symbol's own OHLCV, and the MA and MACD values when those indicators are on. The time axis is drawn once, under the lower symbol. In Overlay the same index drives both headers, and the vertical line runs through the one price plot, the ALPHA volume strip, and the ALPHA MACD sub-pane.
 - Candles with wicks. Green when close is at or above open, red otherwise (KLineChart's default).
 - MA5 and MA20 on each price plot. The **MA** toggle turns both lines off together. It starts on.
 - MACD(12, 26, 9) in a sub-pane under each volume strip: DIF, DEA, and a histogram of `2*(DIF-DEA)`, on that pane's own Y scale. The **MACD** toggle starts on. Turning it off removes the sub-pane and the MACD readout.
 - Volume is the built-in VOL strip between price and MACD. It is not a separate indicator and has no toggle.
-- The price scale of each pane follows that symbol's visible bars.
+- In Stack, the price scale of each pane follows that symbol's visible bars. In Overlay, the one price scale follows the indexed range of both series, including ALPHA's moving averages when MA is on.
 - **Reset view** returns both panes to the latest bars at the default width.
 - **1h / 4h / 1d** reload both panes from the data source and fit the latest bars. The default **1h** series is the same walk as before (ALPHA seed 42, BETA seed 99).
 - Dragging to the left edge loads older bars, prepends them, and shifts the shared offset by that count so the bars on screen stay put. A load already in flight does not start another.
-- **Pan / H-Line / Segment.** Pan drags the chart. H-Line places a horizontal price line with one click; dragging it changes the price. Segment takes two clicks, with a rubber band between them. A draw tool turns pan off. The selected line is highlighted. Delete removes it, and a right-click removes the line under the pointer. Drawings belong to the pane that was clicked.
+- **Pan / H-Line / Segment.** Pan drags the chart. H-Line places a horizontal price line with one click; dragging it changes the price. Segment takes two clicks, with a rubber band between them. A draw tool turns pan off. The selected line is highlighted. Delete removes it, and a right-click removes the line under the pointer. Drawings belong to the pane that was clicked. In Overlay, new drawings are stored on ALPHA in raw price, and BETA's existing lines stay hidden until you return to Stack.
 
 ## Run
 
@@ -56,10 +58,10 @@ Native UI draws with Direct3D 11 on Windows, Metal on macOS, and OpenGL on Linux
 
 ## Layout
 
-- `main.go` — window, one readout per symbol, the shared viewport and crosshair index, and the period and indicator toggles.
-- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, `DataSource` (`Period`, `BarRequest`, `SyntheticSource`), the indicator list (`MA`, `MACD`), and overlays (`Layer`, horizontal price line, segment). Volume is drawn by `Paint`, not by an indicator. Each symbol keeps its own `Layer`.
+- `main.go` — window, one readout per symbol, the shared viewport and crosshair index, and the period, layout, and indicator toggles.
+- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, `DataSource` (`Period`, `BarRequest`, `SyntheticSource`), the indicator list (`MA`, `MACD`), overlays (`Layer`, horizontal price line, segment), and overlay compare (`NormalizeClose`, `IndexBase`, `PaintCompare`). Volume is drawn by `Paint`, not by an indicator. Each symbol keeps its own `Layer`.
 
-Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot. Dragging right decreases `offset` for all panes. The wheel keeps the bar under the pointer fixed while the width changes, and the other pane uses that same width. Each pane's Y axis is its own `chart.Linear` over that symbol's visible high/low. `Paint` takes the shared bar index so a pane draws the vertical line even when the pointer is on the other one.
+Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot. Dragging right decreases `offset` for all panes. The wheel keeps the bar under the pointer fixed while the width changes, and the other pane uses that same width. In Stack, each pane's Y axis is its own `chart.Linear` over that symbol's visible high/low. In Overlay, both series share one index scale: `close[i] / close[base] * 100`, and ALPHA's OHLC uses that same divisor. `Paint` takes the shared bar index so a pane draws the vertical line even when the pointer is on the other one.
 
 ## P0
 
@@ -77,7 +79,7 @@ Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot.
 - 真实行情 HTTP、WebSocket、`subscribeBar`
 - 缺会话的空隙压缩
 - P2 画线
-- P3 同轴叠加
+- P3 同轴叠加（本阶段不做，见下文）
 - P4 外置样式、明暗主题、空心阳线
 
 ## P1
@@ -97,7 +99,7 @@ Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot.
 
 - BOLL、SAR 等其余指标，以及运行时 `registerIndicator` 热加载
 - 把 VOL 再包成可替换指标
-- P3 同轴叠加、P4 样式外置
+- P3 同轴叠加（本阶段不做，见下文）、P4 样式外置
 
 ## P2
 
@@ -117,7 +119,27 @@ Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot.
 
 - 斐波那契、笔刷，以及磁吸的弱档 / 强档
 - 一条线同时画在两个 pane 上
-- P3 同轴叠加、P4 样式外置
+- P3 同轴叠加（见下文）、P4 样式外置
+
+## P3
+
+本阶段加了同轴比较，没有改 Stack 的画法和手势。默认仍是 Stack。
+
+能做：
+
+- 工具条 **Stack / Overlay**。Stack 是原来的上下两栏：各自的价格、量柱、MACD。Overlay 收成一栏。
+- Overlay 里主序列（ALPHA）仍是蜡烛。第二序列（BETA）画收盘折线，不用第二套蜡烛。两套蜡烛叠在一起时实体会互相挡住，折线能看清相对走势。
+- 归一化是 `close[i] / close[base] * 100`。`base` 是当前可见区间里，两列收盘都为正的第一根；可见区间里没有这样的 bar 时，退到整段序列里的第一根。ALPHA 的开高低收都除以 ALPHA 在 `base` 的收盘，所以这根蜡烛的收盘是 100。BETA 除以 BETA 自己在同一根的收盘。Y 轴跟着两条归一化序列（以及打开时的 ALPHA 均线）的范围走。平移或缩放会改 `base`，两条都从新的左端重新回到 100。
+- 视窗和十字线仍然共用。两个抬头都显示这一根的 OHLCV，并带上 `idx`（归一化后的收盘）。ALPHA 的抬头继续带 MA 和 MACD。BETA 的抬头不带它自己的 MA / MACD。
+- 量柱和 MACD 只留 ALPHA 的一条。BETA 的量柱和 MACD 不画，避免一栏里再塞第二套副图。
+- 画线仍按原始价格存在 ALPHA 的 `Layer` 上。切到 Overlay 时用同一条价格到像素的映射，线还贴在 ALPHA 的蜡烛上。BETA 上已有的线先藏起来，回到 Stack 再出现。
+
+明确不做：
+
+- 双价格轴、对数轴、锁定 Y
+- BETA 的量柱或 MACD 副图
+- 两条都画成蜡烛
+- P4 样式外置、明暗主题、空心阳线
 
 ## Out of scope
 
@@ -129,6 +151,6 @@ Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot.
 ## Limitations
 
 - Bars are evenly spaced by index. The sample is hourly, so the time axis matches the bars. A real series with missing sessions would still be drawn one slot per bar.
-- Each price scale always refits that pane's visible range. There is no locked or manual scale, and the two symbols are not overlaid on one scale.
+- Each price scale refits the visible range. Stack gives each symbol its own scale. Overlay indexes both to 100 at the first visible common bar and refits that index range. There is no locked or manual scale.
 - Zoom changes bar width between 3 and 28 DIPs. It is not KLineChart's gesture model.
 - The cloud build compiles and tests the view headlessly. It does not open the window.
