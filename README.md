@@ -33,9 +33,15 @@ It is a demo of the interaction in [KLineChart](https://github.com/klinecharts/K
 MyGo needs **Go 1.27.1 or later**. This module pins `github.com/egoist/mygo` v0.5.5 and the `mygo` CLI as a tool, so the CLI matches the library.
 
 ```bash
-go test ./...
+go build -o k-line .
+go test ./... -count=1
+go test ./... -race -count=1
 go run .
 ```
+
+`go build -o kline .` does not write a root binary: `kline` is the library directory, so Go places `kline/KLineChart-go` inside that package. `-o k-line` matches the name `mygo build` uses.
+
+`go test` runs the allocation-budget tests. The benchmark matrix is not part of that command; see [Benchmarking](#benchmarking).
 
 With the CLI, from this directory:
 
@@ -51,7 +57,7 @@ go install github.com/egoist/mygo/cmd/mygo@v0.5.5
 mygo dev
 ```
 
-`go build -o kline .` also produces a binary. Packaging (`mygo build`) is optional.
+Packaging (`mygo build`) is optional. `go build` does not need cgo.
 
 ### Windows, macOS, Linux
 
@@ -267,9 +273,18 @@ go tool benchstat bench/baseline.txt bench/new.txt
 
 ## Layout
 
-- `main.go` — window chrome and the toolbar. The buttons call `kline.Chart`.
-- `kline/chart.go` — embeddable `Chart`: symbols, period, layout, indicators, magnet, drawings, pan, zoom, and the crosshair. `View` does not build a toolbar. Hosts register indicators with `Register` and drawings with `RegisterOverlay`.
-- `kline/` — `Candle`, `Generate`, SMA, the viewport (index, bar width, pan, zoom, hit testing), `Paint` using `ui.Painter`, `Style` (`style.go`: `StyleFrom`, `DarkDefault`, `LightDefault`, `LimitUp`, `LimitDown`, `CandleBodyColor`), `DataSource` (`Period`, `BarRequest`, `SyntheticSource`), optional `LiveSource` and the in-memory `StubLiveSource`, the indicator list (`MA`, `MACD`, `BOLL`, `KDJ`), magnet snap (`MagnetMode`, `SnapPrice`), overlays (`Layer`, horizontal price line, segment, Fibonacci retracement), and overlay compare (`NormalizeClose`, `IndexBase`, `PaintCompare`). Volume is drawn by `Paint`, not by an indicator. Each symbol keeps its own `Layer`.
+Module `github.com/shenjing023/KLineChart-go`. The root is the demo. The library is `kline/`.
+
+- `main.go` — window and toolbar. Buttons call `kline.Chart`. `main_test.go` drives that toolbar with `ui.NewTester`. `mygo.json` is the app name, identifier, version, and `build/` output directory.
+- `kline/chart.go` — `Chart.View`, pane paint, and the readout. `chart_opts.go` is `ChartOptions`, `NewChart`, and the setters. `chart_load.go` loads history and prepends. `chart_live.go` subscribes and fences live handlers. `chart_input.go` is pan, zoom, and drawing input.
+- `kline/data.go` — `Period`, `BarRequest`, `DataSource`, `LiveSource`. `synthetic.go` is `SyntheticSource` (no network, not a live feed). `live_stub.go` is the in-memory `StubLiveSource`.
+- `kline/indicator.go` — `Indicator`, optional `BarTail`, `LinePlot`, `SubPlot`, and `Register`. Built-ins are `ind_ma.go`, `ind_macd.go`, `ind_boll.go`, `ind_kdj.go`.
+- `kline/overlay.go` — `Point`, `Overlay`, `Layer`, `RegisterOverlay`. Drawings are `ov_hline.go`, `ov_segment.go`, `ov_fibonacci.go`. `magnet.go` is `MagnetMode` and `SnapPrice`.
+- `kline/style.go` — `Style`, `StyleFrom`, `DarkDefault`, `LightDefault`, `CandleBodyColor`. `paint.go` draws candles and the volume strip. `compare.go` indexes the overlay. `viewport.go` is the shared window. `layout.go` splits the panes. `candle.go` is `Candle` and `Generate`.
+- `kline/marker.go` — `Marker`, `SetMarkers`, `AppendMarker`, `ClearMarkers`. `append.go` is `AppendBar` and `UpdateLast`. `replay.go` is `StartReplay`.
+- `bench/` — `run.sh` writes `baseline.txt`. Column notes are in `bench/README.md`.
+- `docs/plans/` — historical P0–P9 plans, not a work queue. `docs/reviews/2026-10-20-full-review.md` is the review. Its Status table is the resolution log: when a finding is fixed, add a row with the finding, what changed, and the commit. Leave the original finding text as written.
+- `AGENTS.md` — command list and invariants for coding agents. Behavior and the embed API stay in this file.
 
 Bar `i` starts `(i - offset) * barWidth` DIPs from the left of every price plot. Dragging right decreases `offset` for all panes. The wheel keeps the bar under the pointer fixed while the width changes, and the other pane uses that same width. In Stack, each pane's Y axis is its own `chart.Linear` over that symbol's visible high/low. In Overlay, both series share one index scale: `close[i] / close[base] * 100`, and ALPHA's OHLC uses that same divisor. `Paint` takes the shared bar index so a pane draws the vertical line even when the pointer is on the other one.
 
