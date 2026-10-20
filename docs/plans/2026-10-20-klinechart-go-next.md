@@ -116,19 +116,19 @@ type LiveSource interface {
 
 **Files:** Create `kline/magnet.go`, `kline/magnet_test.go`；Modify overlay 放置路径 / `main.go`
 
-- [ ] `MagnetMode`: `off` | `weak` | `strong`。
-- [ ] 弱磁：指针价距最近 OHLC（或收盘）小于阈值（DIP 或价格比例）则吸附；强磁：强制吸到最近 OHLC。
-- [ ] 工具条 **Magnet: Off / Weak / Strong**；仅影响新点与拖端点，不改已有线批量重算。
-- [ ] 测试：给定 bar OHLC 与指针价，断言吸附结果。
+- [x] `MagnetMode`: `off` | `weak` | `strong`。
+- [x] 弱磁：指针价距最近 OHLC（或收盘）小于阈值（DIP 或价格比例）则吸附；强磁：强制吸到最近 OHLC。
+- [x] 工具条 **Magnet: Off / Weak / Strong**；仅影响新点与拖端点，不改已有线批量重算。
+- [x] 测试：给定 bar OHLC 与指针价，断言吸附结果。
 
 ### Task P7.2：Fibonacci
 
 **Files:** Create `kline/ov_fibonacci.go`；Modify `overlay.go` Hit/Draw；`main.go` 工具
 
-- [ ] 两点定高低；画标准回撤水平线：0 / 0.236 / 0.382 / 0.5 / 0.618 / 0.786 / 1（可配置 ratios 常量）。
-- [ ] 工具 **Fib**：两击完成；选中可拖端点；Delete/右键删除同现有。
-- [ ] Hit：命中任一条水平线或端点。
-- [ ] 截图 + PR：`P7: magnet snaps + fibonacci overlay`。
+- [x] 两点定高低；画标准回撤水平线：0 / 0.236 / 0.382 / 0.5 / 0.618 / 0.786 / 1（可配置 ratios 常量）。
+- [x] 工具 **Fib**：两击完成；选中可拖端点；Delete/右键删除同现有。
+- [x] Hit：命中任一条水平线或端点。
+- [x] 截图 + PR：`P7: magnet snaps + fibonacci overlay`。
 
 **P7 不做：** 全套射线/平行通道/笔刷；跨 pane 共享同一 overlay。
 

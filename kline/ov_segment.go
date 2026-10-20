@@ -44,6 +44,10 @@ func drawSegment(p *ui.Painter, plot ui.Rect, o Overlay, vp Viewport, scale char
 }
 
 func drawRubber(p *ui.Painter, plot ui.Rect, rubber Rubber, vp Viewport, scale chart.Linear, cs []Candle, style Style) {
+	if rubber.Kind == OverlayFibonacci {
+		drawFibRubber(p, plot, rubber, vp, scale, cs, style)
+		return
+	}
 	x0, y0 := anchorPixel(plot, rubber.From, vp, scale, cs)
 	x1 := plot.X + float32(rubber.X)
 	y1 := plot.Y + float32(rubber.Y)

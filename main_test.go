@@ -587,6 +587,140 @@ func TestSegmentTwoClickPerPane(t *testing.T) {
 	}
 }
 
+func TestFibToolbarPresent(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	if !tt.HasText("Fib") {
+		t.Fatalf("toolbar missing Fib: %q", tt.Texts())
+	}
+}
+
+func TestFibTwoClickPerPane(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	if err := tt.Click("Fib"); err != nil {
+		t.Fatal(err)
+	}
+	p0 := a.painted[0].Price
+	p1 := a.painted[1].Price
+	tt.ClickAt(p0.X+120, p0.Y+p0.H*0.25)
+	if !a.draftOn || a.draftPane != 0 {
+		t.Fatalf("draft on %v pane %d", a.draftOn, a.draftPane)
+	}
+	if len(a.panes[0].overlays.Items()) != 0 {
+		t.Fatal("first click should leave fib unfinished")
+	}
+	x1 := p0.X + 300
+	y1 := p0.Y + p0.H*0.75
+	tt.Move(x1, y1)
+	tt.ClickAt(x1, y1)
+	if a.draftOn {
+		t.Fatal("second click should finish fib")
+	}
+	items := a.panes[0].overlays.Items()
+	if len(items) != 1 || items[0].Kind != kline.OverlayFibonacci || len(items[0].Points) != 2 || !items[0].Selected {
+		t.Fatalf("fib %+v", items)
+	}
+	if len(a.panes[1].overlays.Items()) != 0 {
+		t.Fatal("fib landed on the other pane")
+	}
+
+	tt.ClickAt(p1.X+100, p1.Y+p1.H*0.35)
+	tt.ClickAt(p1.X+240, p1.Y+p1.H*0.65)
+	if len(a.panes[0].overlays.Items()) != 1 || len(a.panes[1].overlays.Items()) != 1 {
+		t.Fatalf("per-pane counts %d %d", len(a.panes[0].overlays.Items()), len(a.panes[1].overlays.Items()))
+	}
+
+	midY := p1.Y + p1.H*0.5
+	tt.RightClickAt(p1.X+170, midY)
+	if len(a.panes[1].overlays.Items()) != 0 {
+		t.Fatal("right-click should delete fib on that pane")
+	}
+	if len(a.panes[0].overlays.Items()) != 1 {
+		t.Fatal("right-click on beta should leave alpha fib")
+	}
+
+	mid := p0.Y + p0.H*0.5
+	tt.ClickAt(p0.X+200, mid)
+	tt.Key(0, ui.KeyDelete)
+	if len(a.panes[0].overlays.Items()) != 0 {
+		t.Fatal("delete should remove selected fib")
+	}
+}
+
+func TestFibEndpointDrag(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	if err := tt.Click("Fib"); err != nil {
+		t.Fatal(err)
+	}
+	p0 := a.painted[0].Price
+	tt.ClickAt(p0.X+100, p0.Y+p0.H*0.3)
+	tt.ClickAt(p0.X+280, p0.Y+p0.H*0.7)
+	fib := a.panes[0].overlays.Items()[0]
+	other := fib.Points[1]
+	end := fib.Points[0]
+	scale := kline.MainScale(a.panes[0].candles, a.active(a.panes[0]), a.vp, a.plotW)
+	winX := p0.X + float32(kline.AnchorX(end, a.vp, a.panes[0].candles))
+	winY := p0.Y + float32(kline.PriceToLocalY(float64(p0.H), end.Price, scale))
+	tt.Press(winX, winY)
+	tt.Move(winX+40, p0.Y+p0.H*0.85)
+	tt.Release(winX+40, p0.Y+p0.H*0.85)
+	got := a.panes[0].overlays.Items()[0]
+	if math.Abs(got.Points[1].Price-other.Price) > 1e-9 || got.Points[1].BarIndex != other.BarIndex {
+		t.Fatalf("other endpoint moved: %+v was %+v", got.Points[1], other)
+	}
+	if got.Points[0].Price >= end.Price-0.05 {
+		t.Fatalf("dragging endpoint down should lower price: %v -> %v", end.Price, got.Points[0].Price)
+	}
+}
+
+func TestFibMagnetStrongSnapsEndpoints(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	if err := tt.Click("Magnet Strong"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("Fib"); err != nil {
+		t.Fatal(err)
+	}
+	p0 := a.painted[0].Price
+	x0 := p0.X + 200
+	y0 := p0.Y + p0.H*0.42
+	plotX := float64(x0 - p0.X)
+	idx, ok := a.vp.IndexAt(plotX, len(a.panes[0].candles))
+	if !ok {
+		t.Fatal("no bar under click")
+	}
+	bar := a.panes[0].candles[idx]
+	scale := kline.MainScale(a.panes[0].candles, a.active(a.panes[0]), a.vp, a.plotW)
+	raw := kline.LocalYToPrice(float64(p0.H), float64(y0-p0.Y), scale)
+	if onOHLC(raw, bar, 1e-6) {
+		y0 = p0.Y + p0.H*0.37
+	}
+	tt.ClickAt(x0, y0)
+	x1 := p0.X + 320
+	y1 := p0.Y + p0.H*0.68
+	plotX1 := float64(x1 - p0.X)
+	idx1, ok := a.vp.IndexAt(plotX1, len(a.panes[0].candles))
+	if !ok {
+		t.Fatal("no bar under second click")
+	}
+	bar1 := a.panes[0].candles[idx1]
+	raw1 := kline.LocalYToPrice(float64(p0.H), float64(y1-p0.Y), scale)
+	if onOHLC(raw1, bar1, 1e-6) {
+		y1 = p0.Y + p0.H*0.62
+	}
+	tt.ClickAt(x1, y1)
+	fib := a.panes[0].overlays.Items()[0]
+	if !onOHLC(fib.Points[0].Price, bar, 1e-4) {
+		t.Fatalf("first endpoint %v not on OHLC %+v", fib.Points[0].Price, bar)
+	}
+	if !onOHLC(fib.Points[1].Price, bar1, 1e-4) {
+		t.Fatalf("second endpoint %v not on OHLC %+v", fib.Points[1].Price, bar1)
+	}
+}
+
 func TestSegmentEndpointDrag(t *testing.T) {
 	a := newApp()
 	tt := ui.NewTester(a.view, 1100, 1000)
@@ -1050,6 +1184,18 @@ func TestRenderFrames(t *testing.T) {
 	if !strings.Contains(p6.readout(0), "MID ") || !strings.Contains(p6.readout(0), "K ") {
 		t.Fatalf("stack frame readout %q", p6.readout(0))
 	}
+
+	if err := p6t.Click("Fib"); err != nil {
+		t.Fatal(err)
+	}
+	fibPlot := p6.painted[0].Price
+	p6t.ClickAt(fibPlot.X+90, fibPlot.Y+fibPlot.H*0.2)
+	p6t.ClickAt(fibPlot.X+340, fibPlot.Y+fibPlot.H*0.78)
+	p6t.Move(10, 10)
+	writePNG(t, dir+"/p7-fibonacci.png", p6t.Image())
+	if len(p6.panes[0].overlays.Items()) == 0 || p6.panes[0].overlays.Items()[0].Kind != kline.OverlayFibonacci {
+		t.Fatal("fib frame should show a completed fib on alpha")
+	}
 }
 
 func TestThemeChangesPlotBackground(t *testing.T) {
@@ -1284,6 +1430,171 @@ func writePNG(t *testing.T, path string, img *image.RGBA) {
 	defer f.Close()
 	if err := png.Encode(f, img); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func onOHLC(price float64, c kline.Candle, eps float64) bool {
+	for _, p := range []float64{c.Open, c.High, c.Low, c.Close} {
+		if math.Abs(price-p) <= eps {
+			return true
+		}
+	}
+	return false
+}
+
+func TestMagnetToolbarAndBehavior(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	for _, label := range []string{"Magnet Off", "Magnet Weak", "Magnet Strong"} {
+		if !tt.HasText(label) {
+			t.Fatalf("toolbar missing %q: %q", label, tt.Texts())
+		}
+	}
+	if a.magnet != kline.MagnetOff {
+		t.Fatalf("default magnet %v", a.magnet)
+	}
+	if err := tt.Click("Magnet Strong"); err != nil {
+		t.Fatal(err)
+	}
+	if a.magnet != kline.MagnetStrong {
+		t.Fatalf("magnet mode %v", a.magnet)
+	}
+	tt.Frame()
+	if err := tt.Click("Magnet Strong"); err != nil {
+		t.Fatal(err)
+	}
+	if a.magnet != kline.MagnetStrong {
+		t.Fatal("strong should stay selected")
+	}
+
+	if err := tt.Click("H-Line"); err != nil {
+		t.Fatal(err)
+	}
+	p0 := a.painted[0].Price
+	x := p0.X + 200
+	y := p0.Y + p0.H*0.42
+	plotX := float64(x - p0.X)
+	idx, ok := a.vp.IndexAt(plotX, len(a.panes[0].candles))
+	if !ok {
+		t.Fatal("no bar under click")
+	}
+	bar := a.panes[0].candles[idx]
+	scale := kline.MainScale(a.panes[0].candles, a.active(a.panes[0]), a.vp, a.plotW)
+	raw := kline.LocalYToPrice(float64(p0.H), float64(y-p0.Y), scale)
+	if onOHLC(raw, bar, 1e-6) {
+		y = p0.Y + p0.H*0.37
+		raw = kline.LocalYToPrice(float64(p0.H), float64(y-p0.Y), scale)
+	}
+	tt.ClickAt(x, y)
+	line := a.panes[0].overlays.Items()[0]
+	stored := line.Points[0].Price
+	if !onOHLC(stored, bar, 1e-4) {
+		t.Fatalf("strong magnet: stored %v not on bar OHLC (raw %v) %+v", stored, raw, bar)
+	}
+
+	placed := stored
+	if err := tt.Click("Magnet Off"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("Magnet Strong"); err != nil {
+		t.Fatal(err)
+	}
+	after := a.panes[0].overlays.Items()[0].Points[0].Price
+	if math.Abs(after-placed) > 1e-9 {
+		t.Fatalf("mode change rewrote price: %v -> %v", placed, after)
+	}
+
+	y2 := p0.Y + p0.H*0.72
+	lineY := p0.Y + float32(kline.PriceToLocalY(float64(p0.H), stored, scale))
+	tt.Press(x, lineY)
+	tt.Move(x, y2)
+	tt.Release(x, y2)
+	dragged := a.panes[0].overlays.Items()[0].Points[0].Price
+	wantRaw := kline.LocalYToPrice(float64(p0.H), float64(y2-p0.Y), scale)
+	if math.Abs(dragged-wantRaw) > 0.05 {
+		t.Fatalf("body drag should use raw price %v, got %v", wantRaw, dragged)
+	}
+	barAt := a.panes[0].candles[line.Points[0].BarIndex]
+	if onOHLC(wantRaw, barAt, 1e-4) {
+		t.Fatal("pick a drag target between OHLC levels for this test")
+	}
+	if onOHLC(dragged, barAt, 1e-4) {
+		t.Fatalf("existing hline body drag snapped onto OHLC %v (raw %v)", dragged, wantRaw)
+	}
+}
+
+// A real press jitters. The price stored after Press, a 1 DIP move, and
+// Release must stay on the bar's OHLC when magnet is strong.
+func TestNewHLinePressMoveKeepsStrongMagnet(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	if err := tt.Click("Magnet Strong"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("H-Line"); err != nil {
+		t.Fatal(err)
+	}
+	p0 := a.painted[0].Price
+	x := p0.X + 200
+	y := p0.Y + p0.H*0.42
+	y1 := y + 1 // 1 DIP
+	plotX := float64(x - p0.X)
+	idx, ok := a.vp.IndexAt(plotX, len(a.panes[0].candles))
+	if !ok {
+		t.Fatal("no bar under the pointer")
+	}
+	scale := a.priceScale(0)
+	raw := kline.LocalYToPrice(float64(p0.H), float64(y1-p0.Y), scale)
+	bar := a.panes[0].candles[idx]
+	if onOHLC(raw, bar, 1e-4) {
+		y = p0.Y + p0.H*0.37
+		y1 = y + 1
+		raw = kline.LocalYToPrice(float64(p0.H), float64(y1-p0.Y), scale)
+		bar = a.panes[0].candles[idx]
+	}
+	if onOHLC(raw, bar, 1e-4) {
+		t.Fatalf("1 DIP move landed on OHLC %v of %+v; pick another Y", raw, bar)
+	}
+	tt.Press(x, y)
+	tt.Move(x, y1)
+	tt.Release(x, y1)
+	items := a.panes[0].overlays.Items()
+	if len(items) != 1 || len(items[0].Points) != 1 {
+		t.Fatal("hline was not placed")
+	}
+	stored := items[0].Points[0].Price
+	if !onOHLC(stored, bar, 1e-4) {
+		t.Fatalf("new hline after 1 DIP move stored %v, want OHLC of bar %+v (raw %v)", stored, bar, raw)
+	}
+}
+
+func TestStrongMagnetEmptySeriesKeepsPointerPrice(t *testing.T) {
+	a := newApp()
+	tt := ui.NewTester(a.view, 1100, 1000)
+	for i := range a.panes {
+		a.panes[i].candles = nil
+	}
+	if err := tt.Click("Magnet Strong"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("H-Line"); err != nil {
+		t.Fatal(err)
+	}
+	p0 := a.painted[0].Price
+	x := p0.X + 180
+	y := p0.Y + p0.H*0.45
+	raw := kline.LocalYToPrice(float64(p0.H), float64(y-p0.Y), a.priceScale(0))
+	if math.Abs(raw) < 1e-4 {
+		t.Fatal("pointer price is 0; pick a Y off the scale floor")
+	}
+	tt.ClickAt(x, y)
+	items := a.panes[0].overlays.Items()
+	if len(items) != 1 || len(items[0].Points) != 1 {
+		t.Fatal("hline was not placed on an empty series")
+	}
+	stored := items[0].Points[0].Price
+	if math.Abs(stored-raw) > 1e-4 {
+		t.Fatalf("empty series strong magnet stored %v, pointer price %v", stored, raw)
 	}
 }
 
