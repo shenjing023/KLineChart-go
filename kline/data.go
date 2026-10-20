@@ -100,6 +100,7 @@ var ErrNilBarHandler = errors.New("kline: nil bar handler")
 
 // BarHandler receives one bar update. The bar is either a new open time
 // or a revision of the last bar. The caller chooses the goroutine.
+// A handler installed by Chart must not call SetPeriod, SetSource, or View.
 type BarHandler func(bar Candle)
 
 // LiveSource is an optional extension of DataSource. A feed that can

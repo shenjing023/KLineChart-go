@@ -55,11 +55,21 @@ type ChartOptions struct {
 	// HideHeader skips the per-symbol OHLCV line View normally paints.
 	// Readout still returns that text for a host that draws its own bar.
 	HideHeader bool
+	// Marshal hops each live bar onto the UI thread and should request a
+	// frame. Pass (*mygo.Window).Update: it runs the func on the main
+	// thread and redraws. mygo.RunOnMain hops and waits, and does not
+	// redraw; the host must Invalidate after that. Nil applies the bar
+	// synchronously on the caller and does not request a frame, which is
+	// what tests use. The func passed to Marshal must not call SetPeriod,
+	// SetSource, or View.
+	Marshal func(func())
 }
 
 // NewChart loads the initial window and returns a chart the host can
 // embed. A source that fails the first GetBars leaves the panes empty;
-// SetPeriod reports that error. NewChart does not open a network connection.
+// SetPeriod reports that error. A SubscribeBar error on this first load
+// is ignored the same way; SetPeriod reports it. NewChart does not open
+// a network connection.
 func NewChart(opts ChartOptions) *Chart {
 	src := opts.Source
 	if src == nil {
@@ -110,6 +120,7 @@ func NewChart(opts ChartOptions) *Chart {
 		styleSet:   styleSpecified(opts.Style),
 		limitPct:   opts.Style.LimitPct,
 		hideHeader: opts.HideHeader,
+		marshal:    opts.Marshal,
 	}
 	if a.styleSet {
 		a.style = completeStyle(a.style)
@@ -169,8 +180,21 @@ func (a *Chart) LimitPct() float64 { return a.limitPct }
 
 // SetPeriod reloads every symbol at p and fits the latest bars when the
 // plot width is already known. Drawings are dropped. An invalid period
-// returns ErrInvalidPeriod and leaves the current bars in place.
+// returns ErrInvalidPeriod and leaves the current bars in place. When
+// the source implements LiveSource, a SubscribeBar error is returned
+// after the new bars are loaded. Subscriptions opened for that call are
+// rolled back, and a handler from the previous subscription does not apply.
 func (a *Chart) SetPeriod(p Period) error { return a.setPeriod(p) }
+
+// Close unsubscribes every live bar and fences handlers already handed
+// to the feed. A handler that runs after Close does not change the chart.
+// Close does not release the DataSource. A second call returns nil.
+func (a *Chart) Close() error {
+	if a == nil {
+		return nil
+	}
+	return a.dropLive()
+}
 
 // Period is the bar size currently loaded.
 func (a *Chart) Period() Period { return a.period }
@@ -205,18 +229,29 @@ func (a *Chart) Layout() string {
 
 // SetSource replaces the bar source and reloads the current period.
 // A live subscription on the previous source is dropped. Nil returns
-// ErrNilSource. A failed reload restores the previous source.
+// ErrNilSource. A failed GetBars restores the previous source and leaves
+// its subscription in place. A SubscribeBar error is returned after the
+// new source's bars are loaded; that source stays, and subscriptions
+// opened for the call are rolled back. The handler must not call
+// SetPeriod, SetSource, or View.
 func (a *Chart) SetSource(src DataSource) error {
 	if src == nil {
 		return ErrNilSource
 	}
 	prev := a.src
+	prevPanes := a.panes
 	a.src = src
 	if err := a.setPeriod(a.period); err != nil {
-		a.src = prev
+		if samePaneSlice(a.panes, prevPanes) {
+			a.src = prev
+		}
 		return err
 	}
 	return nil
+}
+
+func samePaneSlice(cur, prev []series) bool {
+	return len(cur) == len(prev) && (len(cur) == 0 || &cur[0] == &prev[0])
 }
 
 // SetHollow draws rising candle bodies as outlines when on is true.
