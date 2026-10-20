@@ -172,6 +172,8 @@ func NewChart(opts ChartOptions) *Chart {
 	}
 	if a.styleSet {
 		a.style = completeStyle(a.style)
+		a.style.HollowUp = a.hollowUp
+		a.style.LimitPct = a.limitPct
 	}
 	a.loadErr = a.setPeriod(period)
 	return a
@@ -189,8 +191,12 @@ func uniqueSymbols(symbols []string) error {
 }
 
 func styleSpecified(s Style) bool {
+	if s.Clear != 0 {
+		return true
+	}
 	s.HollowUp = false
 	s.LimitPct = 0
+	s.Clear = 0
 	return s != Style{}
 }
 
@@ -346,7 +352,15 @@ func (a *Chart) SetSource(src DataSource) error {
 }
 
 // SetHollow draws rising candle bodies as outlines when on is true.
-func (a *Chart) SetHollow(on bool) { a.hollowUp = on }
+// When the chart has its own style, the stored Style.HollowUp is
+// updated too, the same way SetLimitPct writes Style.LimitPct.
+// chartStyle still paints from the live switch.
+func (a *Chart) SetHollow(on bool) {
+	a.hollowUp = on
+	if a.styleSet {
+		a.style.HollowUp = on
+	}
+}
 
 // Hollow reports whether rising bodies are outlines.
 func (a *Chart) Hollow() bool { return a.hollowUp }

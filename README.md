@@ -105,7 +105,7 @@ first, last := chart.Visible()
 _, _ = first, last
 ```
 
-`NewChart` with a `Style` that only sets a candle color fills the rest from `DarkDefault`. `EditStyle` starts from the theme you pass (`nil` is dark), keeps the live hollow switch and limit percent, then applies the edit. `SetHollow` and `SetLimitPct` change those two switches without dropping the color override. `Style.CandleBodyColor` is the rule Paint uses: a non-positive `limitPct` always returns `Up` or `Down`.
+`NewChart` with a `Style` that only sets a candle color fills the rest from `DarkDefault`. A zero color on that partial style means "not set". `Style.Clear` names fields that should stay transparent, for example `ClearGrid`. A style that sets `Plot`, `Grid`, or `Text` is kept as given, so a transparent field there needs no bit. `EditStyle` starts from the theme you pass (`nil` is dark), keeps the live hollow switch and limit percent, then applies the edit. `SetHollow` and `SetLimitPct` change those two switches without dropping the color override, and both write the stored style when one is set. `Style.CandleBodyColor` is the rule Paint uses: a non-positive `limitPct` always returns `Up` or `Down`.
 
 `ChartOptions.PriceDecimals` is the number of digits after the decimal in `Readout` and in the crosshair price tags. Nil, or a negative value, keeps two decimals (`FormatPrice`). Zero prints a whole number. `FormatPriceDigits` and `FormatBarIn` are the same formatting for a host that draws its own label. `ChartOptions.Location` is the time zone of those times. Nil is UTC. A direct `Paint` or `PaintCompare` call stays at two decimals and UTC. Indicator `ValueAt` strings still use `FormatPrice`.
 

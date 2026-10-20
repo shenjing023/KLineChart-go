@@ -53,6 +53,47 @@ func TestDarkAndLightDefaultsFollowTheme(t *testing.T) {
 	}
 }
 
+func TestPartialStyleKeepsExplicitTransparent(t *testing.T) {
+	s := completeStyle(Style{Up: ui.RGB(9, 9, 9), Clear: ClearGrid | ClearOverlay})
+	if s.Grid != (ui.Color{}) || s.Overlay != (ui.Color{}) {
+		t.Fatalf("transparent fields were filled: grid %+v overlay %+v", s.Grid, s.Overlay)
+	}
+	if s.Plot.A == 0 || s.Text.A == 0 || s.Up != ui.RGB(9, 9, 9) {
+		t.Fatalf("partial merge lost a default or the override: %+v", s)
+	}
+	full := DarkDefault()
+	full.Grid = ui.Color{}
+	got := completeStyle(full)
+	if got.Grid.A != 0 {
+		t.Fatal("a fully specified transparent grid was replaced")
+	}
+}
+
+func TestSetHollowMatchesStoredStyle(t *testing.T) {
+	c := NewChart(ChartOptions{})
+	c.SetStyle(Style{Up: ui.RGB(1, 2, 3)})
+	c.SetHollow(true)
+	if !c.style.HollowUp || !c.Hollow() || !c.Style(nil).HollowUp {
+		t.Fatalf("stored %v live %v style %v", c.style.HollowUp, c.Hollow(), c.Style(nil).HollowUp)
+	}
+	c.SetHollow(false)
+	if c.style.HollowUp || c.Hollow() || c.Style(nil).HollowUp {
+		t.Fatal("hollow stayed on")
+	}
+	d := NewChart(ChartOptions{})
+	d.SetHollow(true)
+	if d.styleSet || d.style.HollowUp {
+		t.Fatal("hollow on the theme path stored a style")
+	}
+	if !d.Style(nil).HollowUp {
+		t.Fatal("theme path dropped the live hollow switch")
+	}
+	only := NewChart(ChartOptions{Hollow: true, Style: Style{Up: ui.RGB(4, 5, 6)}})
+	if !only.style.HollowUp || !only.Style(nil).HollowUp {
+		t.Fatal("Hollow option did not land on the stored style")
+	}
+}
+
 func TestCandleBodyColorUsesLimitOnlyWhenPctIsSet(t *testing.T) {
 	s := DarkDefault()
 	up := Candle{Open: 10, Close: 11}

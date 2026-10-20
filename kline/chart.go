@@ -119,10 +119,11 @@ type Chart struct {
 	// hollowUp draws rising candle bodies as outlines. Falling bodies
 	// stay filled. Off, both are filled.
 	hollowUp bool
-	// style, when styleSet, replaces theme colors. The live hollow
-	// switch is hollowUp, not Style.HollowUp. limitPct is the live
-	// limit threshold Paint reads, including when the colors still
-	// come from the theme.
+	// style, when styleSet, replaces theme colors. hollowUp is the live
+	// hollow switch. SetHollow writes it through to style.HollowUp
+	// when a style is stored, matching SetLimitPct. limitPct is the
+	// live limit threshold Paint reads, including when the colors
+	// still come from the theme.
 	style    Style
 	styleSet bool
 	limitPct float64

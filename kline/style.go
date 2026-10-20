@@ -38,6 +38,14 @@ type Style struct {
 	// Compare is the second series in overlay mode, drawn as a close
 	// line on the indexed price plot.
 	Compare ui.Color
+	// Clear names colors that stay transparent. On a partial style,
+	// a zero color otherwise means "not set" and completeStyle fills
+	// it from DarkDefault, so a transparent grid cannot be expressed
+	// by leaving Grid at zero. Set the bit and the field stays
+	// transparent. A style that already sets Plot, Grid, or Text is
+	// kept, including any transparent field, and these bits still
+	// force the named fields to transparent.
+	Clear ColorClear
 	// HollowUp leaves a rising candle's body empty. Falling candles stay
 	// filled either way. The default is filled bodies for both.
 	HollowUp bool
@@ -100,6 +108,38 @@ func StyleFrom(t *ui.Theme) Style {
 	}
 }
 
+// ColorClear marks Style fields that are intentionally transparent.
+type ColorClear uint64
+
+const (
+	ClearUp ColorClear = 1 << iota
+	ClearDown
+	ClearLimitUp
+	ClearLimitDown
+	ClearMA5
+	ClearMA20
+	ClearMACDDIF
+	ClearMACDDEA
+	ClearMACDZero
+	ClearBOLLMid
+	ClearBOLLUp
+	ClearBOLLLow
+	ClearKDJK
+	ClearKDJD
+	ClearKDJJ
+	ClearGrid
+	ClearCross
+	ClearText
+	ClearMuted
+	ClearPlot
+	ClearVolumeBg
+	ClearLabelFill
+	ClearLabelText
+	ClearOverlay
+	ClearOverlayHot
+	ClearCompare
+)
+
 // CandleBodyColor is the wick and body color for c.
 // limitPct <= 0 never uses LimitUp or LimitDown: a close at or above open
 // is Up, and a lower close is Down. There is no limit rule without a
@@ -127,15 +167,18 @@ func (s Style) CandleBodyColor(c Candle, prevClose, limitPct float64) ui.Color {
 }
 
 // completeStyle fills a partial palette from DarkDefault. A style that
-// sets Plot, Grid, or Text is used as given. A style that only overrides
-// a candle color would otherwise paint with zero grid and plot colors.
+// sets Plot, Grid, or Text is used as given, so a transparent field on
+// that palette stays transparent. A style that only overrides a candle
+// color would otherwise paint with zero grid and plot colors. Clear
+// forces the named fields to transparent either way.
 func completeStyle(s Style) Style {
 	if s.Plot.A != 0 || s.Grid.A != 0 || s.Text.A != 0 {
-		return s
+		return applyClear(s)
 	}
 	base := DarkDefault()
 	base.HollowUp = s.HollowUp
 	base.LimitPct = s.LimitPct
+	base.Clear = s.Clear
 	base.Up = pickColor(base.Up, s.Up)
 	base.Down = pickColor(base.Down, s.Down)
 	base.LimitUp = pickColor(base.LimitUp, s.LimitUp)
@@ -162,7 +205,92 @@ func completeStyle(s Style) Style {
 	base.Overlay = pickColor(base.Overlay, s.Overlay)
 	base.OverlayHot = pickColor(base.OverlayHot, s.OverlayHot)
 	base.Compare = pickColor(base.Compare, s.Compare)
-	return base
+	return applyClear(base)
+}
+
+func applyClear(s Style) Style {
+	if s.Clear == 0 {
+		return s
+	}
+	if s.Clear&ClearUp != 0 {
+		s.Up = ui.Color{}
+	}
+	if s.Clear&ClearDown != 0 {
+		s.Down = ui.Color{}
+	}
+	if s.Clear&ClearLimitUp != 0 {
+		s.LimitUp = ui.Color{}
+	}
+	if s.Clear&ClearLimitDown != 0 {
+		s.LimitDown = ui.Color{}
+	}
+	if s.Clear&ClearMA5 != 0 {
+		s.MA5 = ui.Color{}
+	}
+	if s.Clear&ClearMA20 != 0 {
+		s.MA20 = ui.Color{}
+	}
+	if s.Clear&ClearMACDDIF != 0 {
+		s.MACDDIF = ui.Color{}
+	}
+	if s.Clear&ClearMACDDEA != 0 {
+		s.MACDDEA = ui.Color{}
+	}
+	if s.Clear&ClearMACDZero != 0 {
+		s.MACDZero = ui.Color{}
+	}
+	if s.Clear&ClearBOLLMid != 0 {
+		s.BOLLMid = ui.Color{}
+	}
+	if s.Clear&ClearBOLLUp != 0 {
+		s.BOLLUp = ui.Color{}
+	}
+	if s.Clear&ClearBOLLLow != 0 {
+		s.BOLLLow = ui.Color{}
+	}
+	if s.Clear&ClearKDJK != 0 {
+		s.KDJK = ui.Color{}
+	}
+	if s.Clear&ClearKDJD != 0 {
+		s.KDJD = ui.Color{}
+	}
+	if s.Clear&ClearKDJJ != 0 {
+		s.KDJJ = ui.Color{}
+	}
+	if s.Clear&ClearGrid != 0 {
+		s.Grid = ui.Color{}
+	}
+	if s.Clear&ClearCross != 0 {
+		s.Cross = ui.Color{}
+	}
+	if s.Clear&ClearText != 0 {
+		s.Text = ui.Color{}
+	}
+	if s.Clear&ClearMuted != 0 {
+		s.Muted = ui.Color{}
+	}
+	if s.Clear&ClearPlot != 0 {
+		s.Plot = ui.Color{}
+	}
+	if s.Clear&ClearVolumeBg != 0 {
+		s.VolumeBg = ui.Color{}
+	}
+	if s.Clear&ClearLabelFill != 0 {
+		s.LabelFill = ui.Color{}
+	}
+	if s.Clear&ClearLabelText != 0 {
+		s.LabelText = ui.Color{}
+	}
+	if s.Clear&ClearOverlay != 0 {
+		s.Overlay = ui.Color{}
+	}
+	if s.Clear&ClearOverlayHot != 0 {
+		s.OverlayHot = ui.Color{}
+	}
+	if s.Clear&ClearCompare != 0 {
+		s.Compare = ui.Color{}
+	}
+	return s
 }
 
 func pickColor(base, override ui.Color) ui.Color {
