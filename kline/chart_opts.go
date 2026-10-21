@@ -497,6 +497,183 @@ func (a *Chart) Crosshair() (symbol string, index int, ok bool) {
 	return symbol, a.crossIndex, true
 }
 
+// CrosshairTime is the open time of the bar under the pointer, which is
+// what two charts of different series share: a host maps a time, not a
+// bar index, because a suspended stock has no bar on a day the market
+// panel still has one.
+func (a *Chart) CrosshairTime() (t time.Time, ok bool) {
+	if a.crossIndex < 0 {
+		return time.Time{}, false
+	}
+	c, ok := a.barAt(a.crossIndex)
+	if !ok {
+		return time.Time{}, false
+	}
+	return c.Time, true
+}
+
+// SetCrosshairTime places the crosshair on the bar whose open interval
+// contains t and reports whether this chart has such a bar. A time
+// outside the series clears the crosshair and returns false, which is
+// what a host wants when the other chart is showing a day this one does
+// not trade.
+//
+// The placed crosshair keeps its bar until the pointer moves on this
+// chart or SetCrosshairTime(nil time) is called, so a linked chart can
+// render it on every frame without the host re-sending it. It does not
+// run OnCrosshairChange: a host that forwards a time must not receive
+// its own echo.
+func (a *Chart) SetCrosshairTime(t time.Time) bool {
+	idx, ok := a.indexAtTime(t)
+	if !ok {
+		a.clearCrosshairAt()
+		return false
+	}
+	a.crossAt = t
+	a.crossAtSet = true
+	a.crossFixed = true
+	if a.crossIndex != idx {
+		a.crossIndex = idx
+	}
+	if a.crossPane < 0 {
+		a.crossPane = 0
+	}
+	return true
+}
+
+// ClearCrosshairTime removes a crosshair placed by SetCrosshairTime.
+// A pointer crosshair is unaffected: this clears only what the host set.
+func (a *Chart) ClearCrosshairTime() {
+	a.clearCrosshairAt()
+}
+
+func (a *Chart) clearCrosshairAt() {
+	a.crossAtSet = false
+	a.crossFixed = false
+	a.crossAt = time.Time{}
+	if a.crossPane < 0 || a.crossIndex < 0 {
+		return
+	}
+	// A host-placed crosshair is the only one this method may clear.
+	// Leave the pointer's own position alone by dropping the index;
+	// the next frame rebuilds it from the pointer if the pointer is
+	// still over a plot.
+	a.crossIndex = -1
+	a.crossPane = -1
+}
+
+// indexAtTime is the bar index whose open interval contains t. The last
+// bar extends one period past its open, the same rule a marker lookup
+// uses, so a time that names the last bar's interval lands on it rather
+// than falling off the end. A time after that interval is a miss.
+func (a *Chart) indexAtTime(t time.Time) (int, bool) {
+	if t.IsZero() || len(a.panes) == 0 {
+		return 0, false
+	}
+	cs := a.panes[0].candles
+	if len(cs) == 0 {
+		return 0, false
+	}
+	step, _ := a.period.Duration()
+	idx := barContaining(cs, t, step)
+	return idx, idx >= 0
+}
+
+// barAt is the primary series bar at index, clamped away from a
+// past-the-end index a pointer may hold after a period change.
+func (a *Chart) barAt(index int) (Candle, bool) {
+	cs := a.panes[0].candles
+	if index < 0 || index >= len(cs) {
+		return Candle{}, false
+	}
+	return cs[index], true
+}
+
+// OnCrosshairChange sets the callback for a changed hovered bar. It runs
+// inside View, on the frame the change is detected, with the symbol and
+// index of the bar under the pointer and ok false when the pointer has
+// left every plot. A host that owns two charts calls the other chart's
+// SetCrosshairTime here; because the callback runs inside View, a host
+// that paints the second chart after the first in the same frame gets a
+// linked crosshair without a frame of lag. The callback must not call
+// SetPeriod, SetSource, or View on the chart that invoked it. nil
+// clears it.
+func (a *Chart) OnCrosshairChange(fn func(symbol string, index int, ok bool)) {
+	a.crossHook = fn
+}
+
+// VisibleTime is the open time of the first and last visible bar. ok is
+// false when the plot has no bars on screen yet.
+func (a *Chart) VisibleTime() (from, to time.Time, ok bool) {
+	first, last := a.Visible()
+	if last < first || len(a.panes) == 0 {
+		return time.Time{}, time.Time{}, false
+	}
+	cs := a.panes[0].candles
+	if first < 0 || last >= len(cs) {
+		return time.Time{}, time.Time{}, false
+	}
+	return cs[first].Time, cs[last].Time, true
+}
+
+// SetVisibleTime pans this chart so the bars between from and to fill
+// the plot, matching a second chart's window. It changes the bar width
+// only when the span cannot be shown at the current width, so a linked
+// pan keeps both charts at the same scale instead of fighting over it.
+// A chart with no bars, or a range outside its series, leaves the
+// viewport alone and returns false.
+func (a *Chart) SetVisibleTime(from, to time.Time) bool {
+	if a.plotW <= 1 {
+		// Layout has not run, so there is no width to fit into. The
+		// host's next frame paints with the default window; asking it to
+		// retry would need a signal this chart does not have.
+		return false
+	}
+	first, okFirst := a.indexAtTime(from)
+	last, okLast := a.indexAtTime(to)
+	if !okFirst || !okLast || last < first {
+		return false
+	}
+	span := last - first + 1
+	width := a.plotW / float64(span)
+	if width < MinBarWidth {
+		width = MinBarWidth
+	}
+	if width > MaxBarWidth {
+		width = MaxBarWidth
+	}
+	a.vp.BarWidth = width
+	// from is placed 15% in from the left so the range does not sit
+	// flush against the edge, which reads as "the data ends here".
+	a.vp.Offset = float64(first) - (a.plotW/width)*0.15
+	a.vp.Clamp(a.bars(), a.plotW)
+	a.fitted = true
+	return true
+}
+
+// ScrollToTime moves the viewport so t is at the right edge, keeping the
+// current bar width. A host uses it to park a settled session on its end
+// date instead of jumping to the newest bar.
+func (a *Chart) ScrollToTime(t time.Time) bool {
+	idx, ok := a.indexAtTime(t)
+	if !ok || a.plotW <= 1 {
+		return false
+	}
+	if a.vp.BarWidth <= 0 {
+		a.vp.BarWidth = DefaultBarWidth
+	}
+	// The same geometry as FitRight with the target bar standing in for
+	// the last one: its right edge lands OverscrollBars in from the
+	// plot's right edge, so the bars after t stay off screen until the
+	// user drags. Clamp then decides whether the target can reach that
+	// far; a target too early in a short series shows as much as fits.
+	margin := float64(OverscrollBars) * a.vp.BarWidth
+	a.vp.Offset = float64(idx+1) - (a.plotW-margin)/a.vp.BarWidth
+	a.vp.Clamp(a.bars(), a.plotW)
+	a.fitted = true
+	return true
+}
+
 // Bar returns the candle at index for symbol.
 func (a *Chart) Bar(symbol string, index int) (Candle, bool) {
 	for _, s := range a.panes {

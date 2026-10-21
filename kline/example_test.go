@@ -1377,6 +1377,88 @@ func (t *exampleTail) ValueAt(i int) string {
 func (t *exampleTail) Series() [][]float64    { return t.line }
 func (t *exampleTail) LineColors() []ui.Color { return []ui.Color{ui.RGB(40, 160, 220)} }
 
+// fixedSource serves one prepared series for any init request, so an
+// example can lay out a calendar without a market feed.
+type fixedSource struct{ bars []kline.Candle }
+
+func (s fixedSource) GetBars(req kline.BarRequest) ([]kline.Candle, bool, error) {
+	if req.Kind == kline.KindInit {
+		return append([]kline.Candle(nil), s.bars...), false, nil
+	}
+	return nil, false, nil
+}
+
+// ExampleChart_SetCrosshairTime links two charts by time instead of by
+// bar index, which is the only way when one series is missing days the
+// other has: a suspended stock has no bar on a day the market panel
+// still trades.
+func ExampleChart_SetCrosshairTime() {
+	stock := []kline.Candle{
+		// 2024-01-02, then a suspension, then 2024-01-04.
+		{Time: time.Date(2024, 1, 2, 9, 30, 0, 0, time.UTC), Open: 9, High: 10, Low: 8, Close: 10},
+		{Time: time.Date(2024, 1, 4, 9, 30, 0, 0, time.UTC), Open: 10, High: 11, Low: 9, Close: 11},
+	}
+	panel := []kline.Candle{
+		// The market panel has all three days.
+		{Time: time.Date(2024, 1, 2, 9, 30, 0, 0, time.UTC), Open: 1, High: 2, Low: 1, Close: 2},
+		{Time: time.Date(2024, 1, 3, 9, 30, 0, 0, time.UTC), Open: 2, High: 3, Low: 2, Close: 3},
+		{Time: time.Date(2024, 1, 4, 9, 30, 0, 0, time.UTC), Open: 3, High: 4, Low: 3, Close: 4},
+	}
+	stockChart := kline.NewChart(kline.ChartOptions{
+		Source: fixedSource{bars: stock}, Symbols: []string{"STOCK"},
+		Period: kline.Period{Span: 1, Unit: kline.UnitDay}, Indicators: []string{},
+	})
+	panelChart := kline.NewChart(kline.ChartOptions{
+		Source: fixedSource{bars: panel}, Symbols: []string{"PANEL"},
+		Period: kline.Period{Span: 1, Unit: kline.UnitDay}, Indicators: []string{},
+	})
+	// A day the stock does not trade still lands on the panel's bar.
+	got := panelChart.SetCrosshairTime(time.Date(2024, 1, 3, 9, 30, 0, 0, time.UTC))
+	bar, _ := panelChart.CrosshairTime()
+	fmt.Println("panel accepts the suspension day:", got, bar.Format("2006-01-02"))
+	// A day before either series starts is refused.
+	got = stockChart.SetCrosshairTime(time.Date(2023, 12, 1, 9, 30, 0, 0, time.UTC))
+	fmt.Println("stock refuses an early day:", got)
+	// Output:
+	// panel accepts the suspension day: true 2024-01-03
+	// stock refuses an early day: false
+}
+
+// ExampleChart_LastBarForming shows the weekly "in progress" signal a
+// host draws its dashed frame from.
+func ExampleChart_LastBarForming() {
+	// A Monday, Tuesday, and Wednesday of one week.
+	var bars []kline.Candle
+	for i, day := range []int{1, 2, 3} {
+		bars = append(bars, kline.Candle{
+			Time: time.Date(2024, 1, day, 9, 30, 0, 0, time.UTC),
+			Open: 10 + float64(i), High: 11 + float64(i), Low: 9 + float64(i), Close: 10.5 + float64(i),
+		})
+	}
+	day := kline.Period{Span: 1, Unit: kline.UnitDay}
+	chart := kline.NewChart(kline.ChartOptions{
+		Source: fixedSource{bars: bars}, Symbols: []string{"A"},
+		Period: day, Indicators: []string{},
+	})
+	replay, err := kline.StartReplay(chart, map[string][]kline.Candle{"A": bars})
+	if err != nil {
+		panic(err)
+	}
+	if err := replay.SeekIndex(len(bars)); err != nil {
+		panic(err)
+	}
+	fmt.Println("daily, last bar forming:", chart.LastBarForming())
+	if err := chart.SetPeriod(kline.Period{Span: 1, Unit: kline.UnitWeek}); err != nil {
+		panic(err)
+	}
+	fmt.Println("weekly, one week shown:", chart.Bars())
+	fmt.Println("weekly, last bar forming:", chart.LastBarForming())
+	// Output:
+	// daily, last bar forming: false
+	// weekly, one week shown: 1
+	// weekly, last bar forming: true
+}
+
 func tailMean(cs []kline.Candle) []float64 {
 	out := make([]float64, len(cs))
 	for i, c := range cs {

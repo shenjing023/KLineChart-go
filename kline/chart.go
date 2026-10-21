@@ -198,6 +198,17 @@ type Chart struct {
 	// barColor is the host's per-bar color rule. Nil, or a zero color for
 	// a bar, falls back to Style.CandleBodyColor.
 	barColor func(i int, c, prev Candle) ui.Color
+	// crossHook is called when the hovered bar changes. It runs inside
+	// View, so a host may move a second chart to the same time there.
+	crossHook func(symbol string, index int, ok bool)
+	// crossAt is a crosshair a host placed by time. It wins over the
+	// pointer until the pointer moves or the host clears it, which is how
+	// two charts share one cursor when each has its own pointer.
+	crossAt    time.Time
+	crossAtSet bool
+	// crossFixed is true while crossAt is a host-placed crosshair, so a
+	// frame with no pointer does not clear it.
+	crossFixed bool
 	// frames is the outer box of each pane from the last paint. Hit
 	// testing relayouts from it so a click after an indicator toggle
 	// uses the new price rect before the next Draw.
@@ -457,8 +468,15 @@ func (a *Chart) View(c *ui.Context) {
 		// show crossIndex from the previous frame. The charts record the
 		// new index, and a changed index asks for one more frame so every
 		// header catches up before the next input.
+		// A crosshair the host placed by time starts as this frame's
+		// answer, so a chart without a pointer of its own still paints
+		// the cursor its linked chart sent. The pointer overwrites it
+		// below when it is over this chart.
 		nextIndex := -1
 		nextPane := -1
+		if a.crossFixed {
+			nextIndex, nextPane = a.crossIndex, a.crossPane
+		}
 		hoverX, hoverY := float32(0), float32(0)
 		anyHover := false
 		anyPress := false
@@ -524,14 +542,33 @@ func (a *Chart) View(c *ui.Context) {
 			})
 		}
 		if !anyHover && !anyPress {
-			nextIndex = -1
-			nextPane = -1
+			// A host-placed crosshair survives a frame with no pointer:
+			// that crosshair exists to mirror another chart, and the
+			// pointer being elsewhere is exactly when it matters. Without
+			// one, nothing is hovered.
+			if !a.crossFixed {
+				nextIndex = -1
+				nextPane = -1
+			}
+		} else if a.crossFixed {
+			// The pointer moved on this chart, so it takes the crosshair
+			// back from the host's placed one.
+			a.crossAtSet = false
+			a.crossFixed = false
 		}
-		if nextIndex != a.crossIndex || nextPane != a.crossPane || hoverX != a.hoverX || hoverY != a.hoverY {
+		changed := nextIndex != a.crossIndex || nextPane != a.crossPane
+		if changed || hoverX != a.hoverX || hoverY != a.hoverY {
 			a.crossIndex = nextIndex
 			a.crossPane = nextPane
 			a.hoverX, a.hoverY = hoverX, hoverY
 			c.AnimationFrame()
+		}
+		if changed && a.crossHook != nil {
+			sym := ""
+			if nextPane >= 0 && nextPane < len(a.panes) {
+				sym = a.panes[nextPane].name
+			}
+			a.crossHook(sym, nextIndex, nextIndex >= 0)
 		}
 	})
 }

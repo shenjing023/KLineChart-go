@@ -117,6 +117,25 @@ if ok {
     _ = bar
     _ = chart.Readout(symbol) // OHLCV, indicators that are on, and markers on that bar
 }
+// Two charts of different series link by time, not by bar index: a
+// suspended stock has no bar on a day the market panel still has one.
+// panel is a second NewChart with its own source, options, and height.
+panel := kline.NewChart(kline.ChartOptions{Source: panelSrc, Symbols: []string{"0AMV"}})
+settledOn := time.Date(2024, 6, 28, 9, 30, 0, 0, time.UTC)
+panel.OnCrosshairChange(func(_ string, _ int, ok bool) {
+    if !ok {
+        chart.ClearCrosshairTime()
+        return
+    }
+    if t, has := panel.CrosshairTime(); has {
+        chart.SetCrosshairTime(t)
+    }
+})
+if from, to, ok := chart.VisibleTime(); ok {
+    _ = panel.SetVisibleTime(from, to) // keep both windows on the same dates
+}
+_ = chart.ScrollToTime(settledOn) // park a settled session on its end date
+_ = chart.LastBarForming()        // weekly: the last bucket can still change
 if bar, ok := chart.Bar("600519", chart.Bars()-2); ok {
     _ = chart.SetMarkers("600519", []kline.Marker{{Time: bar.Time, Side: kline.SideBuy, Qty: 1}})
     _ = chart.AppendMarker("600519", kline.Marker{Time: bar.Time, Side: kline.SideSell, Price: bar.Close, Label: "S"})
@@ -279,7 +298,7 @@ go test ./kline -run Example -v          # just the examples
 go doc github.com/shenjing023/KLineChart-go/kline   # package API documentation
 ```
 
-There are 50 API Examples. They cover `NewChart`, `ChartOptions`, `Chart.View`, `SetPeriod`, `SetLayout`, `SetIndicators`, `SetIndicator`, `IndicatorNames`, `IndicatorEnabled`, `SyncIndicators`, `Bar`, `Bars`, `Symbols`, `Crosshair`, `SetMarkers`, `SetSource`, `DataSource`, `LiveSource`, `StubLiveSource`, `Close`, `AppendBar`, `AlignError`, `SetStyle`, `EditStyle`, `SetHollow`, `SetLimitPct`, `ResetView`, `SetTool`, `SetMagnet`, `Register`, `BarTail`, `StartReplay`, `Replay.Play`, `Replay.SeekTo`, `Replay.StepBack`, `Viewport`, `PriceDomain`, `VolumeMax`, `PriceToLocalY`, `LocalYToPrice`, `SnapPrice`, `NormalizeClose`, `NormalizeToIndex`, `IndexBase`, `CompareScales`, `Paint`, `PaintCompare`, `TimeAt`, `Layer`, `Layer.SetPoint`, `OverlaySpec`, `Split`, `SplitStack`, `Period`, and `FormatPrice`.
+There are 52 API Examples. They cover `NewChart`, `ChartOptions`, `Chart.View`, `SetPeriod`, `SetLayout`, `SetIndicators`, `SetIndicator`, `IndicatorNames`, `IndicatorEnabled`, `SyncIndicators`, `Bar`, `Bars`, `Symbols`, `Crosshair`, `SetCrosshairTime`, `LastBarForming`, `SetMarkers`, `SetSource`, `DataSource`, `LiveSource`, `StubLiveSource`, `Close`, `AppendBar`, `AlignError`, `SetStyle`, `EditStyle`, `SetHollow`, `SetLimitPct`, `ResetView`, `SetTool`, `SetMagnet`, `Register`, `BarTail`, `StartReplay`, `Replay.Play`, `Replay.SeekTo`, `Replay.StepBack`, `Viewport`, `PriceDomain`, `VolumeMax`, `PriceToLocalY`, `LocalYToPrice`, `SnapPrice`, `NormalizeClose`, `NormalizeToIndex`, `IndexBase`, `CompareScales`, `Paint`, `PaintCompare`, `TimeAt`, `Layer`, `Layer.SetPoint`, `OverlaySpec`, `Split`, `SplitStack`, `Period`, and `FormatPrice`.
 
 ## Performance
 
