@@ -271,3 +271,38 @@ coverage remains 88.0%. The implementation plan is
 | `go test ./... -race -count=1` | Windows amd64 通过；使用临时 MinGW-w64 GCC 16.2.0（`CGO_ENABLED=1`），未安装系统级编译器 |
 
 未完成或有意留待后续：回放聚合的日线 open 仍是 UTC 零点，与直接加载的 09:30 open 不同（P3，需要产品决定桶规则）；`main_test.go` 的包级 `demoReplay` 状态未隔离（P3，仅影响测试顺序）；根目录遗留的 `kline.test.exe`、`live.exe` 未删除。
+
+## 遗留项闭环（2026-10-21，第三次）
+
+复审报告末尾列出的三项遗留，本轮全部处理。
+
+### 1. 回放日线聚合桶规则
+
+原实现把日线桶截断到 UTC 零点，A 股 09:30 开盘会标成上海 08:00；而直接 `1d` 加载的 bar 开在 09:30。同一份数据经回放聚合与直接加载得到不同的 open time，按时间对齐的 marker、画线和表头会错位。
+
+现在 `bucketOpen` 区分粒度：小时和分钟桶仍按 epoch 截断（`09:30` 的 4h 桶仍是 `08:00`，不改既有契约）；日线桶取该本地自然日第一根基础 bar 的开盘时间，本地日期按 `ChartOptions.Location` 判定。聚合日线与直接加载从此逐日一致（实测 150 根，2023-12-04 到 2024-06-28 全部 09:30）。
+
+测试：`TestReplayDailyBucketUsesChartZone`、`TestReplayDailyBucketRespectsLocation`；既有 `TestReplayPartialHigherPeriod` 的 4h 断言未受影响。
+
+### 2. `main_test.go` 的包级回放状态
+
+`demoReplay` / `demoBase` / `demoSpeed` 是包级变量，`TestDemoToolbarBindsChart` 会改写它们且不恢复，测试顺序会影响结果。现在收进 `demoState` 结构，由 `main` 每窗口创建一份，`demoView` 和 `startDemoReplay` 都显式接收它；测试各自 `newDemoState()`。
+
+测试：`TestDemoStateIsPerTester`（第二个 tester 不继承回放、快照和速度）；`go test . -shuffle=on` 连续两次通过。
+
+### 3. 根目录遗留二进制
+
+`kline.test.exe`（11.8 MB）和 `live.exe`（14.6 MB）已删除。二者本就在 `.gitignore` 内，删除不影响仓库内容。
+
+### 验证
+
+| 检查 | 结果 |
+| --- | --- |
+| `go build ./...`、`go vet ./...`、`gofmt -l .` | 通过、通过、无输出 |
+| `go test ./... -count=1` | 五个包全部通过 |
+| `go test ./... -race -count=1` | Windows amd64 通过（临时 MinGW-w64 GCC 16.2.0） |
+| `go test . -shuffle=on`（两次） | 通过 |
+| `kline` 覆盖率 | 88.5% |
+| 5 个分配预算测试 | 全部通过 |
+| `BenchmarkAppendBar/8k` | 909 B/op，1 alloc，低于 8 KB 上限 |
+| `BenchmarkReplayStepFrames/8k` | 306 KB/op；该行没有预算上限，与基准文件中的历史值同量级 |
