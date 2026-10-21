@@ -1,6 +1,6 @@
 # K-line
 
-Defaults follow mainland China A-share conventions: red rising candles, green falling candles, `600519` / `000001` sample symbols, and Asia/Shanghai trading-session labels. `SyntheticSource` uses weekday 09:30–11:30 and 13:00–15:00 sessions; it does not invent exchange holidays.
+Defaults follow mainland China A-share conventions: red rising candles, green falling candles, `600519` / `000001` sample symbols, and Asia/Shanghai trading-session labels. `SyntheticSource` uses weekday 09:30–11:30 and 13:00–15:00 sessions; it does not invent exchange holidays, and it refuses a period that has no session bars (3h, 150m) with `ErrInvalidPeriod`.
 
 A small candlestick chart drawn with [MyGo](https://mygo.egoist.dev) Native UI. The window is `ui.View`: Go paints it, and the process does not open a WebView or WebView2.
 
@@ -300,7 +300,7 @@ Module `github.com/shenjing023/KLineChart-go`. The root is the demo. The library
 
 - `main.go` — window and toolbar. Buttons call `kline.Chart`. `main_test.go` drives that toolbar with `ui.NewTester`. `mygo.json` is the app name, identifier, version, and `build/` output directory.
 - `kline/chart.go` — `Chart.View`, pane paint, and the readout. `chart_opts.go` is `ChartOptions`, `NewChart`, and the setters. `chart_load.go` loads history and prepends. `chart_live.go` subscribes and fences live handlers. `chart_input.go` is pan, zoom, and drawing input.
-- `kline/data.go` — `Period`, `BarRequest`, `DataSource`, `LiveSource`. `synthetic.go` is `SyntheticSource` (no network, not a live feed). `live_stub.go` is the in-memory `StubLiveSource`.
+- `kline/data.go` — `Period`, `BarRequest`, `DataSource`, `LiveSource`. `synthetic.go` is `SyntheticSource` (no network, not a live feed): its walk is generated backwards from a fixed newest session, so a bar keeps the same OHLCV in every request, and a period whose step does not fit the two-hour sessions (3h, 150m) returns `ErrInvalidPeriod` instead of having no bars. `live_stub.go` is the in-memory `StubLiveSource`.
 - `kline/indicator.go` — `Indicator`, optional `BarTail`, `LinePlot`, `SubPlot`, and `Register`. Built-ins are `ind_ma.go`, `ind_macd.go`, `ind_boll.go`, `ind_kdj.go`.
 - `kline/overlay.go` — `Point`, `Overlay`, `Layer`, `RegisterOverlay`. Drawings are `ov_hline.go`, `ov_segment.go`, `ov_fibonacci.go`. `magnet.go` is `MagnetMode` and `SnapPrice`.
 - `kline/style.go` — `Style`, `StyleFrom`, `DarkDefault`, `LightDefault`, `CandleBodyColor`. `paint.go` draws candles and the volume strip. `compare.go` indexes the overlay. `viewport.go` is the shared window. `layout.go` splits the panes. `candle.go` is `Candle` and `Generate`.

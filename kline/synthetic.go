@@ -10,6 +10,12 @@ import (
 
 const defaultExtra = 1800
 
+// maxSyntheticBars bounds one generated walk. The default Extra (1800)
+// plus the default init window fits inside it; a host asking for a longer
+// window gets the newest maxSyntheticBars bars instead of an ever-growing
+// slice.
+const maxSyntheticBars = 1 << 16
+
 // ashareLocation is a fixed UTC+8 zone. Mainland China has no daylight
 // saving, so the synthetic calendar does not depend on host tzdata.
 var ashareLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
@@ -28,17 +34,18 @@ var otherOrigin = time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 // is bundled, so this is demo/test data, not a production trading
 // calendar.
 //
+// The walk ends on a fixed newest bar and is generated backwards from
+// it, so a bar's prices depend on how far it is from that bar, not on the
+// window a request asked for. A forward batch therefore joins the init
+// window without a jump, and two windows that share open times agree on
+// every shared bar.
+//
 // Extra is how many bars exist before an init window. Zero means
 // defaultExtra. Negative means the init window is the whole history.
 // The default symbols use deterministic seeds: 600519 is 42 and 000001
 // is 99. It implements DataSource only and is not a LiveSource.
 type SyntheticSource struct {
 	Extra int
-}
-
-type syntheticSeries struct {
-	newest time.Time
-	bars   []Candle
 }
 
 // GetBars implements DataSource.
@@ -53,32 +60,34 @@ func (s *SyntheticSource) GetBars(req BarRequest) ([]Candle, bool, error) {
 	if limit <= 0 {
 		limit = DefaultLimit
 	}
+	if limit > maxSyntheticBars {
+		limit = maxSyntheticBars
+	}
 	seed := symbolSeed(req.Symbol)
-	series, err := s.series(seed, req.Period, max(limit+s.extra(), limit))
+	bars, err := s.series(seed, req.Period, max(limit+s.extra(), limit))
 	if err != nil {
 		return nil, false, err
 	}
 	switch req.Kind {
 	case KindInit:
-		if len(series.bars) == 0 {
+		if len(bars) == 0 {
 			return nil, false, nil
 		}
-		start := max(len(series.bars)-limit, 0)
-		bars := cloneCandles(series.bars[start:])
-		return bars, start > 0, nil
+		start := max(len(bars)-limit, 0)
+		return cloneCandles(bars[start:]), start > 0, nil
 	case KindForward:
 		if req.Anchor.IsZero() {
 			return nil, false, fmt.Errorf("kline: forward request requires anchor")
 		}
-		end := len(series.bars)
-		for end > 0 && !series.bars[end-1].Time.Before(req.Anchor) {
+		end := len(bars)
+		for end > 0 && !bars[end-1].Time.Before(req.Anchor) {
 			end--
 		}
 		start := max(end-limit, 0)
 		if end == 0 {
 			return []Candle{}, false, nil
 		}
-		return cloneCandles(series.bars[start:end]), start > 0, nil
+		return cloneCandles(bars[start:end]), start > 0, nil
 	default:
 		return nil, false, fmt.Errorf("%w: %q", ErrUnsupportedKind, req.Kind)
 	}
@@ -94,17 +103,17 @@ func (s *SyntheticSource) extra() int {
 	return s.Extra
 }
 
-func (s *SyntheticSource) series(seed int64, period Period, count int) (syntheticSeries, error) {
-	opens := ashareOpens(ashareLatestClose, period, count)
-	if len(opens) == 0 {
-		return syntheticSeries{}, fmt.Errorf("kline: no A-share bars for %s", period)
+// series generates the walk ending at the newest session. count is how
+// many bars it holds; the walk is generated backwards from the newest
+// bar, so a longer walk does not shift the bars it already had.
+func (s *SyntheticSource) series(seed int64, period Period, count int) ([]Candle, error) {
+	opens, err := ashareOpens(ashareLatestClose, period, count)
+	if err != nil {
+		return nil, err
 	}
 	bars := make([]Candle, len(opens))
 	synthesizeWalk(bars, opens, seed)
-	return syntheticSeries{
-		newest: bars[len(bars)-1].Time,
-		bars:   bars,
-	}, nil
+	return bars, nil
 }
 
 // ashareOpens returns the newest n opens ending no later than end, in
@@ -112,14 +121,35 @@ func (s *SyntheticSource) series(seed int64, period Period, count int) (syntheti
 // Sub-hour bars walk each two-hour session at their period. Four-hour and
 // daily periods use one 09:30 open per weekday. Weekends are skipped.
 // Exchange holidays are not guessed without an authoritative calendar.
-func ashareOpens(end time.Time, period Period, n int) []time.Time {
+//
+// A period whose step does not fit a two-hour session, such as 3h, has no
+// opens at all. It returns ErrInvalidPeriod instead of scanning the
+// calendar forever.
+func ashareOpens(end time.Time, period Period, n int) ([]time.Time, error) {
 	if n <= 0 {
-		return nil
+		return nil, nil
 	}
-	out := make([]time.Time, 0, n)
+	if _, err := period.Duration(); err != nil {
+		return nil, err
+	}
+	out := make([]time.Time, 0, min(n, 4096))
 	day := end.In(ashareLocation)
 	day = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, ashareLocation)
-	for len(out) < n {
+	// A weekday has opens for every valid period, so the first weekday
+	// settles whether this period can walk the calendar at all.
+	for day.Weekday() == time.Saturday || day.Weekday() == time.Sunday {
+		day = day.AddDate(0, 0, -1)
+	}
+	if len(ashareDayOpens(day, period)) == 0 {
+		return nil, fmt.Errorf("%w: %s has no A-share session bars", ErrInvalidPeriod, period)
+	}
+	// Bound the scan as well, so a future calendar rule that leaves a
+	// weekday empty cannot spin. A walk with one bar per weekday, such as
+	// 4h or 1d, needs about 7/5 days per bar.
+	for scanned := 0; len(out) < n; scanned++ {
+		if scanned > n*7/5+366 {
+			return nil, fmt.Errorf("%w: %s has no A-share session bars", ErrInvalidPeriod, period)
+		}
 		if day.Weekday() != time.Saturday && day.Weekday() != time.Sunday {
 			opens := ashareDayOpens(day, period)
 			for i := len(opens) - 1; i >= 0 && len(out) < n; i-- {
@@ -133,7 +163,7 @@ func ashareOpens(end time.Time, period Period, n int) []time.Time {
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
 	}
-	return out
+	return out, nil
 }
 
 func ashareDayOpens(day time.Time, period Period) []time.Time {
@@ -156,23 +186,21 @@ func ashareDayOpens(day time.Time, period Period) []time.Time {
 	return out
 }
 
+// synthesizeWalk fills bars backwards from the newest one. Each bar's
+// prices are drawn in order of distance from the newest open, so a bar
+// keeps its OHLCV whatever window a request slices it from. The close of
+// bar i is the open of bar i+1. The walk is multiplicative, so a long
+// series cannot drift through zero and needs no re-anchoring that would
+// depend on the window length.
 func synthesizeWalk(bars []Candle, opens []time.Time, seed int64) {
 	u := uint64(seed)
 	rng := rand.New(rand.NewPCG(u, u^0x9e3779b97f4a7c15))
-	price := 100.0
-	for i := range bars {
-		change := (rng.Float64() - 0.48) * 1.6
-		open := price
-		closePx := open + change
-		high := math.Max(open, closePx) + rng.Float64()*0.9
-		low := math.Min(open, closePx) - rng.Float64()*0.9
-		if low < 1 {
-			shift := 1 - low
-			low += shift
-			open += shift
-			closePx += shift
-			high += shift
-		}
+	closePx := 60 + rng.Float64()*80
+	for i := len(bars) - 1; i >= 0; i-- {
+		chg := (rng.Float64() - 0.48) * 0.016
+		open := closePx / (1 + chg)
+		high := math.Max(open, closePx) * (1 + rng.Float64()*0.004)
+		low := math.Min(open, closePx) * (1 - rng.Float64()*0.004)
 		bars[i] = Candle{
 			Time:   opens[i],
 			Open:   open,
@@ -181,7 +209,7 @@ func synthesizeWalk(bars []Candle, opens []time.Time, seed int64) {
 			Close:  closePx,
 			Volume: 600 + rng.Float64()*4200 + math.Abs(closePx-open)*1800,
 		}
-		price = closePx
+		closePx = open
 	}
 }
 

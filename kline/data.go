@@ -3,6 +3,7 @@ package kline
 import (
 	"errors"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -58,20 +59,28 @@ func (p Period) Valid() bool {
 }
 
 // Duration returns the bar width. Invalid periods return ErrInvalidPeriod.
+// A span that does not fit in a time.Duration is invalid too: the product
+// would wrap to a negative or truncated width, and callers such as the
+// synthetic calendar would walk forever with it.
 func (p Period) Duration() (time.Duration, error) {
 	if !p.Valid() {
 		return 0, ErrInvalidPeriod
 	}
+	var unit time.Duration
 	switch p.Unit {
 	case UnitMinute:
-		return time.Duration(p.Span) * time.Minute, nil
+		unit = time.Minute
 	case UnitHour:
-		return time.Duration(p.Span) * time.Hour, nil
+		unit = time.Hour
 	case UnitDay:
-		return time.Duration(p.Span) * 24 * time.Hour, nil
+		unit = 24 * time.Hour
 	default:
 		return 0, ErrInvalidPeriod
 	}
+	if int64(p.Span) > int64(math.MaxInt64)/int64(unit) {
+		return 0, fmt.Errorf("%w: %s overflows a duration", ErrInvalidPeriod, p)
+	}
+	return time.Duration(p.Span) * unit, nil
 }
 
 // String renders a short label such as "1h", "4h", or "1d".

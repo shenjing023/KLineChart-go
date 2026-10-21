@@ -2,6 +2,7 @@ package kline
 
 import (
 	"errors"
+	"math"
 	"testing"
 	"time"
 )
@@ -173,5 +174,89 @@ func TestSyntheticForwardExhaustsHistory(t *testing.T) {
 	}
 	if total != 50 {
 		t.Fatalf("walked %d bars, want 50", total)
+	}
+}
+
+// A period whose step does not fit the two-hour session has no opens.
+// The source must say so instead of scanning the calendar forever.
+func TestSyntheticUnwalkablePeriodReturns(t *testing.T) {
+	src := &SyntheticSource{}
+	for _, p := range []Period{
+		{Span: 3, Unit: UnitHour},
+		{Span: 150, Unit: UnitMinute},
+		{Span: 180, Unit: UnitMinute},
+	} {
+		done := make(chan error, 1)
+		go func(p Period) {
+			_, _, err := src.GetBars(BarRequest{Symbol: "600519", Period: p, Kind: KindInit, Limit: 5})
+			done <- err
+		}(p)
+		select {
+		case err := <-done:
+			if !errors.Is(err, ErrInvalidPeriod) {
+				t.Fatalf("%s: err %v, want ErrInvalidPeriod", p, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: GetBars did not return", p)
+		}
+	}
+}
+
+// A span that overflows time.Duration must be refused, not wrapped into a
+// negative bar width that callers then walk backwards with.
+func TestPeriodDurationRejectsOverflow(t *testing.T) {
+	p := Period{Span: math.MaxInt, Unit: UnitDay}
+	if _, err := p.Duration(); !errors.Is(err, ErrInvalidPeriod) {
+		t.Fatalf("Duration() = %v, want ErrInvalidPeriod", err)
+	}
+	src := &SyntheticSource{}
+	if _, _, err := src.GetBars(BarRequest{Symbol: "600519", Period: p, Kind: KindInit, Limit: 5}); !errors.Is(err, ErrInvalidPeriod) {
+		t.Fatalf("GetBars = %v, want ErrInvalidPeriod", err)
+	}
+	if err := NewChart(ChartOptions{Period: p}).LoadError(); err == nil {
+		t.Fatal("NewChart accepted an overflowing period")
+	}
+}
+
+// A bar has the same prices in every window that contains it, so a
+// forward page joins the init window and a reload does not rewrite
+// history.
+func TestSyntheticWalkIsWindowIndependent(t *testing.T) {
+	src := &SyntheticSource{}
+	p := Period{Span: 1, Unit: UnitHour}
+	long, _, err := src.GetBars(BarRequest{Symbol: "600519", Period: p, Kind: KindInit, Limit: 600})
+	if err != nil {
+		t.Fatal(err)
+	}
+	short, _, err := src.GetBars(BarRequest{Symbol: "600519", Period: p, Kind: KindInit, Limit: 500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	off := len(long) - len(short)
+	for i := range short {
+		if !sameCandles(long[off+i:off+i+1], short[i:i+1]) {
+			t.Fatalf("bar %s differs between a 600-bar and a 500-bar window", short[i].Time)
+		}
+	}
+	fwd, _, err := src.GetBars(BarRequest{Symbol: "600519", Period: p, Kind: KindForward, Anchor: long[0].Time, Limit: 200})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fwd) == 0 {
+		t.Fatal("no forward bars")
+	}
+	if fwd[len(fwd)-1].Close != long[0].Open {
+		t.Fatalf("forward ends at %.4f, init opens at %.4f: a price jump at the seam",
+			fwd[len(fwd)-1].Close, long[0].Open)
+	}
+	// The same forward request with another limit must agree on the bar
+	// nearest the anchor.
+	shortFwd, _, err := src.GetBars(BarRequest{Symbol: "600519", Period: p, Kind: KindForward, Anchor: long[0].Time, Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := len(shortFwd) - 1
+	if !sameCandles(shortFwd[last:], fwd[len(fwd)-1:]) {
+		t.Fatalf("forward limit 50 ends at %+v, limit 200 at %+v", shortFwd[last], fwd[len(fwd)-1])
 	}
 }
