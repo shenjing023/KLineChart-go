@@ -13,15 +13,17 @@ import (
 	"github.com/shenjing023/KLineChart-go/kline"
 )
 
-// demoReplay is the blind playback started from the toolbar. demoBase is
-// the 1h series it reveals, captured the first time Replay is clicked so
-// a later click does not snapshot the already-hidden suffix. demoSpeed
-// is bars per second.
-var (
-	demoReplay *kline.Replay
-	demoBase   map[string][]kline.Candle
-	demoSpeed  = 1.0
-)
+// demoState is the toolbar's replay state: the blind playback, the 1h
+// series it reveals, and the playback speed in bars per second. A struct
+// keeps the state per window instead of in package globals, so a second
+// window, or a test, does not inherit the previous one's replay.
+type demoState struct {
+	replay *kline.Replay
+	base   map[string][]kline.Candle
+	speed  float64
+}
+
+func newDemoState() *demoState { return &demoState{speed: 1} }
 
 func main() {
 	chart := kline.NewChart(kline.ChartOptions{
@@ -31,6 +33,7 @@ func main() {
 		Indicators: []string{"MA", "MACD"},
 	})
 	seedDemoMarkers(chart)
+	demo := newDemoState()
 	mygo.App.WhenReady(func() {
 		mygo.NewWindow(mygo.WindowOptions{
 			Title:     "K-line",
@@ -39,7 +42,7 @@ func main() {
 			MinWidth:  640,
 			MinHeight: 720,
 			StateKey:  "kline",
-			Content:   ui.View(func(c *ui.Context) { demoView(c, chart) }),
+			Content:   ui.View(func(c *ui.Context) { demoView(c, chart, demo) }),
 		})
 	})
 	if err := mygo.App.Run(); err != nil {
@@ -47,7 +50,7 @@ func main() {
 	}
 }
 
-func demoView(c *ui.Context, chart *kline.Chart) {
+func demoView(c *ui.Context, chart *kline.Chart, demo *demoState) {
 	t := c.Theme()
 	style := chart.Style(t)
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
@@ -151,44 +154,44 @@ func demoView(c *ui.Context, chart *kline.Chart) {
 			}
 			ui.Box(c).Grow(1)
 			var replayBtn ui.Element
-			if demoReplay != nil {
+			if demo.replay != nil {
 				replayBtn = ui.PrimaryButton(c, "Replay")
 			} else {
 				replayBtn = ui.Button(c, "Replay")
 			}
 			if replayBtn.Clicked() {
-				startDemoReplay(chart)
+				startDemoReplay(chart, demo)
 			}
-			if ui.Button(c, "Step").Clicked() && demoReplay != nil {
-				_ = demoReplay.Step(1)
+			if ui.Button(c, "Step").Clicked() && demo.replay != nil {
+				_ = demo.replay.Step(1)
 			}
-			if ui.Button(c, "Back").Clicked() && demoReplay != nil {
-				_ = demoReplay.StepBack(1)
+			if ui.Button(c, "Back").Clicked() && demo.replay != nil {
+				_ = demo.replay.StepBack(1)
 			}
 			playLabel := "Play"
-			if demoReplay != nil && demoReplay.Playing() {
+			if demo.replay != nil && demo.replay.Playing() {
 				playLabel = "Pause"
 			}
-			if ui.Button(c, playLabel).Clicked() && demoReplay != nil {
-				if demoReplay.Playing() {
-					demoReplay.Pause()
+			if ui.Button(c, playLabel).Clicked() && demo.replay != nil {
+				if demo.replay.Playing() {
+					demo.replay.Pause()
 				} else {
-					demoReplay.Play(demoSpeed)
+					demo.replay.Play(demo.speed)
 				}
 			}
-			if ui.Button(c, fmt.Sprintf("Speed %.0fx", demoSpeed)).Clicked() {
-				switch demoSpeed {
+			if ui.Button(c, fmt.Sprintf("Speed %.0fx", demo.speed)).Clicked() {
+				switch demo.speed {
 				case 1:
-					demoSpeed = 2
+					demo.speed = 2
 				case 2:
-					demoSpeed = 4
+					demo.speed = 4
 				case 4:
-					demoSpeed = 8
+					demo.speed = 8
 				default:
-					demoSpeed = 1
+					demo.speed = 1
 				}
-				if demoReplay != nil && demoReplay.Playing() {
-					demoReplay.Play(demoSpeed)
+				if demo.replay != nil && demo.replay.Playing() {
+					demo.replay.Play(demo.speed)
 				}
 			}
 			if ui.Button(c, "Reset view").Clicked() {
@@ -258,11 +261,11 @@ var colorPresets = []struct {
 
 // startDemoReplay hides the loaded 1h series and reveals the first 48
 // bars. Later clicks start that same series over. Play asks Chart.View
-// to reveal bars at demoSpeed; it does not start a goroutine.
-func startDemoReplay(chart *kline.Chart) {
-	if demoReplay != nil {
-		demoReplay.Close()
-		demoReplay = nil
+// to reveal bars at demo.speed; it does not start a goroutine.
+func startDemoReplay(chart *kline.Chart, demo *demoState) {
+	if demo.replay != nil {
+		demo.replay.Close()
+		demo.replay = nil
 	}
 	hour := kline.Period{Span: 1, Unit: kline.UnitHour}
 	if chart.Period() != hour {
@@ -270,15 +273,15 @@ func startDemoReplay(chart *kline.Chart) {
 			return
 		}
 	}
-	if demoBase == nil {
-		demoBase = snapshotBars(chart)
+	if demo.base == nil {
+		demo.base = snapshotBars(chart)
 	}
-	replay, err := kline.StartReplay(chart, demoBase)
+	replay, err := kline.StartReplay(chart, demo.base)
 	if err != nil {
 		return
 	}
-	demoReplay = replay
-	_ = demoReplay.SeekIndex(48)
+	demo.replay = replay
+	_ = demo.replay.SeekIndex(48)
 }
 
 func snapshotBars(chart *kline.Chart) map[string][]kline.Candle {

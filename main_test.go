@@ -18,7 +18,8 @@ func TestDemoToolbarBindsChart(t *testing.T) {
 		Layout:     kline.LayoutStack,
 		Indicators: []string{"MA", "MACD"},
 	})
-	tt := ui.NewTester(func(c *ui.Context) { demoView(c, chart) }, 1100, 1000)
+	demo := newDemoState()
+	tt := ui.NewTester(func(c *ui.Context) { demoView(c, chart, demo) }, 1100, 1000)
 	for _, text := range []string{"K-line", "600 bars", "Period 1h", "MA", "MACD", "BOLL", "KDJ", "Hollow", "Classic", "US", "Contrast", "Limit 10%", "1h", "4h", "1d", "Stack", "Overlay", "Pan", "H-Line", "Segment", "Fib", "Magnet Off", "Magnet Weak", "Magnet Strong", "Replay", "Step", "Back", "Play", "Speed 1x", "Reset view"} {
 		if !tt.HasText(text) {
 			t.Fatalf("toolbar missing %q, texts %q", text, tt.Texts())
@@ -147,7 +148,8 @@ func TestRenderDemoFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 	chart := kline.NewChart(kline.ChartOptions{})
-	tt := ui.NewTester(func(c *ui.Context) { demoView(c, chart) }, 1100, 1000)
+	demo := newDemoState()
+	tt := ui.NewTester(func(c *ui.Context) { demoView(c, chart, demo) }, 1100, 1000)
 	writeDemoPNG(t, filepath.Join(dir, "p8-demo-toolbar.png"), tt.Image())
 	if err := tt.Click("US"); err != nil {
 		t.Fatal(err)
@@ -174,5 +176,46 @@ func writeDemoPNG(t *testing.T, path string, img *image.RGBA) {
 	defer f.Close()
 	if err := png.Encode(f, img); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The demo toolbar state belongs to one window. A second tester must not
+// inherit a replay, the captured series, or the speed of the first, and
+// running these tests in either order must give the same result.
+func TestDemoStateIsPerTester(t *testing.T) {
+	first := kline.NewChart(kline.ChartOptions{Symbols: []string{"600519", "000001"}})
+	one := newDemoState()
+	tt := ui.NewTester(func(c *ui.Context) { demoView(c, first, one) }, 1100, 1000)
+	seedDemoMarkers(first)
+	if err := tt.Click("Speed 1x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("Replay"); err != nil {
+		t.Fatal(err)
+	}
+	if one.replay == nil || first.Bars() != 48 {
+		t.Fatalf("first demo did not start its replay: replay %v bars %d", one.replay, first.Bars())
+	}
+	if one.speed != 2 {
+		t.Fatalf("first demo speed %v", one.speed)
+	}
+
+	second := kline.NewChart(kline.ChartOptions{Symbols: []string{"600519", "000001"}})
+	two := newDemoState()
+	tt2 := ui.NewTester(func(c *ui.Context) { demoView(c, second, two) }, 1100, 1000)
+	if two.replay != nil || two.base != nil || two.speed != 1 {
+		t.Fatalf("second demo inherited state: replay %v base %v speed %v", two.replay, two.base, two.speed)
+	}
+	if !tt2.HasText("Replay") || tt2.HasText("Pause") {
+		t.Fatalf("second demo toolbar shows the first demo's playback: %q", tt2.Texts())
+	}
+	if second.Bars() != 600 {
+		t.Fatalf("second demo bars %d, want the full series", second.Bars())
+	}
+	if err := tt2.Click("Step"); err != nil {
+		t.Fatal(err)
+	}
+	if second.Bars() != 600 {
+		t.Fatalf("Step with no replay changed bars to %d", second.Bars())
 	}
 }
