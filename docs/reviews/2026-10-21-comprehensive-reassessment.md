@@ -243,3 +243,31 @@ real Windows window confirm red-up defaults, sample codes, Shanghai labels,
 weekend gaps, and 09:30 opens for synthetic 4h and 1d bars. `kline` statement
 coverage remains 88.0%. The implementation plan is
 [here](../plans/2026-10-21-ashare-defaults.md).
+
+## 复审后修复闭环（2026-10-21，第二次）
+
+用户要求按复审建议实施。本轮只改 `kline/` 源码、测试、`README.md` 和 `AGENTS.md`，未动导出 API，未替换性能基线。
+
+| 缺陷 | 修改 | 永久回归测试 |
+| --- | --- | --- |
+| P1 `SyntheticSource` 对 3h/150m/180m 无限循环，`NewChart` 冻结 UI 线程 | `ashareOpens` 先在一个工作日上试算，空则返回 `ErrInvalidPeriod`；扫描另有天数上限 | `TestSyntheticUnwalkablePeriodReturns` |
+| P1 溢出 span 使 `Duration()` 变负，日历反向无限增长 | `Period.Duration` 用 `math.MaxInt64/unit` 检查，溢出返回 `ErrInvalidPeriod` | `TestPeriodDurationRejectsOverflow` |
+| P2 合成源跨请求价格不一致（左翻页 19% 假跳空） | `synthesizeWalk` 改为从最新一根**倒序**生成、乘法游走，价格只取决于距最新 bar 的距离 | `TestSyntheticWalkIsWindowIndependent` |
+| P2 `Replay.Close` 后同周期 `SetPeriod` 是 no-op，与文档矛盾 | `Replay.Close` 置 `chart.closed`，同周期走重载；`StartReplay` 成功后清除该标志 | `TestReplayCloseThenSamePeriodReloads` |
+| P3 回放成功后仍保留旧 `LoadError` | `StartReplay` 成功后清 `loadErr`；失败的 `StartReplay` 不动它 | `TestReplayClearsLoadError` |
+| P3 `VolumeMax` 接受 `+Inf` | 与 `PriceDomain` 共用 `finite()` 过滤 | `TestVolumeMaxSkipsNonFinite` |
+| P3 `*Chart` nil 语义不一致 | 文档写明只有 `Close` 接受 nil，其余方法需要非 nil | `TestNilChartOnlyCloseIsSafe` |
+| P3 副图 slot 三份平行实现 | 新增 `subBands`，布局、绘制、主题着色共用同一顺序 | `TestSubBandsMatchLayoutPaintAndStyle` |
+| P2 README 主示例与默认值过期 | Embed 示例改用 `600519`；`Location nil` 改为 Asia/Shanghai；中文段默认值同步；清理 ALPHA/BETA 残留 | 按示例实际运行验证 |
+
+验证（Windows amd64，Go 1.27.1）：
+
+| 检查 | 结果 |
+| --- | --- |
+| `go build ./...`、`go vet ./...`、`gofmt -l .` | 通过、通过、无输出 |
+| `go test ./... -count=1` | 五个包全部通过 |
+| `kline` 覆盖率 | 88.5%（本轮前 88.0%） |
+| 8k 基准（单次） | Stack pan 173,139 B/op、Overlay pan 84,055 B/op、Marker pan 173,253 B/op、AppendBar 921 B/op，均低于测试上限 |
+| `go test ./... -race -count=1` | Windows amd64 通过；使用临时 MinGW-w64 GCC 16.2.0（`CGO_ENABLED=1`），未安装系统级编译器 |
+
+未完成或有意留待后续：回放聚合的日线 open 仍是 UTC 零点，与直接加载的 09:30 open 不同（P3，需要产品决定桶规则）；`main_test.go` 的包级 `demoReplay` 状态未隔离（P3，仅影响测试顺序）；根目录遗留的 `kline.test.exe`、`live.exe` 未删除。
