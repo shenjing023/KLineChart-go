@@ -105,6 +105,16 @@ type ChartOptions struct {
 	// Nil uses Asia/Shanghai for the A-share default; pass time.UTC for
 	// UTC or another zone explicitly. Candle.Time itself is not rewritten.
 	Location *time.Location
+	// FormatTime replaces the text of every time the chart prints: the
+	// time-axis ticks, the crosshair time tag, and the time in Readout
+	// and the headers. It receives the instant already in Location, so a
+	// host never converts zones twice. Nil keeps the built-in layouts.
+	//
+	// Only the text changes. Tick positions, marker placement,
+	// aggregation buckets, and the replay cursor all keep working on the
+	// real time, so a mask such as "xxxx-xx-02" cannot move a drawing or
+	// leak a date through the axis spacing.
+	FormatTime func(time.Time) string
 }
 
 // NewChart loads the initial window and returns a chart the host can
@@ -175,6 +185,7 @@ func NewChart(opts ChartOptions) *Chart {
 		priceDigits: priceDigitsOf(opts.PriceDecimals),
 		digitsSet:   true,
 		zone:        zone,
+		timeFormat:  opts.FormatTime,
 	}
 	if a.styleSet {
 		a.style = completeStyle(a.style)

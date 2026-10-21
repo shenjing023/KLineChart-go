@@ -111,17 +111,39 @@ func formatPrice(v float64, digits int) string {
 	return strconv.FormatFloat(v, 'f', digits, 64)
 }
 
-// labelFmt is the chart's price precision and time zone. A nil loc is UTC.
+// labelFmt is the chart's price precision, time zone, and the host's
+// time formatter. A nil loc is UTC. A nil format keeps the built-in
+// layout the caller passes to when.
 type labelFmt struct {
 	digits int
 	loc    *time.Location
+	format func(time.Time) string
 }
 
 func defaultLabels() labelFmt { return labelFmt{digits: 2} }
 
 func (f labelFmt) price(v float64) string { return formatPrice(v, f.digits) }
 
-func (f labelFmt) when(t time.Time, layout string) string { return formatWhen(t, layout, f.loc) }
+// when formats t for display. A host formatter wins: it sees the time in
+// the chart's zone and replaces the built-in layout, which is what a
+// blind date mask needs. The layout is only a fallback, so a host that
+// wants "2006-01-02" keeps that choice in one place rather than in the
+// library.
+func (f labelFmt) when(t time.Time, layout string) string {
+	if f.format != nil {
+		return f.format(f.inZone(t))
+	}
+	return formatWhen(t, layout, f.loc)
+}
+
+// inZone is t in the display zone. All formatting paths go through it,
+// so a host formatter and the built-in layout name the same instant.
+func (f labelFmt) inZone(t time.Time) time.Time {
+	if f.loc == nil || f.loc == time.UTC {
+		return t.UTC()
+	}
+	return t.In(f.loc)
+}
 
 func formatWhen(t time.Time, layout string, loc *time.Location) string {
 	if loc == nil || loc == time.UTC {

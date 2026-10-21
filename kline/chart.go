@@ -191,6 +191,10 @@ type Chart struct {
 	// zone formats bar times in the header and the crosshair tag. It is
 	// also the calendar a daily aggregate bucket starts on. Nil is UTC.
 	zone *time.Location
+	// timeFormat is the host's formatter for every printed time. Nil
+	// keeps the built-in layouts. It is called with the instant already
+	// in zone, so it never converts a time itself.
+	timeFormat func(time.Time) string
 	// frames is the outer box of each pane from the last paint. Hit
 	// testing relayouts from it so a click after an indicator toggle
 	// uses the new price rect before the next Draw.
@@ -228,7 +232,7 @@ func (a *Chart) labels() labelFmt {
 	if a == nil || !a.digitsSet {
 		return defaultLabels()
 	}
-	return labelFmt{digits: a.priceDigits, loc: a.zone}
+	return labelFmt{digits: a.priceDigits, loc: a.zone, format: a.timeFormat}
 }
 
 // bucketZone is the calendar a daily replay aggregate starts on. It is

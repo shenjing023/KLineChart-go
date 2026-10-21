@@ -298,7 +298,16 @@ func timeTicks(cs []Candle, vp Viewport, plotW float32, labels labelFmt) []chart
 	}
 	// Ticks are chosen and labeled in the display zone. Their Value stays
 	// the absolute instant, which is what timeBarPosition maps to X.
-	return chart.NewTime(left.In(loc), right.In(loc)).Ticks(6)
+	scale := chart.NewTime(left.In(loc), right.In(loc))
+	if labels.format != nil {
+		// A host formatter changes only the text. The tick interval and
+		// therefore every x position stay the same, so a masked date
+		// cannot move the grid.
+		format := labels.format
+		zone := labels.inZone
+		scale.Format = func(t time.Time) string { return format(zone(t)) }
+	}
+	return scale.Ticks(6)
 }
 
 // timeBarPosition maps t onto the same fractional bar axis as candles.
