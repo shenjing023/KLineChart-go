@@ -115,6 +115,30 @@ type ChartOptions struct {
 	// real time, so a mask such as "xxxx-xx-02" cannot move a drawing or
 	// leak a date through the axis spacing.
 	FormatTime func(time.Time) string
+	// MAPeriods overrides the periods of the built-in MA indicator. Nil
+	// keeps the default 5 and 20. A host that wants four lines, or a
+	// subset of them, sets them here; a period below 1 is dropped, the
+	// same rule NewMA uses. The switch is still the "MA" toggle, and
+	// SetIndicators("MA") keeps working.
+	MAPeriods []int
+	// MAColors colors the MA lines in order, one per MAPeriods entry. Nil
+	// keeps Style.MA5 and Style.MA20, repeating them for extra lines. A
+	// short list leaves the rest on the built-in pattern rather than
+	// transparent, so a host may color only the first two.
+	MAColors []ui.Color
+	// SymbolLabels is the display name of each symbol, parallel to
+	// Symbols: the title a screen reader announces and the name the
+	// chart's own box carries. An empty entry falls back to the symbol.
+	// A host that must not leak a ticker during a blind session passes a
+	// neutral name here.
+	SymbolLabels []string
+	// PaneHeights overrides the sub-pane bands, in DIPs. Zero keeps the
+	// built-in share of the plot, which is what the demo uses. A
+	// positive Sub applies to every open sub-pane; Volume applies to the
+	// built-in volume strip. The price plot takes what is left, and the
+	// layout still compresses the bands when the box is too short, so a
+	// host never has to compute a height that fits.
+	PaneHeights PaneHeights
 	// BarColor decides the color of one candle and its volume bar. It is
 	// how a host applies a rule the library cannot know, such as a limit
 	// price computed from the previous close and rounded to cents. i is
@@ -143,6 +167,13 @@ func NewChart(opts ChartOptions) *Chart {
 	symbols := append([]string(nil), opts.Symbols...)
 	if len(symbols) == 0 {
 		symbols = []string{"600519", "000001"}
+	}
+	display := make([]string, len(symbols))
+	for i := range display {
+		display[i] = symbols[i]
+		if i < len(opts.SymbolLabels) && opts.SymbolLabels[i] != "" {
+			display[i] = opts.SymbolLabels[i]
+		}
 	}
 	symbolErr := uniqueSymbols(symbols)
 	if symbolErr != nil {
@@ -182,27 +213,31 @@ func NewChart(opts ChartOptions) *Chart {
 		panes[i] = series{name: name}
 	}
 	a := &Chart{
-		src:         src,
-		period:      period,
-		panes:       panes,
-		slots:       slots,
-		vp:          Viewport{BarWidth: DefaultBarWidth},
-		crossIndex:  -1,
-		crossPane:   -1,
-		magnet:      knownMagnet(opts.Magnet),
-		layout:      layout,
-		hollowUp:    opts.Hollow || opts.Style.HollowUp,
-		style:       opts.Style,
-		styleSet:    styleSpecified(opts.Style),
-		limitPct:    opts.Style.LimitPct,
-		hideHeader:  opts.HideHeader,
-		marshal:     opts.Marshal,
-		symbolErr:   symbolErr,
-		priceDigits: priceDigitsOf(opts.PriceDecimals),
-		digitsSet:   true,
-		zone:        zone,
-		timeFormat:  opts.FormatTime,
-		barColor:    opts.BarColor,
+		src:          src,
+		period:       period,
+		panes:        panes,
+		slots:        slots,
+		vp:           Viewport{BarWidth: DefaultBarWidth},
+		crossIndex:   -1,
+		crossPane:    -1,
+		magnet:       knownMagnet(opts.Magnet),
+		layout:       layout,
+		hollowUp:     opts.Hollow || opts.Style.HollowUp,
+		style:        opts.Style,
+		styleSet:     styleSpecified(opts.Style),
+		limitPct:     opts.Style.LimitPct,
+		hideHeader:   opts.HideHeader,
+		marshal:      opts.Marshal,
+		symbolErr:    symbolErr,
+		priceDigits:  priceDigitsOf(opts.PriceDecimals),
+		digitsSet:    true,
+		zone:         zone,
+		timeFormat:   opts.FormatTime,
+		barColor:     opts.BarColor,
+		maPeriods:    append([]int(nil), opts.MAPeriods...),
+		maColors:     append([]ui.Color(nil), opts.MAColors...),
+		displayNames: display,
+		paneHeights:  opts.PaneHeights,
 	}
 	if a.styleSet {
 		a.style = completeStyle(a.style)
@@ -427,6 +462,51 @@ func (a *Chart) Hollow() bool { return a.hollowUp }
 // value SetHollow writes.
 func (a *Chart) HollowEnabled() *bool { return &a.hollowUp }
 
+// SetMA replaces the built-in MA periods and line colors. Empty periods
+// keep the registry default of 5 and 20. Each symbol's MA is rebuilt and
+// recalculated on the next paint; the "MA" toggle and its bindable
+// pointer are unchanged, so a host does not have to rebind a checkbox.
+func (a *Chart) SetMA(periods []int, colors []ui.Color) {
+	a.maPeriods = append([]int(nil), periods...)
+	a.maColors = append([]ui.Color(nil), colors...)
+	if len(periods) == 0 {
+		return
+	}
+	for i := range a.panes {
+		s := &a.panes[i]
+		a.ensureInds(s)
+		for j, slot := range a.slots {
+			if slot.spec.Name != "MA" || j >= len(s.inds) {
+				continue
+			}
+			s.inds[j] = a.newIndicator(slot.spec)
+			s.fresh[j] = false
+		}
+		a.recalc(s)
+	}
+}
+
+// SetSymbolLabels replaces the accessible display names, parallel to
+// Symbols. A short list, or an empty entry, falls back to the symbol, so
+// a host may label only the pane it needs to hide.
+func (a *Chart) SetSymbolLabels(labels []string) {
+	display := make([]string, len(a.panes))
+	for i := range display {
+		display[i] = a.panes[i].name
+		if i < len(labels) && labels[i] != "" {
+			display[i] = labels[i]
+		}
+	}
+	a.displayNames = display
+}
+
+// SetPaneHeights replaces the sub-pane band override. Zero fields keep
+// the built-in share of the plot.
+func (a *Chart) SetPaneHeights(h PaneHeights) { a.paneHeights = h }
+
+// PaneHeights is the current band override.
+func (a *Chart) PaneHeights() PaneHeights { return a.paneHeights }
+
 // SetIndicators turns on exactly the named indicators and turns the
 // others off. Nil and an empty slice both turn every indicator off. That
 // differs from ChartOptions.Indicators, where nil keeps the default MA
@@ -444,6 +524,37 @@ func (a *Chart) SetIndicators(names []string) error {
 		a.slots[i].on = want[a.slots[i].spec.Name]
 	}
 	return nil
+}
+
+// newIndicator builds one indicator from a spec, applying the host's MA
+// override. A chart that never sets MAPeriods gets exactly what the
+// registry constructor returns, so the default palette and periods are
+// unchanged.
+func (a *Chart) newIndicator(spec Spec) Indicator {
+	ind := spec.New()
+	if spec.Name != "MA" || len(a.maPeriods) == 0 {
+		return ind
+	}
+	if _, ok := ind.(*MA); ok {
+		next := NewMA(a.maPeriods...)
+		if len(a.maColors) > 0 {
+			// Lines past the host's list keep the theme pair: a short
+			// list must not leave a line invisible.
+			def := DarkDefault()
+			colors := make([]ui.Color, len(next.Periods))
+			copy(colors, a.maColors)
+			for i := len(a.maColors); i < len(colors); i++ {
+				if i%2 == 0 {
+					colors[i] = def.MA5
+				} else {
+					colors[i] = def.MA20
+				}
+			}
+			next.SetColors(colors)
+		}
+		return next
+	}
+	return ind
 }
 
 // SyncIndicators reloads the registry. Specs registered after NewChart
@@ -689,6 +800,63 @@ func (a *Chart) Bar(symbol string, index int) (Candle, bool) {
 // means the plot has not been laid out yet.
 func (a *Chart) Visible() (first, last int) {
 	return a.vp.Visible(a.bars(), a.plotW)
+}
+
+// IndicatorValues is the numeric readout for symbol at index: one map
+// holding every key of every enabled indicator that has a value there.
+// A host uses it to draw a header in its own language, precision, and
+// units instead of parsing Readout's English text.
+//
+// Built-in keys are MA<period> (MA5, MA10, ...), MACD.DIF, MACD.DEA,
+// MACD.HIST, BOLL's MID, UP, LOW, and KDJ.K, KDJ.D, KDJ.J. A
+// host-registered indicator contributes the keys its Values method
+// returns; see NamedValues. A key is absent while its value is not ready
+// (a warm-up gap) or when that indicator is off, so a host checks for
+// presence rather than NaN. An unknown symbol or an out-of-range index
+// returns nil.
+//
+// The map is freshly allocated for the call; a host that reads it every
+// frame may keep one and reuse it with ReadInto.
+func (a *Chart) IndicatorValues(symbol string, index int) map[string]float64 {
+	out := make(map[string]float64)
+	a.ReadIndicatorValues(symbol, index, out)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// ReadIndicatorValues fills out with the same values IndicatorValues
+// returns, so a host that draws a header every frame can reuse one map.
+// out is cleared first, which means a key that is no longer ready is
+// gone rather than stale. out may be nil, in which case nothing is
+// written.
+//
+// The map still costs what each indicator's Values allocates: a host on
+// a tight frame budget should call IndicatorValues only when the hovered
+// bar changes, not on every frame.
+func (a *Chart) ReadIndicatorValues(symbol string, index int, out map[string]float64) {
+	if out == nil {
+		return
+	}
+	clear(out)
+	for i := range a.panes {
+		s := &a.panes[i]
+		if s.name != symbol {
+			continue
+		}
+		if index < 0 || index >= len(s.candles) {
+			return
+		}
+		for _, one := range a.active(s) {
+			if nv, ok := one.(NamedValues); ok {
+				for k, v := range nv.Values(index) {
+					out[k] = v
+				}
+			}
+		}
+		return
+	}
 }
 
 // Readout is the header line for symbol, including the hovered bar and

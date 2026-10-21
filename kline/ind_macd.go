@@ -231,6 +231,33 @@ func (m *MACD) Scale(first, last int) chart.Linear {
 
 func (m *MACD) DrawMain(*ui.Painter, ui.Rect, Viewport, chart.Linear) {}
 
+// Values publishes MACD.DIF, MACD.DEA, and MACD.HIST. A warm-up gap is
+// absent rather than NaN, so a host can tell "not ready" from a number.
+func (m *MACD) Values(i int) map[string]float64 {
+	if m == nil || i < 0 {
+		return nil
+	}
+	put := func(out map[string]float64, key string, line []float64) map[string]float64 {
+		if i >= len(line) {
+			return out
+		}
+		v := line[i]
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return out
+		}
+		if out == nil {
+			out = make(map[string]float64, 3)
+		}
+		out[key] = v
+		return out
+	}
+	var out map[string]float64
+	out = put(out, "MACD.DIF", m.DIF)
+	out = put(out, "MACD.DEA", m.DEA)
+	out = put(out, "MACD.HIST", m.Hist)
+	return out
+}
+
 func (m *MACD) DrawSub(p *ui.Painter, rect ui.Rect, vp Viewport) {
 	if m == nil || len(m.DIF) == 0 || rect.W < 2 || rect.H < 2 {
 		return

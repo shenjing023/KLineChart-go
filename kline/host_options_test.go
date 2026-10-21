@@ -1,0 +1,358 @@
+package kline
+
+import (
+	"testing"
+	"time"
+
+	"github.com/egoist/mygo/ui"
+)
+
+// hostBars is a plain daily series long enough to warm up MA60.
+func hostBars(n int) []Candle {
+	out := make([]Candle, n)
+	day := time.Date(2024, 1, 2, 9, 30, 0, 0, ashareLocation)
+	for i := range out {
+		open := 100 + float64(i)
+		out[i] = Candle{
+			Time: time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 0, 0, ashareLocation),
+			Open: open, High: open + 2, Low: open - 1, Close: open + 1,
+			Volume: 1000,
+		}
+		day = day.AddDate(0, 0, 1)
+	}
+	return out
+}
+
+func hostChart(t *testing.T, opts ChartOptions) *Chart {
+	t.Helper()
+	c := NewChart(opts)
+	if err := c.LoadError(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	tt := ui.NewTester(c.View, 900, 620)
+	_ = tt.Image()
+	return c
+}
+
+// TestMAPeriodsConfiguresTheLines is REQ-05: four lines with the host's
+// periods and colors, published by name.
+func TestMAPeriodsConfiguresTheLines(t *testing.T) {
+	colors := []ui.Color{
+		ui.RGB(230, 233, 239), ui.RGB(245, 197, 66),
+		ui.RGB(179, 136, 255), ui.RGB(38, 198, 218),
+	}
+	c := hostChart(t, ChartOptions{
+		Symbols:    []string{"A"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{"MA"},
+		Source:     fixedSource{bars: hostBars(90)},
+		Location:   ashareLocation,
+		MAPeriods:  []int{5, 10, 20, 60},
+		MAColors:   colors,
+	})
+	values := c.IndicatorValues("A", c.Bars()-1)
+	for _, key := range []string{"MA5", "MA10", "MA20", "MA60"} {
+		if _, ok := values[key]; !ok {
+			t.Fatalf("%s missing from %v", key, values)
+		}
+	}
+	// The default 5/20 must not leak in as a second definition.
+	if _, ok := values["MA20"]; !ok {
+		t.Fatal("MA20 missing")
+	}
+	ma := maOf(t, c)
+	if len(ma.Periods) != 4 || ma.Periods[3] != 60 {
+		t.Fatalf("MA periods %v", ma.Periods)
+	}
+}
+
+// maOf finds the MA instance of the first pane.
+func maOf(t *testing.T, c *Chart) *MA {
+	t.Helper()
+	for _, ind := range c.panes[0].inds {
+		if ma, ok := ind.(*MA); ok {
+			return ma
+		}
+	}
+	t.Fatal("no MA instance")
+	return nil
+}
+
+// TestMAPeriodsSubsetRecordsThatTurningLinesOffIsASubset is the shape a
+// host uses for per-line toggles: in this library a line is off when its
+// period is not in the list.
+func TestMAPeriodsSubsetRecordsThatTurningLinesOffIsASubset(t *testing.T) {
+	c := hostChart(t, ChartOptions{
+		Symbols:    []string{"A"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{"MA"},
+		Source:     fixedSource{bars: hostBars(90)},
+		Location:   ashareLocation,
+		MAPeriods:  []int{5, 60},
+	})
+	values := c.IndicatorValues("A", c.Bars()-1)
+	if _, ok := values["MA10"]; ok {
+		t.Fatalf("MA10 was not in the period list but appears in %v", values)
+	}
+	if _, ok := values["MA5"]; !ok {
+		t.Fatalf("MA5 missing from %v", values)
+	}
+	if _, ok := values["MA60"]; !ok {
+		t.Fatalf("MA60 missing from %v", values)
+	}
+}
+
+// TestSetMARebuildsWithoutRebinding records that a host may change the
+// periods after NewChart and keep the bindable toggle pointer.
+func TestSetMARebuildsWithoutRebinding(t *testing.T) {
+	c := hostChart(t, ChartOptions{
+		Symbols:    []string{"A"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{"MA"},
+		Source:     fixedSource{bars: hostBars(90)},
+		Location:   ashareLocation,
+	})
+	toggle := c.IndicatorEnabled("MA")
+	if toggle == nil || !*toggle {
+		t.Fatal("MA is not on by default")
+	}
+	c.SetMA([]int{3, 7}, nil)
+	ma := maOf(t, c)
+	if len(ma.Periods) != 2 || ma.Periods[0] != 3 || ma.Periods[1] != 7 {
+		t.Fatalf("MA periods after SetMA %v", ma.Periods)
+	}
+	if got := c.IndicatorEnabled("MA"); got != toggle {
+		t.Fatal("SetMA replaced the bindable toggle pointer")
+	}
+	if !*toggle {
+		t.Fatal("SetMA turned MA off")
+	}
+	values := c.IndicatorValues("A", c.Bars()-1)
+	if _, ok := values["MA3"]; !ok {
+		t.Fatalf("MA3 missing from %v", values)
+	}
+}
+
+// TestIndicatorValuesNamesAndGaps pins the key set and the warm-up rule.
+func TestIndicatorValuesNamesAndGaps(t *testing.T) {
+	// 80 bars warm up the slowest built-in: MACD's DEA needs 26 + 9,
+	// and BOLL needs 20.
+	bars := hostBars(80)
+	c := hostChart(t, ChartOptions{
+		Symbols:    []string{"A"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{"MA", "MACD", "KDJ", "BOLL"},
+		Source:     fixedSource{bars: bars},
+		Location:   ashareLocation,
+	})
+	last := c.Bars() - 1
+	values := c.IndicatorValues("A", last)
+	want := []string{
+		"MA5", "MA20",
+		"MACD.DIF", "MACD.DEA", "MACD.HIST",
+		"KDJ.K", "KDJ.D", "KDJ.J",
+		"BOLL.MID", "BOLL.UP", "BOLL.LOW",
+	}
+	for _, key := range want {
+		if _, ok := values[key]; !ok {
+			t.Fatalf("%s missing from %v", key, values)
+		}
+	}
+	// At bar 0 nothing is warmed up: every key is absent rather than NaN.
+	first := c.IndicatorValues("A", 0)
+	if len(first) != 0 {
+		t.Fatalf("bar 0 should have no ready values, got %v", first)
+	}
+	// Turning an indicator off removes its keys.
+	if err := c.SetIndicator("BOLL", false); err != nil {
+		t.Fatalf("toggle: %v", err)
+	}
+	off := c.IndicatorValues("A", last)
+	if _, ok := off["BOLL.MID"]; ok {
+		t.Fatalf("BOLL keys survived a toggle off: %v", off)
+	}
+	if _, ok := off["MA5"]; !ok {
+		t.Fatal("turning BOLL off removed the MA values")
+	}
+	if got := c.IndicatorValues("NOPE", last); got != nil {
+		t.Fatal("an unknown symbol returned values")
+	}
+	if got := c.IndicatorValues("A", -1); got != nil {
+		t.Fatal("a negative index returned values")
+	}
+}
+
+// TestReadIndicatorValuesReusesAMap records the no-allocation-per-frame
+// path: a host keeps one map and it never holds a stale key.
+func TestReadIndicatorValuesReusesAMap(t *testing.T) {
+	c := hostChart(t, ChartOptions{
+		Symbols:    []string{"A"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{"MA"},
+		Source:     fixedSource{bars: hostBars(30)},
+		Location:   ashareLocation,
+	})
+	out := make(map[string]float64, 8)
+	c.ReadIndicatorValues("A", c.Bars()-1, out)
+	if len(out) == 0 {
+		t.Fatal("no values written into the host map")
+	}
+	c.ReadIndicatorValues("A", 0, out)
+	if len(out) != 0 {
+		t.Fatalf("a warm-up gap left stale keys: %v", out)
+	}
+	// A nil map is accepted and writes nothing.
+	c.ReadIndicatorValues("A", c.Bars()-1, nil)
+}
+
+// TestSymbolLabelsHideTheTicker is REQ-09: during a blind session the
+// element label must not carry the ticker.
+func TestSymbolLabelsHideTheTicker(t *testing.T) {
+	c := NewChart(ChartOptions{
+		Symbols:      []string{"600519"},
+		SymbolLabels: []string{"个股"},
+		Period:       Period{Span: 1, Unit: UnitDay},
+		Indicators:   []string{},
+		Source:       fixedSource{bars: hostBars(30)},
+		Location:     ashareLocation,
+	})
+	tt := ui.NewTester(c.View, 900, 620)
+	_ = tt.Image()
+	if _, ok := tt.Find("600519 chart"); ok {
+		t.Fatalf("the ticker is still the element label; texts %q", tt.Texts())
+	}
+	if _, ok := tt.Find("个股 chart"); !ok {
+		t.Fatalf("the display name is not the element label; texts %q", tt.Texts())
+	}
+	// The data name is unchanged: Bar and Readout still use the symbol.
+	if _, ok := c.Bar("600519", 0); !ok {
+		t.Fatal("the symbol stopped addressing the data")
+	}
+	if c.Readout("600519") == "" {
+		t.Fatal("the symbol stopped addressing the readout")
+	}
+}
+
+// TestSymbolLabelsEmptyFallsBack records the documented fallback.
+func TestSymbolLabelsEmptyFallsBack(t *testing.T) {
+	c := hostChart(t, ChartOptions{
+		Symbols:      []string{"600519"},
+		SymbolLabels: []string{""},
+		Period:       Period{Span: 1, Unit: UnitDay},
+		Indicators:   []string{},
+		Source:       fixedSource{bars: hostBars(30)},
+		Location:     ashareLocation,
+	})
+	if got := c.displayName(0); got != "600519" {
+		t.Fatalf("empty label gave %q, want the symbol", got)
+	}
+	c.SetSymbolLabels(nil)
+	if got := c.displayName(0); got != "600519" {
+		t.Fatalf("cleared label gave %q, want the symbol", got)
+	}
+}
+
+// TestPaneHeightsSetsTheBands is REQ-07: the host asks for DIPs and the
+// price plot takes the rest.
+func TestPaneHeightsSetsTheBands(t *testing.T) {
+	c := hostChart(t, ChartOptions{
+		Symbols:     []string{"A"},
+		Period:      Period{Span: 1, Unit: UnitDay},
+		Indicators:  []string{"MA", "MACD", "KDJ"},
+		Source:      fixedSource{bars: hostBars(90)},
+		Location:    ashareLocation,
+		PaneHeights: PaneHeights{Sub: 70, Volume: 55},
+	})
+	panes := c.painted[0]
+	if near(panes.MACD.H, 70, 1) == false {
+		t.Fatalf("MACD height %v, want 70", panes.MACD.H)
+	}
+	if near(panes.KDJ.H, 70, 1) == false {
+		t.Fatalf("KDJ height %v, want 70", panes.KDJ.H)
+	}
+	if near(panes.Volume.H, 55, 1) == false {
+		t.Fatalf("volume height %v, want 55", panes.Volume.H)
+	}
+	// The bands must not overlap and must stay inside the box.
+	if panes.Price.Y+panes.Price.H > panes.Volume.Y {
+		t.Fatal("the price plot overlaps the volume strip")
+	}
+	if panes.Volume.Y+panes.Volume.H > panes.MACD.Y {
+		t.Fatal("the volume strip overlaps the MACD band")
+	}
+	if panes.MACD.Y+panes.MACD.H > panes.KDJ.Y {
+		t.Fatal("the MACD band overlaps the KDJ band")
+	}
+	if panes.KDJ.Y+panes.KDJ.H > panes.Time.Y+panes.Time.H+1 {
+		t.Fatal("the bands run past the chart box")
+	}
+	if panes.Price.H <= 0 {
+		t.Fatal("the price plot has no height")
+	}
+}
+
+// TestPaneHeightsShrinksRatherThanBreaking records that asking for more
+// than fits leaves a usable price plot instead of a negative one.
+func TestPaneHeightsShrinksRatherThanBreaking(t *testing.T) {
+	c := hostChart(t, ChartOptions{
+		Symbols:     []string{"A"},
+		Period:      Period{Span: 1, Unit: UnitDay},
+		Indicators:  []string{"MA", "MACD", "KDJ"},
+		Source:      fixedSource{bars: hostBars(90)},
+		Location:    ashareLocation,
+		PaneHeights: PaneHeights{Sub: 4000, Volume: 4000},
+	})
+	panes := c.painted[0]
+	if panes.Price.H <= 0 {
+		t.Fatalf("price height %v under an impossible request", panes.Price.H)
+	}
+	if panes.KDJ.Y+panes.KDJ.H > panes.Time.Y+panes.Time.H+1 {
+		t.Fatal("the bands run past the chart box")
+	}
+}
+
+// TestPaneHeightsZeroKeepsTheBuiltInSplit records that the option is
+// opt-in and the default layout is byte-identical.
+func TestPaneHeightsZeroKeepsTheBuiltInSplit(t *testing.T) {
+	opts := ChartOptions{
+		Symbols:    []string{"A"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{"MA", "MACD", "KDJ"},
+		Source:     fixedSource{bars: hostBars(90)},
+		Location:   ashareLocation,
+	}
+	a := hostChart(t, opts)
+	withZero := opts
+	withZero.PaneHeights = PaneHeights{}
+	b := hostChart(t, withZero)
+	if !samePanes(a.painted[0], b.painted[0]) {
+		t.Fatalf("a zero PaneHeights changed the layout: %+v vs %+v", a.painted[0], b.painted[0])
+	}
+}
+
+// samePanes compares two layouts including the Extra slices.
+func samePanes(a, b Panes) bool {
+	if a.Price != b.Price || a.Volume != b.Volume || a.MACD != b.MACD || a.KDJ != b.KDJ || a.Time != b.Time {
+		return false
+	}
+	if a.PriceAxis != b.PriceAxis || a.VolumeAxis != b.VolumeAxis || a.MACDAxis != b.MACDAxis || a.KDJAxis != b.KDJAxis {
+		return false
+	}
+	if len(a.Extra) != len(b.Extra) || len(a.ExtraAxis) != len(b.ExtraAxis) {
+		return false
+	}
+	for i := range a.Extra {
+		if a.Extra[i] != b.Extra[i] || a.ExtraAxis[i] != b.ExtraAxis[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func near(got, want, tol float32) bool {
+	d := got - want
+	if d < 0 {
+		d = -d
+	}
+	return d <= tol
+}

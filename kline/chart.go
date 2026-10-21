@@ -201,6 +201,16 @@ type Chart struct {
 	// crossHook is called when the hovered bar changes. It runs inside
 	// View, so a host may move a second chart to the same time there.
 	crossHook func(symbol string, index int, ok bool)
+	// maPeriods and maColors override the built-in MA lines. Empty means
+	// the registered defaults.
+	maPeriods []int
+	maColors  []ui.Color
+	// displayNames are the accessible names, parallel to panes. An
+	// empty entry falls back to the symbol.
+	displayNames []string
+	// paneHeights is the host's DIP override of the sub-pane bands. A
+	// zero field keeps the built-in share of the plot.
+	paneHeights PaneHeights
 	// crossAt is a crosshair a host placed by time. It wins over the
 	// pointer until the pointer moves or the host clears it, which is how
 	// two charts share one cursor when each has its own pointer.
@@ -300,18 +310,104 @@ func (a *Chart) enabledSubs() []Indicator {
 func (a *Chart) layoutPanes(r ui.Rect, showTime bool) Panes {
 	subs := a.enabledSubs()
 	n := len(subs)
+	var panes Panes
 	switch n {
 	case 0:
 		// SplitStack leaves a zero-height MACD rect. Keep it so this
 		// layout stays identical to the built-in no-sub-pane split.
-		return SplitStack(r, showTime, false, false)
+		panes = SplitStack(r, showTime, false, false)
 	case 1:
-		return assignSubRects(SplitStack(r, showTime, true, false), subs, n)
+		panes = assignSubRects(SplitStack(r, showTime, true, false), subs, n)
 	case 2:
-		return assignSubRects(SplitStack(r, showTime, true, true), subs, n)
+		panes = assignSubRects(SplitStack(r, showTime, true, true), subs, n)
 	default:
-		return assignSubRects(splitMany(r, showTime, n), subs, n)
+		panes = assignSubRects(splitMany(r, showTime, n), subs, n)
 	}
+	if a.paneHeights.Sub > 0 || a.paneHeights.Volume > 0 {
+		panes = applyPaneHeights(r, panes, showTime, a.paneHeights, n)
+	}
+	return panes
+}
+
+// applyPaneHeights re-splits a box whose bands the host set in DIPs.
+// The price plot takes what is left. If the requested bands do not fit,
+// they shrink in proportion and the price plot keeps a quarter of the
+// body, so a host that asks for too much still gets a usable chart
+// rather than an error it cannot act on.
+//
+// Band placement follows the fallback split: the same rects are open and
+// in the same order, so the host only changes heights, never which
+// indicator paints where.
+func applyPaneHeights(r ui.Rect, fallback Panes, showTime bool, h PaneHeights, subs int) Panes {
+	bodyH := r.H
+	if showTime {
+		bodyH -= timeHeight
+	}
+	gaps := float32(paneGap) * float32(subs+1)
+	inner := bodyH - gaps
+	if inner <= 0 {
+		return fallback
+	}
+	volH := fallback.Volume.H
+	if h.Volume > 0 {
+		volH = float32(h.Volume)
+	}
+	// Heights in the fallback's own band order, so a single open sub-pane
+	// keeps the band it already had.
+	var heights []float32
+	for _, band := range []ui.Rect{fallback.MACD, fallback.KDJ} {
+		if band.H > 0 && len(heights) < subs {
+			heights = append(heights, band.H)
+		}
+	}
+	for len(heights) < subs {
+		heights = append(heights, fallback.MACD.H)
+	}
+	if h.Sub > 0 {
+		for i := range heights {
+			heights[i] = float32(h.Sub)
+		}
+	}
+	total := volH
+	for _, one := range heights {
+		total += one
+	}
+	priceH := inner - total
+	if priceH < inner*0.25 {
+		// Shrink the bands to leave the price plot a quarter of the body.
+		priceH = inner * 0.25
+		avail := inner - priceH
+		if total > 0 && avail > 0 {
+			k := avail / total
+			volH *= k
+			for i := range heights {
+				heights[i] *= k
+			}
+		}
+	}
+	out := Panes{Time: fallback.Time}
+	out.Price = ui.Rect{X: r.X, Y: r.Y, W: fallback.Price.W, H: priceH}
+	out.PriceAxis = ui.Rect{X: fallback.PriceAxis.X, Y: r.Y, W: fallback.PriceAxis.W, H: priceH}
+	y := r.Y + priceH + paneGap
+	out.Volume = ui.Rect{X: r.X, Y: y, W: fallback.Price.W, H: volH}
+	out.VolumeAxis = ui.Rect{X: fallback.VolumeAxis.X, Y: y, W: fallback.VolumeAxis.W, H: volH}
+	y += volH + paneGap
+	axisX := r.X + fallback.Price.W
+	targets := []*ui.Rect{&out.MACD, &out.KDJ}
+	axisTargets := []*ui.Rect{&out.MACDAxis, &out.KDJAxis}
+	open := []ui.Rect{fallback.MACD, fallback.KDJ}
+	for i, height := range heights {
+		rect := ui.Rect{X: r.X, Y: y, W: fallback.Price.W, H: height}
+		ax := ui.Rect{X: axisX, Y: y, W: fallback.PriceAxis.W, H: height}
+		if i < 2 && open[i].H > 0 {
+			*targets[i], *axisTargets[i] = rect, ax
+		} else {
+			out.Extra = append(out.Extra, rect)
+			out.ExtraAxis = append(out.ExtraAxis, ax)
+		}
+		y += height + paneGap
+	}
+	return fitPanes(r, out)
 }
 
 // subBand is the band one open sub-pane indicator paints into.
@@ -487,7 +583,11 @@ func (a *Chart) View(c *ui.Context) {
 		}
 		slots := make([]chartSlot, len(a.panes))
 		for i, s := range a.panes {
-			slots[i] = chartSlot{key: s.name, label: s.name + " chart", pane: i, showTime: i == len(a.panes)-1}
+			// The key stays the symbol, which is unique and stable, so a
+			// renamed display name does not rebuild the element. The
+			// label is what a screen reader announces: a blind session
+			// passes a neutral name and the ticker never reaches it.
+			slots[i] = chartSlot{key: s.name, label: a.paneLabel(i), pane: i, showTime: i == len(a.panes)-1}
 		}
 		if a.layout == layoutOverlay {
 			// One plot. Both headers stay, so the crosshair can show
@@ -573,14 +673,36 @@ func (a *Chart) View(c *ui.Context) {
 	})
 }
 
+// displayName is the name a host wants shown for pane i, or the symbol
+// when it gave none.
+func (a *Chart) displayName(i int) string {
+	if i >= 0 && i < len(a.displayNames) && a.displayNames[i] != "" {
+		return a.displayNames[i]
+	}
+	if i >= 0 && i < len(a.panes) {
+		return a.panes[i].name
+	}
+	return ""
+}
+
+// paneLabel is the accessible name of pane i's element. The symbol is
+// what a sighted host means by its chart, so the label says "chart"; a
+// screen reader then announces the display name next to it.
+func (a *Chart) paneLabel(i int) string {
+	name := a.displayName(i)
+	if name == "" {
+		return ""
+	}
+	return name + " chart"
+}
+
 func (a *Chart) symbolHeader(c *ui.Context, i int) {
 	if i < 0 || i >= len(a.panes) {
 		return
 	}
-	s := &a.panes[i]
 	t := c.Theme()
 	ui.Row(c).Padding(2, 14, 2, 14).Gap(10).AlignItems(ui.Center).Children(func() {
-		name := ui.Text(c, s.name).Bold().FontSize(13)
+		name := ui.Text(c, a.displayName(i)).Bold().FontSize(13)
 		if a.layout == layoutOverlay && i == 1 {
 			name.TextColor(a.chartStyle(t).Compare)
 		}

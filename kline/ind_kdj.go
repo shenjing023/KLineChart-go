@@ -213,6 +213,33 @@ func (k *KDJ) Scale(first, last int) chart.Linear {
 
 func (k *KDJ) DrawMain(*ui.Painter, ui.Rect, Viewport, chart.Linear) {}
 
+// Values publishes KDJ.K, KDJ.D, and KDJ.J. Pre-warm-up entries are
+// absent rather than NaN, so a host can tell "not ready" from a number.
+func (k *KDJ) Values(i int) map[string]float64 {
+	if k == nil || i < 0 {
+		return nil
+	}
+	put := func(out map[string]float64, key string, line []float64) map[string]float64 {
+		if i >= len(line) {
+			return out
+		}
+		v := line[i]
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return out
+		}
+		if out == nil {
+			out = make(map[string]float64, 3)
+		}
+		out[key] = v
+		return out
+	}
+	var out map[string]float64
+	out = put(out, "KDJ.K", k.K)
+	out = put(out, "KDJ.D", k.D)
+	out = put(out, "KDJ.J", k.J)
+	return out
+}
+
 func (k *KDJ) DrawSub(p *ui.Painter, rect ui.Rect, vp Viewport) {
 	if k == nil || len(k.K) == 0 || rect.W < 2 || rect.H < 2 {
 		return

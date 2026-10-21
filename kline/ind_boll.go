@@ -198,6 +198,33 @@ func (b *BOLL) DrawMain(p *ui.Painter, priceRect ui.Rect, vp Viewport, y chart.L
 
 func (b *BOLL) DrawSub(*ui.Painter, ui.Rect, Viewport) {}
 
+// Values publishes BOLL.MID, BOLL.UP, and BOLL.LOW. A warm-up gap is absent rather than
+// NaN, so a host can tell "not ready" from a real number.
+func (b *BOLL) Values(i int) map[string]float64 {
+	if b == nil || i < 0 {
+		return nil
+	}
+	put := func(out map[string]float64, key string, line []float64) map[string]float64 {
+		if i >= len(line) {
+			return out
+		}
+		v := line[i]
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return out
+		}
+		if out == nil {
+			out = make(map[string]float64, 3)
+		}
+		out[key] = v
+		return out
+	}
+	var out map[string]float64
+	out = put(out, "BOLL.MID", b.Mid)
+	out = put(out, "BOLL.UP", b.Up)
+	out = put(out, "BOLL.LOW", b.Low)
+	return out
+}
+
 func (b *BOLL) ValueAt(i int) string {
 	if b == nil || i < 0 || i >= len(b.Mid) || math.IsNaN(b.Mid[i]) {
 		return ""

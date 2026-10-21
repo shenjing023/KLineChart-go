@@ -422,7 +422,7 @@ func (a *Chart) recalc(s *series) {
 // ensureInds gives s one indicator instance per slot, in slot order.
 func (a *Chart) ensureInds(s *series) {
 	for len(s.inds) < len(a.slots) {
-		s.inds = append(s.inds, a.slots[len(s.inds)].spec.New())
+		s.inds = append(s.inds, a.newIndicator(a.slots[len(s.inds)].spec))
 	}
 	for len(s.fresh) < len(s.inds) {
 		s.fresh = append(s.fresh, false)

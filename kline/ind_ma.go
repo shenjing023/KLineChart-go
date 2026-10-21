@@ -162,6 +162,29 @@ func (m *MA) DrawMain(p *ui.Painter, priceRect ui.Rect, vp Viewport, y chart.Lin
 
 func (m *MA) DrawSub(*ui.Painter, ui.Rect, Viewport) {}
 
+// Values publishes each average as MA<period>. A warm-up gap is absent
+// rather than NaN, so a host can tell "not ready" from a real number.
+func (m *MA) Values(i int) map[string]float64 {
+	if m == nil || i < 0 {
+		return nil
+	}
+	var out map[string]float64
+	for pi, period := range m.Periods {
+		if pi >= len(m.lines) || i >= len(m.lines[pi]) {
+			continue
+		}
+		v := m.lines[pi][i]
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]float64, len(m.Periods))
+		}
+		out["MA"+strconv.Itoa(period)] = v
+	}
+	return out
+}
+
 func (m *MA) ValueAt(i int) string {
 	if m == nil || i < 0 {
 		return ""

@@ -66,6 +66,19 @@ type SubPlot interface {
 	Scale(first, last int) chart.Linear
 }
 
+// NamedValues is optional. An indicator implements it to publish its
+// numbers by name to Chart.IndicatorValues, which is how a host draws a
+// header in its own language and precision instead of parsing ValueAt.
+//
+// Keys are fixed names, not sentences: MA5, MA10, MACD.DIF, KDJ.K, and so
+// on. A key is absent when that value is not ready at i (a warm-up gap),
+// which is the same condition that hides it from ValueAt. Chart adds the
+// keys of every enabled indicator, built-in or host-registered, to one
+// map, so a host reads a value without knowing which indicator owns it.
+type NamedValues interface {
+	Values(i int) map[string]float64
+}
+
 // ErrDuplicateIndicator is returned when Register is called with a
 // name that is already in the list.
 var ErrDuplicateIndicator = errors.New("kline: duplicate indicator")

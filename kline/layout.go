@@ -25,6 +25,20 @@ const (
 	kdjShareBoth    = 0.20
 )
 
+// PaneHeights is a host's override of the sub-pane bands, in DIPs. A
+// zero field keeps the built-in share of the plot. The price plot takes
+// whatever is left, and the layout still compresses the bands when the
+// box is too short to honor them, so the value is a request rather than
+// a guarantee.
+type PaneHeights struct {
+	// Sub is the height of each open sub-pane: MACD, KDJ, and any host
+	// band. It is applied per band, so turning on a second sub-pane
+	// takes another Sub from the price plot.
+	Sub float64
+	// Volume is the built-in volume strip's height.
+	Volume float64
+}
+
 // Panes is one symbol's chart box split into the price plot, the built-in
 // volume strip, optional MACD and KDJ sub-panes, and the axes. Coordinates
 // are window DIPs, the same space a Draw callback receives. A sub-pane
