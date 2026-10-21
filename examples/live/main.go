@@ -10,6 +10,7 @@
 package main
 
 import (
+	"container/list"
 	"fmt"
 	"log"
 	"sync"
@@ -22,88 +23,186 @@ import (
 
 func main() {
 	mygo.App.WhenReady(func() {
-		// The window comes first: its Update is the hook that moves a
-		// pushed bar onto the UI thread, and ChartOptions needs it.
-		var window *mygo.Window
-		var chart *kline.Chart
-		feed := newMarketFeed()
-
-		window = mygo.NewWindow(mygo.WindowOptions{
+		app := newLiveExample(newMarketFeed())
+		window := mygo.NewWindow(mygo.WindowOptions{
 			Title:     "kline live example",
 			Width:     960,
 			Height:    640,
 			MinWidth:  640,
 			MinHeight: 420,
-			Content: ui.View(func(c *ui.Context) {
-				if chart == nil {
-					return
-				}
-				ui.Column(c).Fill().Background(c.Theme().Background).Children(func() {
-					ui.Row(c).Padding(8, 12, 6, 12).Gap(12).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, "kline live A-share").Bold().FontSize(15)
-						ui.Textf(c, "%s · %d bars", chart.Period(), chart.Bars()).
-							FontSize(12).TextColor(c.Theme().TextMuted)
-						ui.Box(c).Grow(1)
-						for _, p := range []kline.Period{
-							{Span: 1, Unit: kline.UnitHour},
-							{Span: 4, Unit: kline.UnitHour},
-							{Span: 1, Unit: kline.UnitDay},
-						} {
-							label := p.String()
-							var button ui.Element
-							if chart.Period() == p {
-								button = ui.PrimaryButton(c, label)
-							} else {
-								button = ui.Button(c, label)
-							}
-							period := p
-							if button.Clicked() {
-								// The feed has to be able to answer for the
-								// new period before the chart asks, so the
-								// history is prepared first.
-								feed.setPeriod(period)
-								// SetPeriod subscribes the new period on the
-								// same source. A failed load keeps the bars.
-								if err := chart.SetPeriod(period); err != nil {
-									log.Println("period:", err)
-								}
-							}
-						}
-					})
-					ui.Column(c).Grow(1).WidthPercent(100).Children(func() {
-						chart.View(c)
-					})
-				})
-			}),
+			Content:   ui.View(app.view),
 		})
-
-		chart = kline.NewChart(kline.ChartOptions{
-			Source:  feed,
-			Symbols: []string{"600519"},
-			Period:  kline.Period{Span: 1, Unit: kline.UnitHour},
-			// One indicator keeps the first push cheap; every Calc walks
-			// the series, and a live append only pays for the tail.
-			Indicators: []string{"MA"},
-			// Update runs the append on the UI thread and redraws. Without
-			// it the feed's goroutine would write the series while View
-			// paints it.
-			Marshal: window.Update,
-		})
-		if err := chart.LoadError(); err != nil {
+		// The view closes over app, so its first frame may arrive before
+		// attach installs the chart. attach then installs the Marshal hook.
+		if err := app.attach(func() { window.Update(app.applyPending) }); err != nil {
 			log.Fatal(err)
 		}
-
-		window.OnClosed(func() {
-			feed.close()
-			// Unsubscribe and fence any handler that is still in flight.
-			_ = chart.Close()
-		})
-		feed.start()
+		window.OnClosed(app.close)
+		app.feed.start()
 	})
 
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+type liveExample struct {
+	feed  *marketFeed
+	chart *kline.Chart
+	err   error
+	// request asks for a frame. Production posts applyPending through
+	// window.Update; the headless test records the same request.
+	request func()
+	mu      sync.Mutex
+	queue   list.List
+	frame   bool
+	closed  bool
+}
+
+func newLiveExample(source *marketFeed) *liveExample {
+	return &liveExample{feed: source}
+}
+
+func (a *liveExample) attach(request func()) error {
+	a.request = request
+	dispatch := a.dispatch
+	if request == nil {
+		dispatch = nil
+	}
+	a.chart = newLiveChart(a.feed, dispatch)
+	a.err = a.chart.LoadError()
+	return a.err
+}
+
+func newLiveChart(feed kline.LiveSource, dispatch func(func())) *kline.Chart {
+	return kline.NewChart(kline.ChartOptions{
+		Source:     feed,
+		Symbols:    []string{"600519"},
+		Period:     kline.Period{Span: 1, Unit: kline.UnitHour},
+		Indicators: []string{"MA"},
+		Marshal:    dispatch,
+	})
+}
+
+func (a *liveExample) close() {
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		return
+	}
+	a.closed = true
+	a.queue.Init()
+	a.frame = false
+	feed := a.feed
+	chart := a.chart
+	a.mu.Unlock()
+
+	if feed != nil {
+		feed.close()
+	}
+	if chart != nil {
+		_ = chart.Close()
+	}
+}
+
+// dispatch is ChartOptions.Marshal. A feed may push several bars before the
+// UI drains one frame, so keep every callback in order instead of replacing
+// one slot. Dropping the first new open makes later ones look out of order.
+func (a *liveExample) dispatch(fn func()) {
+	if fn == nil {
+		return
+	}
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		return
+	}
+	a.queue.PushBack(fn)
+	request := a.request
+	if request == nil || a.frame {
+		a.mu.Unlock()
+		return
+	}
+	a.frame = true
+	a.mu.Unlock()
+	request()
+}
+
+func (a *liveExample) applyPending() {
+	a.mu.Lock()
+	if a.closed {
+		a.frame = false
+		a.mu.Unlock()
+		return
+	}
+	a.frame = false
+	a.err = nil
+	next := a.queue.Front()
+	if next != nil {
+		a.queue.Remove(next)
+	}
+	request := a.request
+	if a.queue.Len() > 0 && request != nil && !a.closed {
+		a.frame = true
+	}
+	a.mu.Unlock()
+	if next == nil {
+		return
+	}
+	next.Value.(func())()
+	if request != nil {
+		a.mu.Lock()
+		more := !a.closed && a.queue.Len() > 0
+		if more {
+			a.frame = true
+		}
+		a.mu.Unlock()
+		if more {
+			request()
+		}
+	}
+}
+
+func (a *liveExample) view(c *ui.Context) {
+	if a.chart == nil {
+		return
+	}
+	a.applyPending()
+	chart := a.chart
+	ui.Column(c).Fill().Background(c.Theme().Background).Children(func() {
+		ui.Row(c).Padding(8, 12, 6, 12).Gap(12).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "kline live A-share").Bold().FontSize(15)
+			ui.Textf(c, "%s · %d bars", chart.Period(), chart.Bars()).
+				FontSize(12).TextColor(c.Theme().TextMuted)
+			ui.Box(c).Grow(1)
+			for _, p := range []kline.Period{
+				{Span: 1, Unit: kline.UnitHour},
+				{Span: 4, Unit: kline.UnitHour},
+				{Span: 1, Unit: kline.UnitDay},
+			} {
+				label := p.String()
+				var button ui.Element
+				if chart.Period() == p {
+					button = ui.PrimaryButton(c, label)
+				} else {
+					button = ui.Button(c, label)
+				}
+				period := p
+				if button.Clicked() {
+					a.feed.setPeriod(period)
+					if err := chart.SetPeriod(period); err != nil {
+						a.err = err
+					}
+				}
+			}
+		})
+		if a.err != nil {
+			ui.Text(c, "error: "+a.err.Error()).Padding(0, 12, 6, 12)
+		}
+		ui.Column(c).Grow(1).WidthPercent(100).Children(func() {
+			chart.View(c)
+		})
+	})
 }
 
 // marketFeed is the host side: history through GetBars, pushes through
@@ -114,6 +213,7 @@ type marketFeed struct {
 	period  kline.Period
 	history map[kline.Period][]kline.Candle
 	subs    map[string]kline.BarHandler
+	ticks   int
 	stop    chan struct{}
 	once    sync.Once
 }
@@ -212,9 +312,9 @@ func (f *marketFeed) setPeriod(p kline.Period) {
 	}
 }
 
-// start pushes a revised last bar every 900ms. The open time does not
-// change, so the chart replaces the newest bar in place and updates the
-// indicator tail instead of recalculating the series.
+// start pushes a revised last bar every 900ms. Every fourth tick also
+// opens a new bar. The short burst after it can finish before the UI drains
+// a frame, which exercises the host queue rather than hiding it.
 func (f *marketFeed) start() {
 	go func() {
 		ticker := time.NewTicker(900 * time.Millisecond)
@@ -224,10 +324,21 @@ func (f *marketFeed) start() {
 			case <-f.stop:
 				return
 			case <-ticker.C:
-				f.pushOnce()
+				f.pushTick()
 			}
 		}
 	}()
+}
+
+func (f *marketFeed) pushTick() {
+	f.mu.Lock()
+	f.ticks++
+	tick := f.ticks
+	f.mu.Unlock()
+	f.pushOnce()
+	if tick%4 == 0 {
+		f.pushOpen()
+	}
 }
 
 func (f *marketFeed) pushOnce() {
@@ -252,9 +363,40 @@ func (f *marketFeed) pushOnce() {
 	f.history[period] = series
 	f.mu.Unlock()
 
-	// The chart's Marshal hook routes this to the UI thread. This
-	// goroutine never touches the chart.
+	// The chart calls the configured Marshal hook, which queues the
+	// callback for the UI thread. This goroutine never touches the chart.
 	onBar(last)
+}
+
+// pushOpen advances the cached series before handing the new open to the
+// chart. Pushes use chart order, not delivery order: the UI queue applies
+// the new open after the revision that opened it.
+func (f *marketFeed) pushOpen() {
+	f.mu.Lock()
+	period := f.period
+	onBar := f.subs[subKey("600519", period)]
+	series := f.history[period]
+	if onBar == nil || len(series) == 0 {
+		f.mu.Unlock()
+		return
+	}
+	last := series[len(series)-1]
+	duration, err := period.Duration()
+	if err != nil {
+		f.mu.Unlock()
+		return
+	}
+	next := last
+	next.Time = last.Time.Add(duration)
+	next.Open = last.Close
+	next.Close = last.Close + 0.2
+	next.High = next.Close + 0.3
+	next.Low = next.Open - 0.3
+	next.Volume = 900
+	f.history[period] = append(series, next)
+	f.mu.Unlock()
+
+	onBar(next)
 }
 
 func (f *marketFeed) close() {

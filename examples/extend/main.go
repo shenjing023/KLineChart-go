@@ -5,16 +5,19 @@
 //
 //	go run ./examples/extend
 //
-// The chart is painted headlessly here so the example can also serve as
-// a smoke test of the whole registration path without a window.
+// Add -headless to run the same view as a console smoke without a window.
 package main
 
 import (
+	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math"
+	"os"
 	"strings"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/chart"
 	"github.com/shenjing023/KLineChart-go/kline"
@@ -22,9 +25,9 @@ import (
 
 func init() {
 	if err := kline.Register(kline.Spec{
-		Name: "RANGE",
+		Name: "MID",
 		Kind: kline.PaneMain,
-		New:  func() kline.Indicator { return &rangeLine{} },
+		New:  func() kline.Indicator { return &midLine{} },
 	}); err != nil {
 		log.Fatal(err)
 	}
@@ -38,60 +41,120 @@ func init() {
 	}
 }
 
-func main() {
-	chart := kline.NewChart(kline.ChartOptions{
-		Symbols: []string{"600519"},
-		// RANGE is a main-pane line, so it widens the price scale the
-		// same way the built-in MA does.
-		Indicators: []string{"RANGE", "MA"},
-	})
-	if err := chart.LoadError(); err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("period:", chart.Period())
-	fmt.Println("bars:", chart.Bars())
-	fmt.Println("RANGE registered:", chart.IndicatorOn("RANGE"))
-	fmt.Println("RANGE in the toolbar order:", chart.IndicatorNames())
-
-	// The host tool is selected like a built-in one.
-	if err := chart.SetTool("mark"); err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("tool:", chart.Tool())
-
-	// Paint one frame in memory: this is what a window would do. Moving
-	// the pointer over the plot makes the header carry each indicator's
-	// ValueAt for the hovered bar, which is where RANGE shows up.
-	tester := ui.NewTester(chart.View, 900, 620)
-	tester.Frame()
-	box, ok := tester.Find("600519 chart")
-	if ok {
-		tester.Move(box.X+box.W/2, box.Y+30)
-	}
-	fmt.Println("header shows the indicator:", strings.Contains(chart.Readout("600519"), "RANGE"))
-
-	if err := chart.SetIndicator("RANGE", false); err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("after toggle:", chart.IndicatorOn("RANGE"))
+type extendExample struct {
+	chart *kline.Chart
+	err   error
 }
 
-// rangeLine is a main-pane indicator drawn as a line plot: the high-low
-// range of each bar, scaled onto the price axis. Series is what the chart
-// strokes, so DrawMain stays empty.
-type rangeLine struct {
+func newExtendExample() *extendExample {
+	a := &extendExample{chart: kline.NewChart(kline.ChartOptions{
+		Source:  &kline.SyntheticSource{Extra: -1},
+		Symbols: []string{"600519"},
+		// MID is a main-pane line. It stays in price units, so it
+		// widens the price scale the same way the built-in MA does.
+		Indicators: []string{"MID", "MA"},
+		Style: kline.Style{
+			Overlay: ui.RGB(0, 220, 255), OverlayHot: ui.RGB(255, 80, 190),
+		},
+	})}
+	a.err = a.chart.LoadError()
+	return a
+}
+
+func (a *extendExample) view(c *ui.Context) {
+	ui.Column(c).Fill().Background(c.Theme().Background).Children(func() {
+		ui.Row(c).Padding(8, 12, 8, 12).Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "HOST EXTENSIONS").Bold()
+			if ui.Button(c, "Toggle MID").Clicked() {
+				a.err = a.chart.SetIndicator("MID", !a.chart.IndicatorOn("MID"))
+			}
+			for _, tool := range []struct{ label, kind string }{{"Pan", kline.ToolPan}, {"Mark", "mark"}} {
+				var button ui.Element
+				if a.chart.Tool() == tool.kind {
+					button = ui.PrimaryButton(c, tool.label)
+				} else {
+					button = ui.Button(c, tool.label)
+				}
+				if button.Clicked() {
+					a.err = a.chart.SetTool(tool.kind)
+				}
+			}
+			ui.Textf(c, "MID: %t | Tool: %s", a.chart.IndicatorOn("MID"), a.chart.Tool()).FontSize(12)
+		})
+		ui.Text(c, "Mark: click to place, drag to move; Delete or right-click to remove.").
+			Padding(0, 12, 6, 12).FontSize(12)
+		if a.err != nil {
+			ui.Textf(c, "Error: %v", a.err).Padding(0, 12, 6, 12)
+		}
+		ui.Column(c).Grow(1).WidthPercent(100).Children(func() { a.chart.View(c) })
+	})
+}
+
+func (a *extendExample) smoke(w io.Writer) error {
+	if a.err != nil {
+		return a.err
+	}
+	tester := ui.NewTester(a.view, 960, 680)
+	if err := tester.Click("Mark"); err != nil {
+		return err
+	}
+	box, ok := tester.Find("600519 chart")
+	if !ok {
+		return fmt.Errorf("chart missing")
+	}
+	tester.ClickAt(box.X+140, box.Y+80)
+	tester.Press(box.X+140, box.Y+80)
+	tester.Move(box.X+172, box.Y+100)
+	tester.Release(box.X+172, box.Y+100)
+	fmt.Fprintln(w, "tool:", a.chart.Tool())
+	fmt.Fprintln(w, "header shows MID:", strings.Contains(a.chart.Readout("600519"), "MID"))
+	tester.Key(0, ui.KeyDelete)
+	if err := tester.Click("Toggle MID"); err != nil {
+		return err
+	}
+	fmt.Fprintln(w, "MID after toggle:", a.chart.IndicatorOn("MID"))
+	return a.err
+}
+
+func main() {
+	headless := flag.Bool("headless", false, "run the shared view smoke without a window")
+	flag.Parse()
+	if *headless {
+		a := newExtendExample()
+		defer a.chart.Close()
+		if err := a.smoke(os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	mygo.App.WhenReady(func() {
+		a := newExtendExample()
+		window := mygo.NewWindow(mygo.WindowOptions{
+			Title: "kline extensions", Width: 960, Height: 680,
+			MinWidth: 800, MinHeight: 480, Content: ui.View(a.view),
+		})
+		window.OnClosed(func() { _ = a.chart.Close() })
+	})
+	if err := mygo.App.Run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// midLine is a main-pane indicator in price units: (open+close)/2.
+// Series is what the chart strokes, so DrawMain stays empty.
+type midLine struct {
 	values []float64
 	series [][]float64
 	color  ui.Color
 }
 
-func (r *rangeLine) Name() string     { return "RANGE" }
-func (r *rangeLine) PaneKind() string { return kline.PaneMain }
+func (r *midLine) Name() string     { return "MID" }
+func (r *midLine) PaneKind() string { return kline.PaneMain }
 
-func (r *rangeLine) Calc(cs []kline.Candle) {
+func (r *midLine) Calc(cs []kline.Candle) {
 	r.values = make([]float64, len(cs))
 	for i, c := range cs {
-		r.values[i] = c.High - c.Low
+		r.values[i] = (c.Open + c.Close) / 2
 	}
 	if cap(r.series) < 1 {
 		r.series = make([][]float64, 1)
@@ -100,20 +163,20 @@ func (r *rangeLine) Calc(cs []kline.Candle) {
 	r.series[0] = r.values
 }
 
-func (r *rangeLine) DrawMain(*ui.Painter, ui.Rect, kline.Viewport, chart.Linear) {}
-func (r *rangeLine) DrawSub(*ui.Painter, ui.Rect, kline.Viewport)                {}
+func (r *midLine) DrawMain(*ui.Painter, ui.Rect, kline.Viewport, chart.Linear) {}
+func (r *midLine) DrawSub(*ui.Painter, ui.Rect, kline.Viewport)                {}
 
 // ValueAt is the header text for the hovered bar.
-func (r *rangeLine) ValueAt(i int) string {
+func (r *midLine) ValueAt(i int) string {
 	if i < 0 || i >= len(r.values) {
 		return ""
 	}
-	return "RANGE " + kline.FormatPrice(r.values[i])
+	return "MID " + kline.FormatPrice(r.values[i])
 }
 
-func (r *rangeLine) Series() [][]float64 { return r.series }
+func (r *midLine) Series() [][]float64 { return r.series }
 
-func (r *rangeLine) LineColors() []ui.Color {
+func (r *midLine) LineColors() []ui.Color {
 	if r.color == (ui.Color{}) {
 		return []ui.Color{ui.RGB(255, 140, 0)}
 	}
@@ -132,7 +195,13 @@ func drawMark(p *ui.Painter, plot ui.Rect, o kline.Overlay, vp kline.Viewport, s
 		color = style.OverlayHot
 	}
 	const s = 5
-	p.Fill(ui.Rect{X: x - s, Y: y - s, W: 2 * s, H: 2 * s}, color, 1)
+	var path ui.Path
+	path.MoveTo(x, y-s)
+	path.LineTo(x+s, y)
+	path.LineTo(x, y+s)
+	path.LineTo(x-s, y)
+	path.Close()
+	p.FillPath(&path, color)
 }
 
 // hitMark reports the anchor when the pointer is within HitRadius.
