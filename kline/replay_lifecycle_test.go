@@ -238,3 +238,74 @@ func TestSetPeriodFailureKeepsClosedState(t *testing.T) {
 		t.Fatal("a failed reopen cleared the Chart closed state")
 	}
 }
+
+// Close is not final for a replay either: the revealed bars are a prefix,
+// not the loaded window, so a same-period SetPeriod must load the suffix
+// again rather than take the no-op path.
+func TestReplayCloseThenSamePeriodReloads(t *testing.T) {
+	hour := Period{Span: 1, Unit: UnitHour}
+	all := Generate(900, 7)
+	src := newCountSource(t, hour, 0)
+	if err := src.SetBars("600519", hour, all); err != nil {
+		t.Fatal(err)
+	}
+	c := NewChart(ChartOptions{
+		Source:     src,
+		Symbols:    []string{"600519"},
+		Period:     hour,
+		Indicators: []string{},
+	})
+	replay, err := StartReplay(c, map[string][]Candle{"600519": all})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replay.SeekIndex(48); err != nil {
+		t.Fatal(err)
+	}
+	replay.Close()
+	if c.Bars() != 48 {
+		t.Fatalf("Close changed the revealed bars to %d", c.Bars())
+	}
+	gets := src.gets
+	if err := c.SetPeriod(c.Period()); err != nil {
+		t.Fatal(err)
+	}
+	if src.gets == gets {
+		t.Fatal("same-period SetPeriod after Replay.Close did not ask the source")
+	}
+	if c.Bars() != sampleBars {
+		t.Fatalf("bars after the reload %d, want the loaded window %d", c.Bars(), sampleBars)
+	}
+}
+
+// A replay brings its own bars, so it clears a LoadError left by a failed
+// first load. A refused StartReplay leaves that error in place.
+func TestReplayClearsLoadError(t *testing.T) {
+	down := errors.New("feed down")
+	bad := sourceFunc(func(BarRequest) ([]Candle, bool, error) { return nil, false, down })
+	c := NewChart(ChartOptions{Source: bad, Symbols: []string{"600519", "000001"}, Indicators: []string{}})
+	if !errors.Is(c.LoadError(), down) {
+		t.Fatalf("setup load error %v", c.LoadError())
+	}
+	// A missing symbol refuses the replay before it touches the chart.
+	refused, err := StartReplay(c, map[string][]Candle{"600519": Generate(5, 1)})
+	if !errors.Is(err, ErrUnknownSymbol) {
+		t.Fatalf("StartReplay with a missing symbol: %v", err)
+	}
+	if refused != nil || !errors.Is(c.LoadError(), down) {
+		t.Fatal("a refused StartReplay cleared the load error")
+	}
+	replay, err := StartReplay(c, map[string][]Candle{"600519": Generate(10, 1), "000001": Generate(10, 2)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.LoadError() != nil {
+		t.Fatalf("StartReplay left load error %v", c.LoadError())
+	}
+	if err := replay.Step(1); err != nil {
+		t.Fatal(err)
+	}
+	if c.Bars() != 1 || c.LoadError() != nil {
+		t.Fatalf("bars %d load error %v", c.Bars(), c.LoadError())
+	}
+}

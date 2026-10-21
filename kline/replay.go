@@ -69,6 +69,8 @@ type Replay struct {
 // period: a later SetPeriod may aggregate it, and may not go finer.
 // Drawings already on the chart stay. Markers stay and stay hidden
 // until the cursor reaches their bar. The live subscription is dropped.
+// A successful start clears LoadError: the replay brings its own bars,
+// so a failed first load no longer describes the chart.
 func StartReplay(chart *Chart, bars map[string][]Candle) (*Replay, error) {
 	if chart == nil {
 		return nil, fmt.Errorf("kline: nil chart")
@@ -97,6 +99,10 @@ func StartReplay(chart *Chart, bars map[string][]Candle) (*Replay, error) {
 	if chart.replay != nil {
 		chart.replay.Close()
 	}
+	// Close set the chart closed so a later SetPeriod reloads the suffix.
+	// A new replay owns the series again, so that pending reload is gone.
+	chart.closed = false
+	chart.loadErr = nil
 	r := &Replay{
 		chart:      chart,
 		base:       base,
@@ -327,8 +333,9 @@ func (r *Replay) Tick() {
 // already revealed stay. Further Step and Seek return ErrReplayClosed.
 // Close does not restore the hidden suffix, but each pane gets back the
 // more flag it had when the replay started, so a visible bar that still
-// has older history can be paged in from the source. Use SetPeriod or
-// SetSource to load the suffix.
+// has older history can be paged in from the source. A later SetPeriod,
+// including the period already shown, or SetSource loads the suffix
+// again: Close is not final, the same as Chart.Close.
 func (r *Replay) Close() {
 	if r == nil {
 		return
@@ -337,6 +344,9 @@ func (r *Replay) Close() {
 	r.closed = true
 	if r.chart != nil && r.chart.replay == r {
 		r.chart.replay = nil
+		// The revealed bars are a prefix, not the loaded window, so the
+		// chart must reload before a same-period SetPeriod is a no-op.
+		r.chart.closed = true
 		for i := range r.chart.panes {
 			if i < len(r.hadMore) {
 				r.chart.panes[i].more = r.hadMore[i]
