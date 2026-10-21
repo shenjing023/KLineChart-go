@@ -115,6 +115,19 @@ type ChartOptions struct {
 	// real time, so a mask such as "xxxx-xx-02" cannot move a drawing or
 	// leak a date through the axis spacing.
 	FormatTime func(time.Time) string
+	// BarColor decides the color of one candle and its volume bar. It is
+	// how a host applies a rule the library cannot know, such as a limit
+	// price computed from the previous close and rounded to cents. i is
+	// the index in the full series, not in the visible window. c and prev
+	// are the original bars: an overlay scales prices to an index, and
+	// the callback always sees the raw OHLCV. prev is the zero Candle for
+	// i == 0.
+	//
+	// A zero ui.Color falls back to the built-in rule (Style.Up, Down,
+	// LimitUp, LimitDown from Style.LimitPct), so a host only answers for
+	// the bars it has an opinion about. The volume bar uses the same
+	// answer, which keeps a limit-up candle and its volume one color.
+	BarColor func(i int, c, prev Candle) ui.Color
 }
 
 // NewChart loads the initial window and returns a chart the host can
@@ -189,6 +202,7 @@ func NewChart(opts ChartOptions) *Chart {
 		digitsSet:   true,
 		zone:        zone,
 		timeFormat:  opts.FormatTime,
+		barColor:    opts.BarColor,
 	}
 	if a.styleSet {
 		a.style = completeStyle(a.style)

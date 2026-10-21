@@ -195,6 +195,9 @@ type Chart struct {
 	// keeps the built-in layouts. It is called with the instant already
 	// in zone, so it never converts a time itself.
 	timeFormat func(time.Time) string
+	// barColor is the host's per-bar color rule. Nil, or a zero color for
+	// a bar, falls back to Style.CandleBodyColor.
+	barColor func(i int, c, prev Candle) ui.Color
 	// frames is the outer box of each pane from the last paint. Hit
 	// testing relayouts from it so a click after an indicator toggle
 	// uses the new price rect before the next Draw.
@@ -573,7 +576,8 @@ func (a *Chart) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime
 	s := &a.panes[i]
 	style := a.chartStyle(t)
 	active := a.active(s)
-	scale := drawPrice(p, panes, s.candles, active, a.vp, ptr, a.crossIndex, style, a.labels())
+	paint := barPaint{style: style, host: a.barColor}
+	scale := drawPrice(p, panes, s.candles, active, a.vp, ptr, a.crossIndex, paint, a.labels())
 	var rubber *Rubber
 	if a.draftOn && a.draftPane == i && a.crossPane == i {
 		rubber = &Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}
@@ -603,7 +607,8 @@ func (a *Chart) paintCompare(p *ui.Painter, r ui.Rect, t *ui.Theme) {
 	primary, compare := a.overlayPair()
 	style := a.chartStyle(t)
 	active := a.active(&a.panes[0])
-	scale, indexed := drawCompare(p, panes, primary, compare, active, a.vp, ptr, a.crossIndex, style, a.labels())
+	paint := barPaint{style: style, host: a.barColor}
+	scale, indexed := drawCompare(p, panes, primary, compare, active, a.vp, ptr, a.crossIndex, paint, a.labels())
 	var rubber *Rubber
 	if a.draftOn && a.draftPane == 0 && a.crossPane == 0 {
 		rubber = &Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}

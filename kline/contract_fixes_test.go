@@ -428,9 +428,9 @@ func TestTimeAxisRenderingIgnoresSourceZone(t *testing.T) {
 				ui.Box(c).Fill().Draw(func(p *ui.Painter, _ ui.Rect) {
 					labels := labelFmt{digits: 2, loc: loc}
 					if compare {
-						drawCompare(p, panes, bars, bars, nil, vp, Pointer{}, -1, DarkDefault(), labels)
+						drawCompare(p, panes, bars, bars, nil, vp, Pointer{}, -1, barPaint{style: DarkDefault()}, labels)
 					} else {
-						drawPrice(p, panes, bars, nil, vp, Pointer{}, -1, DarkDefault(), labels)
+						drawPrice(p, panes, bars, nil, vp, Pointer{}, -1, barPaint{style: DarkDefault()}, labels)
 					}
 				})
 			}, 672, 300)

@@ -52,13 +52,14 @@ type Pointer struct {
 // The vertical line runs through the price plot, the volume strip, and
 // each open sub-pane.
 func Paint(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, style Style) {
-	drawPrice(p, panes, cs, inds, vp, ptr, barIndex, style, defaultLabels())
+	drawPrice(p, panes, cs, inds, vp, ptr, barIndex, barPaint{style: style}, defaultLabels())
 }
 
 // drawPrice is Paint, and it returns the price scale it used. A plot
 // smaller than 2 DIPs draws nothing and returns a zero scale.
-func drawPrice(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, style Style, labels labelFmt) chart.Linear {
+func drawPrice(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, paint barPaint, labels labelFmt) chart.Linear {
 	price := panes.Price
+	style := paint.style
 	if price.W < 2 || price.H < 2 {
 		return chart.Linear{}
 	}
@@ -85,7 +86,7 @@ func drawPrice(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Vie
 
 	drawGrid(p, panes, cs, vp, yScale, volScale, style, labels)
 	p.Clip(price, 0, func() {
-		drawCandles(p, price, cs, vp, yScale, first, last, style, 0)
+		drawCandles(p, price, cs, vp, yScale, first, last, paint)
 		for _, ind := range inds {
 			if ind == nil || ind.PaneKind() != PaneMain {
 				continue
@@ -98,7 +99,7 @@ func drawPrice(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Vie
 		}
 	})
 	p.Clip(panes.Volume, 0, func() {
-		drawVolume(p, panes.Volume, cs, vp, volScale, first, last, style)
+		drawVolume(p, panes.Volume, cs, vp, volScale, first, last, paint)
 	})
 	for _, layer := range layers {
 		drawSubAxis(p, layer.plot, layer.axis, layer.scale, style)
@@ -379,7 +380,59 @@ func bandsBottom(panes Panes) float32 {
 	return bottom
 }
 
-func drawCandles(p *ui.Painter, plot ui.Rect, cs []Candle, vp Viewport, yScale chart.Linear, first, last int, style Style, baseClose float64) {
+// barPaint carries what a bar's color depends on: the palette, and the
+// host's per-bar rule when there is one. It exists so the two drawing
+// functions take one argument instead of another copy of style plus a
+// callback.
+type barPaint struct {
+	style Style
+	// host decides a bar's color. Nil, or a zero answer, uses style.
+	host func(i int, c, prev Candle) ui.Color
+	// base is the overlay divisor. A zero means raw prices.
+	base float64
+}
+
+// color is the candle and volume color for bar i. The host is asked
+// with the original bars, never the overlay-scaled ones, so its rule can
+// compare cents the way the exchange does.
+func (b barPaint) color(cs []Candle, i int) ui.Color {
+	if b.host != nil && i >= 0 && i < len(cs) {
+		var prev Candle
+		if i > 0 {
+			prev = cs[i-1]
+		}
+		if got := b.host(i, cs[i], prev); got.A != 0 {
+			return got
+		}
+	}
+	c := cs[i]
+	prev := math.NaN()
+	if i > 0 {
+		prev = cs[i-1].Close
+	}
+	if b.base > 0 {
+		// The built-in rule compares the scaled close with the scaled
+		// previous close. Both are divided by the same base, so the sign
+		// of the change is unchanged; only the limit percent needs raw
+		// prices, and the host callback is the path for that.
+		c = scaleCandle(c, b.base)
+		prev = scalePrice(prev, b.base)
+	}
+	return b.style.CandleBodyColor(c, prev, b.style.LimitPct)
+}
+
+func scaleCandle(c Candle, base float64) Candle {
+	return Candle{
+		Time:   c.Time,
+		Open:   scalePrice(c.Open, base),
+		High:   scalePrice(c.High, base),
+		Low:    scalePrice(c.Low, base),
+		Close:  scalePrice(c.Close, base),
+		Volume: c.Volume,
+	}
+}
+
+func drawCandles(p *ui.Painter, plot ui.Rect, cs []Candle, vp Viewport, yScale chart.Linear, first, last int, paint barPaint) {
 	if first > last {
 		return
 	}
@@ -387,21 +440,14 @@ func drawCandles(p *ui.Painter, plot ui.Rect, cs []Candle, vp Viewport, yScale c
 	if bodyW < 1 {
 		bodyW = 1
 	}
+	style := paint.style
 	for i := first; i <= last; i++ {
 		c := cs[i]
-		prev := math.NaN()
-		if i > 0 {
-			prev = cs[i-1].Close
-		}
-		if baseClose > 0 {
-			c.Open = scalePrice(c.Open, baseClose)
-			c.High = scalePrice(c.High, baseClose)
-			c.Low = scalePrice(c.Low, baseClose)
-			c.Close = scalePrice(c.Close, baseClose)
-			prev = scalePrice(prev, baseClose)
+		if paint.base > 0 {
+			c = scaleCandle(c, paint.base)
 		}
 		up := c.Close >= c.Open
-		color := style.CandleBodyColor(c, prev, style.LimitPct)
+		color := paint.color(cs, i)
 		cx := plot.X + float32(vp.BarLeft(i)+vp.BarWidth/2)
 		// High is a larger price, so its fraction is larger and its
 		// window Y is smaller than Low's.
@@ -498,7 +544,7 @@ func drawIndexedClose(p *ui.Painter, plot ui.Rect, cs []Candle, base int, vp Vie
 	}
 }
 
-func drawVolume(p *ui.Painter, plot ui.Rect, cs []Candle, vp Viewport, volScale chart.Linear, first, last int, style Style) {
+func drawVolume(p *ui.Painter, plot ui.Rect, cs []Candle, vp Viewport, volScale chart.Linear, first, last int, paint barPaint) {
 	if first > last {
 		return
 	}
@@ -509,10 +555,9 @@ func drawVolume(p *ui.Painter, plot ui.Rect, cs []Candle, vp Viewport, volScale 
 	floor := plot.Y + plot.H
 	for i := first; i <= last; i++ {
 		c := cs[i]
-		color := style.Down
-		if c.Close >= c.Open {
-			color = style.Up
-		}
+		// The volume bar follows the candle's color, so a host rule that
+		// paints a limit-up bar red also paints that day's volume red.
+		color := paint.color(cs, i)
 		y := chart.Y(plot, volScale.At(c.Volume))
 		h := floor - y
 		if h < 1 {

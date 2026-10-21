@@ -257,7 +257,7 @@ func commonLen(primary, compare []Candle) int {
 // primary series, in raw units. It returns false when the base close cannot be
 // indexed, and then draws the primary series with Paint instead.
 func PaintCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, style Style) bool {
-	_, ok := drawCompare(p, panes, primary, compare, inds, vp, ptr, barIndex, style, defaultLabels())
+	_, ok := drawCompare(p, panes, primary, compare, inds, vp, ptr, barIndex, barPaint{style: style}, defaultLabels())
 	return ok
 }
 
@@ -265,8 +265,9 @@ func PaintCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []
 // That is the raw scale on an indexed plot, and MainScale when the base
 // close cannot be indexed. An empty primary draws nothing and still
 // returns MainScale.
-func drawCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, style Style, labels labelFmt) (chart.Linear, bool) {
+func drawCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, paint barPaint, labels labelFmt) (chart.Linear, bool) {
 	price := panes.Price
+	style := paint.style
 	if price.W < 2 || price.H < 2 {
 		return chart.Linear{}, false
 	}
@@ -277,7 +278,7 @@ func drawCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []I
 	}
 	index, raw, base := CompareScales(primary, compare, inds, vp, float64(price.W))
 	if !indexableOverlay(primary, compare, base) {
-		return drawPrice(p, panes, primary, inds, vp, ptr, barIndex, style, labels), false
+		return drawPrice(p, panes, primary, inds, vp, ptr, barIndex, paint, labels), false
 	}
 	baseClose := primary[base].Close
 
@@ -299,7 +300,11 @@ func drawCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []I
 
 	drawGrid(p, panes, primary, vp, index, volScale, style, labels)
 	p.Clip(price, 0, func() {
-		drawCandles(p, price, primary, vp, index, first, last, style, baseClose)
+		// The host callback still sees raw bars: barPaint.color is asked
+		// before any scaling, and only the built-in rule divides.
+		indexed := paint
+		indexed.base = baseClose
+		drawCandles(p, price, primary, vp, index, first, last, indexed)
 		if style.Compare != (ui.Color{}) {
 			drawIndexedClose(p, price, compare, base, vp, index, first, last, style.Compare)
 		}
@@ -318,7 +323,7 @@ func drawCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []I
 		}
 	})
 	p.Clip(panes.Volume, 0, func() {
-		drawVolume(p, panes.Volume, primary, vp, volScale, first, last, style)
+		drawVolume(p, panes.Volume, primary, vp, volScale, first, last, paint)
 	})
 	for _, layer := range layers {
 		drawSubAxis(p, layer.plot, layer.axis, layer.scale, style)
