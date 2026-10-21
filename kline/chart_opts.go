@@ -588,7 +588,10 @@ func (a *Chart) SyncIndicators() {
 				inds[i], fresh[i] = s.inds[j], s.fresh[j]
 				continue
 			}
-			inds[i] = slots[i].spec.New()
+			// A host MA override applies here too, so an indicator
+			// registered after NewChart starts with the same periods as
+			// the ones already on the chart.
+			inds[i] = a.newIndicator(slots[i].spec)
 		}
 		s.inds, s.fresh = inds, fresh
 	}
