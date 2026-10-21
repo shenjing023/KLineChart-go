@@ -1,0 +1,12 @@
+ok  	github.com/shenjing023/KLineChart-go	6.502s
+ok  	github.com/shenjing023/KLineChart-go/examples	0.129s
+ok  	github.com/shenjing023/KLineChart-go/examples/extend	6.502s
+ok  	github.com/shenjing023/KLineChart-go/examples/history	6.768s
+ok  	github.com/shenjing023/KLineChart-go/examples/host	0.224s
+ok  	github.com/shenjing023/KLineChart-go/examples/indicator	6.319s
+ok  	github.com/shenjing023/KLineChart-go/examples/live	8.195s
+ok  	github.com/shenjing023/KLineChart-go/examples/paint	6.344s
+ok  	github.com/shenjing023/KLineChart-go/examples/replay	6.586s
+ok  	github.com/shenjing023/KLineChart-go/examples/trades	12.677s
+ok  	github.com/shenjing023/KLineChart-go/examples/updates	12.692s
+ok  	github.com/shenjing023/KLineChart-go/kline	13.817s

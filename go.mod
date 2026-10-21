@@ -7,7 +7,7 @@ tool (
 	golang.org/x/perf/cmd/benchstat
 )
 
-require github.com/egoist/mygo v0.5.5
+require github.com/egoist/mygo v0.6.2
 
 require (
 	github.com/aclements/go-moremath v0.0.0-20210112150236-f10218a38794 // indirect
