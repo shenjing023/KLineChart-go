@@ -1,0 +1,60 @@
+goos: windows
+goarch: amd64
+pkg: github.com/shenjing023/KLineChart-go/kline
+cpu: AMD Ryzen 7 7735H with Radeon Graphics
+BenchmarkPanFrames/stack_1k-16  	     470	   2660267 ns/op	  174840 B/op	     781 allocs/op
+BenchmarkPanFrames/stack_1k-16  	     448	   2949473 ns/op	  174844 B/op	     781 allocs/op
+BenchmarkPanFrames/stack_1k-16  	     367	   3301645 ns/op	  174835 B/op	     781 allocs/op
+BenchmarkPanFrames/stack_1k-16  	     382	   3325960 ns/op	  174851 B/op	     781 allocs/op
+BenchmarkPanFrames/stack_1k-16  	     376	   3411534 ns/op	  174849 B/op	     781 allocs/op
+BenchmarkPanFrames/stack_1k-16  	     352	   3239744 ns/op	  174845 B/op	     781 allocs/op
+BenchmarkPanFrames/stack_8k-16  	     356	   3213290 ns/op	  174025 B/op	     759 allocs/op
+BenchmarkPanFrames/stack_8k-16  	     368	   3208379 ns/op	  174024 B/op	     759 allocs/op
+BenchmarkPanFrames/stack_8k-16  	     373	   3260273 ns/op	  174020 B/op	     759 allocs/op
+BenchmarkPanFrames/stack_8k-16  	     367	   3161477 ns/op	  174023 B/op	     759 allocs/op
+BenchmarkPanFrames/stack_8k-16  	     369	   3289799 ns/op	  174025 B/op	     759 allocs/op
+BenchmarkPanFrames/stack_8k-16  	     350	   3265207 ns/op	  174026 B/op	     759 allocs/op
+BenchmarkPanFrames/stack_20k-16 	     392	   2881265 ns/op	  174812 B/op	     783 allocs/op
+BenchmarkPanFrames/stack_20k-16 	     398	   2896902 ns/op	  174809 B/op	     783 allocs/op
+BenchmarkPanFrames/stack_20k-16 	     403	   2827011 ns/op	  174806 B/op	     783 allocs/op
+BenchmarkPanFrames/stack_20k-16 	     403	   2879777 ns/op	  174801 B/op	     783 allocs/op
+BenchmarkPanFrames/stack_20k-16 	     428	   2982812 ns/op	  174814 B/op	     783 allocs/op
+BenchmarkPanFrames/stack_20k-16 	     397	   3035695 ns/op	  174806 B/op	     783 allocs/op
+BenchmarkOverlayPanFrames/1k-16 	     705	   1698065 ns/op	   84284 B/op	     341 allocs/op
+BenchmarkOverlayPanFrames/1k-16 	     590	   2293245 ns/op	   84283 B/op	     341 allocs/op
+BenchmarkOverlayPanFrames/1k-16 	     532	   1990899 ns/op	   84284 B/op	     341 allocs/op
+BenchmarkOverlayPanFrames/1k-16 	     784	   1970529 ns/op	   84284 B/op	     341 allocs/op
+BenchmarkOverlayPanFrames/1k-16 	     478	   2479110 ns/op	   84284 B/op	     341 allocs/op
+BenchmarkOverlayPanFrames/1k-16 	     481	   2485146 ns/op	   84284 B/op	     341 allocs/op
+BenchmarkOverlayPanFrames/8k-16 	     505	   2419943 ns/op	   84670 B/op	     352 allocs/op
+BenchmarkOverlayPanFrames/8k-16 	     493	   2337045 ns/op	   84671 B/op	     352 allocs/op
+BenchmarkOverlayPanFrames/8k-16 	     501	   2393248 ns/op	   84672 B/op	     352 allocs/op
+BenchmarkOverlayPanFrames/8k-16 	     506	   2383212 ns/op	   84670 B/op	     352 allocs/op
+BenchmarkOverlayPanFrames/8k-16 	     512	   2363952 ns/op	   84668 B/op	     352 allocs/op
+BenchmarkOverlayPanFrames/8k-16 	     462	   2681730 ns/op	   84673 B/op	     352 allocs/op
+BenchmarkOverlayPanFrames/20k-16         	     450	   2438130 ns/op	   85713 B/op	     385 allocs/op
+BenchmarkOverlayPanFrames/20k-16         	     471	   2424709 ns/op	   85712 B/op	     385 allocs/op
+BenchmarkOverlayPanFrames/20k-16         	     507	   2412906 ns/op	   85716 B/op	     385 allocs/op
+BenchmarkOverlayPanFrames/20k-16         	     500	   2423666 ns/op	   85716 B/op	     385 allocs/op
+BenchmarkOverlayPanFrames/20k-16         	     486	   2420405 ns/op	   85713 B/op	     385 allocs/op
+BenchmarkOverlayPanFrames/20k-16         	     481	   2500027 ns/op	   85712 B/op	     385 allocs/op
+BenchmarkMarkerPanFrames/8k-16           	     415	   2832667 ns/op	  174021 B/op	     759 allocs/op
+BenchmarkMarkerPanFrames/8k-16           	     423	   3203842 ns/op	  174023 B/op	     759 allocs/op
+BenchmarkMarkerPanFrames/8k-16           	     369	   3363912 ns/op	  174024 B/op	     759 allocs/op
+BenchmarkMarkerPanFrames/8k-16           	     282	   4098202 ns/op	  174013 B/op	     759 allocs/op
+BenchmarkMarkerPanFrames/8k-16           	     361	   3014372 ns/op	  174020 B/op	     759 allocs/op
+BenchmarkMarkerPanFrames/8k-16           	     379	   2928810 ns/op	  174019 B/op	     759 allocs/op
+BenchmarkAppendBar/8k-16                 	 2533980	       478.1 ns/op	     909 B/op	       1 allocs/op
+BenchmarkAppendBar/8k-16                 	 2487921	       491.8 ns/op	     925 B/op	       1 allocs/op
+BenchmarkAppendBar/8k-16                 	 2050119	       552.9 ns/op	     899 B/op	       1 allocs/op
+BenchmarkAppendBar/8k-16                 	 2901400	       474.7 ns/op	     907 B/op	       1 allocs/op
+BenchmarkAppendBar/8k-16                 	 3042470	       442.9 ns/op	     945 B/op	       1 allocs/op
+BenchmarkAppendBar/8k-16                 	 2793597	       559.7 ns/op	     939 B/op	       1 allocs/op
+BenchmarkAppendBar/20k-16                	 2470969	       435.2 ns/op	     974 B/op	       1 allocs/op
+BenchmarkAppendBar/20k-16                	 2886685	       422.4 ns/op	     922 B/op	       1 allocs/op
+BenchmarkAppendBar/20k-16                	 2645871	       403.6 ns/op	     914 B/op	       1 allocs/op
+BenchmarkAppendBar/20k-16                	 2865348	       437.3 ns/op	     928 B/op	       1 allocs/op
+BenchmarkAppendBar/20k-16                	 2529321	       428.3 ns/op	     953 B/op	       1 allocs/op
+BenchmarkAppendBar/20k-16                	 2887134	       444.2 ns/op	     922 B/op	       1 allocs/op
+PASS
+ok  	github.com/shenjing023/KLineChart-go/kline	88.695s

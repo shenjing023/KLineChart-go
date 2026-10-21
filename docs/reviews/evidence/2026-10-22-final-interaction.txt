@@ -1,0 +1,106 @@
+Native Computer Use interaction record
+Host: Windows 11, 2026-10-22, Asia/Shanghai
+Runtime: Computer Use 26.1016.51333 / node_repl + @oai/sky
+Binaries: build/acceptance/*.exe built 2026-10-21 23:11
+
+This is an observation log, not a claim that every mouse gesture, input value,
+GPU driver, or platform was exhaustively tested.
+
+k-line.exe (K-line)
+- Initial accessibility tree: 600 bars, Period 1h, two panes, MA5/MA20/DIF/DEA.
+- Clicked 4h: Period 4h, timestamps changed, both panes remained aligned.
+- Clicked 1d: Period 1d, timestamps changed; then restored 1h.
+- Toggled MA off: MA5/MA20 disappeared from both readouts; toggled back on.
+- Toggled MACD off/on: DIF/DEA/HIST disappeared/reappeared.
+- Toggled BOLL on: MID/UP/LOW appeared and price bands rendered.
+- Toggled KDJ on: K/D/J appeared and an additional sub-pane rendered.
+- Clicked Overlay: tree reported overlay, idx and compare line; returned Stack.
+- Dragged the plot: accessibility reported Hover at a changed bar.
+- Wheeled: visible bar window and bar width changed.
+- H-Line: selected, placed at a plot coordinate, dragged to another price,
+  then Delete removed it.
+- Segment: selected, placed first anchor, Escape removed the unfinished draft.
+- Replay: started at 48 bars, Step changed to 49, Play changed the bar count
+  and button to Pause; playback was stopped and source restored by clicking
+  Replay again. An accessibility-index click did not reliably pause; coordinate
+  input was required for the observed Pause transition.
+- Title-bar close: process exited normally with code 0.
+
+host.exe (kline host embed)
+- Initial host status: Last with timestamp and price precision.
+- Hovered the plot: status changed to Hover and the bar values updated.
+- Title-bar close: normal exit.
+
+history.exe (kline cached history)
+- Initial state: Retry error, 0 bars, requests 1.
+- Retry: 600 bars, visible 492..599, requests 2, Last readout rendered.
+- Dragged the chart: visible range changed to 445..554, requests stayed 2.
+- Fail refresh: bars stayed 600, visible stayed 445..554, and the error appeared.
+- Retry: bars 600, visible returned to 492..599, requests 4, error cleared.
+- Title-bar close: normal exit.
+
+trades.exe (kline trade markers)
+- Initial 1h fixture visible with B1/B2/B3 buys and a sell marker.
+- 4h remapped the chart and markers while preserving the stacked buy labels.
+- Clear removed the markers; Restore brought them back.
+- Palette changed the candle palette; Hollow changed `hollow false` to true;
+  Limit colors changed `limit 10%` to `limit 0%`.
+- Restored 1h and closed normally.
+
+indicator.exe (kline host indicator)
+- HOSTBAND rendered in its own sub-pane, with HOSTBAND value in readout.
+- Toggled HOSTBAND off and on; sub-pane ink and readout value changed.
+- Append: 120 -> 121 bars, new Last bar and HOSTBAND 0.16.
+- Revise: same last open time, HOSTBAND changed to -2.17 and sub-pane dropped.
+- Register fast: HOSTFAST control appeared and a second sub-pane rendered;
+  HOSTFAST value appeared in the readout.
+- Title-bar close: normal exit.
+
+paint.exe (kline paint API)
+- Initial Paint mode reported bars 491..599 and width 8.00.
+- PaintCompare changed the status to indexed-to-100 mode with the compare line.
+- Dragged the plot: visible range and offset changed, hover readout matched.
+- Wheel up changed width 8.00 -> 20.73 and visible range 501..543.
+- Wheel down changed width 20.73 -> 3.09 and visible range 316..599.
+- Pointer over the price axis cleared the Hover readout to the instructions.
+- Hovered and clicked the plot; the status line reports a successful Layer
+  hit, while the sampled pointer positions did not select the layer.
+- Title-bar close: normal exit.
+
+live.exe (kline live example)
+- Initial toolbar: 1h, 243 bars after background delivery.
+- A later state showed 247 bars, proving pushes reached the UI queue.
+- Clicked 4h: 4h, 240 bars, new history window.
+- Clicked 1d: 1d, 240 bars, toolbar selection changed.
+- Title-bar close: normal exit.
+
+extend.exe (kline extensions)
+- Initial MID enabled, tool pan.
+- Toggle MID changed MID true -> false.
+- Mark selected; custom diamond placed at a plot coordinate and visibly rendered.
+- Dragged diamond to a different chart position.
+- Delete removed it; a second mark was placed and right-click deletion observed.
+- Returned to Pan; title-bar close normal.
+
+replay.exe (kline blind replay)
+- Initial Paused 0/120, no bars.
+- Step -> 1/120 and one plotted bar; Back -> 0/120.
+- Seek index 40 -> 40/120 and 40 plotted.
+- Clicked 4h -> 40/120, 4h, 20 plotted.
+- Play -> playing status and 43/120, then continued to 87/120; Pause ->
+  Paused 87/120, 44 plotted at 4h.
+- 1d -> Paused 87/120, 22 plotted; Restart -> 0/120, 1h, 0 plotted.
+- Return to source -> Source | 1h | 600 bars and replay controls disabled.
+- Title-bar close: normal exit.
+
+updates.exe (kline append updates)
+- Initial bars 32, A shown 16:30, B shown 16:30.
+- Append A: bars stayed 32, A held 17:30, Revise A disabled,
+  Revise held A enabled.
+- Revise held A: close 100.48 -> 101.48 while held.
+- Append B: shared open revealed, bars 33, both shown 17:30.
+- Revise A: same shared open, close 101.48 -> 102.48.
+- Skew feeds: A held 19:30, B held 18:30, AlignError text appeared.
+- Reset: bars 32, A shown 16:30, B shown 16:30, revised fixture timestamp
+  displayed, held/dropped bars removed.
+- Title-bar close: normal exit.

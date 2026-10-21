@@ -1,0 +1,1 @@
+ok  	github.com/shenjing023/KLineChart-go/kline	9.592s

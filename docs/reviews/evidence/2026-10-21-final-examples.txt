@@ -1,0 +1,102 @@
+=== RUN   ExampleNewChart
+--- PASS: ExampleNewChart (0.00s)
+=== RUN   ExampleChartOptions
+--- PASS: ExampleChartOptions (0.00s)
+=== RUN   ExampleDataSource
+--- PASS: ExampleDataSource (0.00s)
+=== RUN   ExampleRegister
+--- PASS: ExampleRegister (0.00s)
+=== RUN   ExampleChart_SyncIndicators
+--- PASS: ExampleChart_SyncIndicators (0.00s)
+=== RUN   ExampleChart_View
+--- PASS: ExampleChart_View (0.04s)
+=== RUN   ExampleChart_SetPeriod
+--- PASS: ExampleChart_SetPeriod (0.00s)
+=== RUN   ExampleChart_SetLayout
+--- PASS: ExampleChart_SetLayout (0.00s)
+=== RUN   ExampleChart_SetIndicators
+--- PASS: ExampleChart_SetIndicators (0.00s)
+=== RUN   ExampleChart_Bar
+--- PASS: ExampleChart_Bar (0.00s)
+=== RUN   ExampleChart_SetMarkers
+--- PASS: ExampleChart_SetMarkers (0.00s)
+=== RUN   ExamplePeriod
+--- PASS: ExamplePeriod (0.00s)
+=== RUN   ExampleFormatPrice
+--- PASS: ExampleFormatPrice (0.00s)
+=== RUN   ExampleViewport
+--- PASS: ExampleViewport (0.00s)
+=== RUN   ExamplePriceDomain
+--- PASS: ExamplePriceDomain (0.00s)
+=== RUN   ExampleVolumeMax
+--- PASS: ExampleVolumeMax (0.00s)
+=== RUN   ExampleChart_SetTool
+--- PASS: ExampleChart_SetTool (0.00s)
+=== RUN   ExampleChart_SetMagnet
+--- PASS: ExampleChart_SetMagnet (0.00s)
+=== RUN   ExampleChart_SetHollow
+--- PASS: ExampleChart_SetHollow (0.00s)
+=== RUN   ExampleChart_SetLimitPct
+--- PASS: ExampleChart_SetLimitPct (0.00s)
+=== RUN   ExampleChart_ResetView
+--- PASS: ExampleChart_ResetView (0.00s)
+=== RUN   ExampleChart_Symbols
+--- PASS: ExampleChart_Symbols (0.00s)
+=== RUN   ExampleChart_AlignError
+--- PASS: ExampleChart_AlignError (0.00s)
+=== RUN   ExampleChart_SetIndicator
+--- PASS: ExampleChart_SetIndicator (0.00s)
+=== RUN   ExampleNormalizeClose
+--- PASS: ExampleNormalizeClose (0.00s)
+=== RUN   ExampleIndexBase
+--- PASS: ExampleIndexBase (0.00s)
+=== RUN   ExampleNormalizeToIndex
+--- PASS: ExampleNormalizeToIndex (0.00s)
+=== RUN   ExampleStubLiveSource
+--- PASS: ExampleStubLiveSource (0.00s)
+=== RUN   ExampleSnapPrice
+--- PASS: ExampleSnapPrice (0.00s)
+=== RUN   ExampleStartReplay
+--- PASS: ExampleStartReplay (0.00s)
+=== RUN   ExampleReplay_SeekTo
+--- PASS: ExampleReplay_SeekTo (0.00s)
+=== RUN   ExampleReplay_Play
+--- PASS: ExampleReplay_Play (0.00s)
+=== RUN   ExampleReplay_StepBack
+--- PASS: ExampleReplay_StepBack (0.00s)
+=== RUN   ExampleChart_Crosshair
+--- PASS: ExampleChart_Crosshair (0.01s)
+=== RUN   ExampleChart_SetSource
+--- PASS: ExampleChart_SetSource (0.00s)
+=== RUN   ExampleChart_AppendBar
+--- PASS: ExampleChart_AppendBar (0.00s)
+=== RUN   ExampleSplit
+--- PASS: ExampleSplit (0.00s)
+=== RUN   ExampleCompareScales
+--- PASS: ExampleCompareScales (0.00s)
+=== RUN   ExamplePaint
+--- PASS: ExamplePaint (0.00s)
+=== RUN   ExamplePaintCompare
+--- PASS: ExamplePaintCompare (0.01s)
+=== RUN   ExampleBarTail
+--- PASS: ExampleBarTail (0.00s)
+=== RUN   ExampleTimeAt
+--- PASS: ExampleTimeAt (0.00s)
+=== RUN   ExampleLayer
+--- PASS: ExampleLayer (0.00s)
+=== RUN   ExampleChart_EditStyle
+--- PASS: ExampleChart_EditStyle (0.00s)
+=== RUN   ExampleChart_Close
+--- PASS: ExampleChart_Close (0.00s)
+=== RUN   ExampleSplitStack
+--- PASS: ExampleSplitStack (0.00s)
+=== RUN   ExampleChart_SetStyle
+--- PASS: ExampleChart_SetStyle (0.00s)
+=== RUN   ExampleOverlaySpec_Rubber
+--- PASS: ExampleOverlaySpec_Rubber (0.00s)
+=== RUN   ExampleLiveSource
+--- PASS: ExampleLiveSource (0.00s)
+=== RUN   ExampleLayer_SetPoint
+--- PASS: ExampleLayer_SetPoint (0.00s)
+PASS
+ok  	github.com/shenjing023/KLineChart-go/kline	0.283s

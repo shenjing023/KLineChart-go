@@ -1,0 +1,22 @@
+Final launch probe after 2026-10-22 local restart
+Scope: startup, title, native window handle, responsiveness, normal close. No control interaction is claimed.
+extend: pid=43420 title="kline extensions" handle=12781532 responding=True exited=False
+extend: close=normal exit=0
+history: pid=16716 title="kline cached history" handle=1705426 responding=True exited=False
+history: close=normal exit=0
+host: pid=36548 title="kline host embed" handle=2819764 responding=True exited=False
+host: close=normal exit=0
+indicator: pid=5356 title="kline host indicator" handle=2426330 responding=True exited=False
+indicator: close=normal exit=0
+k-line: pid=41564 title="K-line" handle=1443296 responding=True exited=False
+k-line: close=normal exit=0
+live: pid=40684 title="kline live example" handle=1967570 responding=True exited=False
+live: close=normal exit=0
+paint: pid=27124 title="kline paint API" handle=23071430 responding=True exited=False
+paint: close=normal exit=0
+replay: pid=34592 title="kline blind replay" handle=1967588 responding=True exited=False
+replay: close=normal exit=0
+trades: pid=38876 title="kline trade markers" handle=3343846 responding=True exited=False
+trades: close=normal exit=0
+updates: pid=38596 title="kline append updates" handle=2229696 responding=True exited=False
+updates: close=normal exit=0
