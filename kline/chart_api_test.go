@@ -205,3 +205,15 @@ func frameHasInk(img *image.RGBA) bool {
 	first := img.RGBAAt(b.Min.X, b.Min.Y)
 	return r/uint32(n) != uint32(first.R) || g/uint32(n) != uint32(first.G) || bl/uint32(n) != uint32(first.B)
 }
+
+// Close accepts a nil receiver so a host may defer it before building a
+// chart. The other methods document that they need a chart.
+func TestNilChartOnlyCloseIsSafe(t *testing.T) {
+	var c *Chart
+	if err := c.Close(); err != nil {
+		t.Fatalf("nil Close = %v", err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("second nil Close = %v", err)
+	}
+}

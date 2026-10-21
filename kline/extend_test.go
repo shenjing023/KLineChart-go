@@ -207,3 +207,87 @@ func TestBuiltInIndicatorNamesStayReserved(t *testing.T) {
 		t.Fatal("new chart lost the built-in MA after Unregister")
 	}
 }
+
+// The band order layout uses, the band paint uses, and the band the theme
+// colors use must be one order. A host sub-pane before the built-in MACD
+// would otherwise shift every later band by one.
+func TestSubBandsMatchLayoutPaintAndStyle(t *testing.T) {
+	const name = "TEST_LEADING_SUB"
+	if err := Register(Spec{
+		Name: name,
+		Kind: PaneSub,
+		New:  func() Indicator { return &countedSub{name: name} },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer Unregister(name)
+	c := NewChart(ChartOptions{
+		Symbols:    []string{"A"},
+		Indicators: []string{name, "MACD", "KDJ"},
+	})
+	tt := ui.NewTester(c.View, 900, 700)
+	tt.Frame()
+	active := c.active(&c.panes[0])
+	panes := c.painted[0]
+	// The registry order is MACD, KDJ, then the host name, so the bands
+	// are the two built-ins and one extra. What matters is that the three
+	// consumers agree on that order.
+	bands := subBands(active)
+	want := make([]subBand, len(active))
+	for i, ind := range active {
+		switch ind.(type) {
+		case *MACD:
+			want[i] = bandMACD
+		case *KDJ:
+			want[i] = bandKDJ
+		default:
+			want[i] = bandExtra
+		}
+	}
+	if len(bands) != len(want) {
+		t.Fatalf("bands %v, want %v", bands, want)
+	}
+	for i := range want {
+		if bands[i] != want[i] {
+			t.Fatalf("bands %v, want %v", bands, want)
+		}
+	}
+	layers := subLayers(panes, active, 0, c.Bars()-1)
+	if len(layers) != 3 {
+		t.Fatalf("layers %d, want 3", len(layers))
+	}
+	// Recompute the rect each band should get from the layout's own
+	// rects, and require paint to have used it.
+	extra := 0
+	for i, band := range bands {
+		var plot ui.Rect
+		switch band {
+		case bandMACD:
+			plot = panes.MACD
+		case bandKDJ:
+			plot = panes.KDJ
+		default:
+			plot = panes.Extra[extra]
+			extra++
+		}
+		if layers[i].plot != plot {
+			t.Fatalf("layer %d band %v painted %+v, layout put it at %+v", i, band, layers[i].plot, plot)
+		}
+	}
+	// applyIndicatorStyle must reach the built-in MACD and KDJ in their
+	// own bands, even with a host sub-pane in the list.
+	style := Style{MACDDIF: ui.RGB(1, 2, 3), KDJK: ui.RGB(4, 5, 6)}
+	applyIndicatorStyle(active, panes, style)
+	for _, ind := range active {
+		switch v := ind.(type) {
+		case *MACD:
+			if v.DIFColor != style.MACDDIF {
+				t.Fatalf("MACD colors %+v, want the theme", v.DIFColor)
+			}
+		case *KDJ:
+			if v.KColor != style.KDJK {
+				t.Fatalf("KDJ colors %+v, want the theme", v.KColor)
+			}
+		}
+	}
+}

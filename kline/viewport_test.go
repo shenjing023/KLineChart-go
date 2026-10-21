@@ -149,3 +149,21 @@ func TestPriceDomainSkipsNonFinitePrices(t *testing.T) {
 		t.Fatalf("no finite price: %v..%v, want 0..1", lo, hi)
 	}
 }
+
+// An infinite volume must not become the strip's maximum: chart.Linear
+// maps every value of an infinite domain to the baseline, so one bad bar
+// would flatten the whole strip.
+func TestVolumeMaxSkipsNonFinite(t *testing.T) {
+	cs := Generate(6, 3)
+	cs[2].Volume = math.Inf(1)
+	cs[3].Volume = math.NaN()
+	cs[4].Volume = math.Inf(-1)
+	got := VolumeMax(cs, 0, len(cs)-1)
+	want := 0.0
+	for _, c := range []int{0, 1, 5} {
+		want = math.Max(want, cs[c].Volume)
+	}
+	if !nearVal(got, want*1.08) {
+		t.Fatalf("VolumeMax = %v, want %v (finite volumes only)", got, want*1.08)
+	}
+}

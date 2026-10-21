@@ -296,6 +296,8 @@ func (a *Chart) AlignError() error { return a.alignErr }
 // Close unsubscribes every live bar and fences handlers already handed
 // to the feed. A handler that runs after Close does not change the chart.
 // Close does not release the DataSource. A second call returns nil.
+// A nil *Chart is accepted, so a host may defer Close before it has
+// built one; no other method accepts nil.
 func (a *Chart) Close() error {
 	if a == nil {
 		return nil

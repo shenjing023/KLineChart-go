@@ -77,6 +77,10 @@ type indicatorSlot struct {
 // Chart is an embeddable candlestick view. One viewport and one
 // crossIndex are shared by every pane. Bars come from src. The host
 // draws window chrome and the toolbar; View paints the plots.
+//
+// A nil *Chart is not usable: the getters and setters dereference the
+// receiver. Only Close accepts nil, so a host may defer it before it has
+// built a chart.
 type Chart struct {
 	src    DataSource
 	period Period
@@ -281,33 +285,66 @@ func (a *Chart) layoutPanes(r ui.Rect, showTime bool) Panes {
 	}
 }
 
+// subBand is the band one open sub-pane indicator paints into.
+type subBand int
+
+const (
+	// bandNone marks an indicator that is not a sub-pane.
+	bandNone subBand = iota
+	// bandMACD is the built-in MACD band, used by the first *MACD.
+	bandMACD
+	// bandKDJ is the built-in KDJ band, used by the first *KDJ.
+	bandKDJ
+	// bandExtra is an extra band under the built-ins, in indicator order.
+	bandExtra
+)
+
+// subBands gives every indicator in inds the band it paints into, in the
+// same order. The first *MACD takes the built-in MACD band, the first
+// *KDJ the KDJ band, and every other sub-pane takes the next extra band.
+// Layout, paint, and the theme colors all read this one order, so a band
+// cannot be laid out without being painted, or painted with another
+// band's colors.
+func subBands(inds []Indicator) []subBand {
+	out := make([]subBand, len(inds))
+	macdUsed, kdjUsed := false, false
+	for i, ind := range inds {
+		if ind == nil || ind.PaneKind() != PaneSub {
+			continue
+		}
+		switch ind.(type) {
+		case *MACD:
+			if !macdUsed {
+				macdUsed = true
+				out[i] = bandMACD
+				continue
+			}
+		case *KDJ:
+			if !kdjUsed {
+				kdjUsed = true
+				out[i] = bandKDJ
+				continue
+			}
+		}
+		out[i] = bandExtra
+	}
+	return out
+}
+
 func assignSubRects(p Panes, subs []Indicator, n int) Panes {
 	plots, axes := takeSubRects(p, n)
 	p.MACD, p.MACDAxis = ui.Rect{}, ui.Rect{}
 	p.KDJ, p.KDJAxis = ui.Rect{}, ui.Rect{}
 	p.Extra, p.ExtraAxis = nil, nil
-	macdUsed, kdjUsed := false, false
-	for i, ind := range subs {
+	for i, band := range subBands(subs) {
 		if i >= len(plots) || i >= len(axes) {
 			break
 		}
-		switch ind.(type) {
-		case *MACD:
-			if !macdUsed {
-				p.MACD, p.MACDAxis = plots[i], axes[i]
-				macdUsed = true
-				break
-			}
-			p.Extra = append(p.Extra, plots[i])
-			p.ExtraAxis = append(p.ExtraAxis, axes[i])
-		case *KDJ:
-			if !kdjUsed {
-				p.KDJ, p.KDJAxis = plots[i], axes[i]
-				kdjUsed = true
-				break
-			}
-			p.Extra = append(p.Extra, plots[i])
-			p.ExtraAxis = append(p.ExtraAxis, axes[i])
+		switch band {
+		case bandMACD:
+			p.MACD, p.MACDAxis = plots[i], axes[i]
+		case bandKDJ:
+			p.KDJ, p.KDJAxis = plots[i], axes[i]
 		default:
 			p.Extra = append(p.Extra, plots[i])
 			p.ExtraAxis = append(p.ExtraAxis, axes[i])

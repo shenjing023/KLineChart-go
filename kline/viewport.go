@@ -235,7 +235,9 @@ func PriceDomain(cs []Candle, first, last int, extra ...[]float64) (lo, hi float
 func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 
 // VolumeMax is a little above the largest volume in first..last, or 1
-// when the window is empty.
+// when the window is empty. A NaN or infinite volume is skipped, the same
+// way PriceDomain skips a non-finite price: an infinite maximum would
+// collapse every bar of the strip to the baseline.
 func VolumeMax(cs []Candle, first, last int) float64 {
 	if first < 0 {
 		first = 0
@@ -248,8 +250,12 @@ func VolumeMax(cs []Candle, first, last int) float64 {
 	}
 	maxV := 0.0
 	for i := first; i <= last; i++ {
-		if cs[i].Volume > maxV {
-			maxV = cs[i].Volume
+		v := cs[i].Volume
+		if !finite(v) {
+			continue
+		}
+		if v > maxV {
+			maxV = v
 		}
 	}
 	if maxV <= 0 {

@@ -24,7 +24,9 @@ From the repo root (Go 1.27.1, module pin `github.com/egoist/mygo` v0.5.5):
 - One shared viewport. Bar `i` is the same open time on every pane. `ensureForward` prepends and shifts `Offset` only when every pane that already has bars accepts the same count. Otherwise the offset stays and each pane keeps the `more` flag the source reported.
 - Live fence. Handlers capture `liveGen`. `dropLive` and `Chart.Close` bump that generation and unsubscribe. A handler that runs after `Close` must not change the chart. A `SubscribeBar` error unsubscribes the symbols that already succeeded. The handler must not call `SetPeriod`, `SetSource`, or `View`.
 - Do not raise the allocation ceilings. `go test` runs `TestCompareScalesAllocationBudget`, `TestStackPanAllocationBudget`, `TestOverlayPanAllocationBudget`, `TestMarkerPanAllocationBudget`, and `TestAppendBarAmortizedAlloc`. The byte limits are in those tests. `bench/baseline.txt` predates the #15/#16 fixes; check bytes/op against the test ceilings, not against that file.
-- `PriceDomain` skips non-finite OHLC and extra series. A NaN must not become the axis domain.
+- `PriceDomain` skips non-finite OHLC and extra series. `VolumeMax` skips non-finite volume the same way. A NaN or infinity must not become the axis domain.
+- Sub-pane bands come from one order. `subBands` is the only place that decides which `*MACD`, `*KDJ`, or host sub-pane takes which band; layout, paint, and the theme colors all read it. Do not add a second used/extra counter.
+- A `*Chart` receiver is not nil-safe. Only `Close` accepts nil. Keep the doc comment on `Chart` in step with that.
 
 ## Conventions
 

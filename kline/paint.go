@@ -120,31 +120,22 @@ type subLayer struct {
 	scale chart.Linear
 }
 
+// subLayers pairs each open sub-pane with the rect subBands assigned it.
+// The band order is the same one layoutPanes used, so a band that has a
+// rect is the band this function paints.
 func subLayers(panes Panes, inds []Indicator, first, last int) []subLayer {
-	macdUsed, kdjUsed, extraUsed := false, false, 0
 	var out []subLayer
-	for _, ind := range inds {
-		if ind == nil || ind.PaneKind() != PaneSub {
+	extraUsed := 0
+	for i, band := range subBands(inds) {
+		if band == bandNone {
 			continue
 		}
 		var plot, axis ui.Rect
-		switch ind.(type) {
-		case *MACD:
-			if !macdUsed {
-				plot, axis = panes.MACD, panes.MACDAxis
-				macdUsed = true
-				break
-			}
-			plot, axis = extraSubRect(panes, extraUsed)
-			extraUsed++
-		case *KDJ:
-			if !kdjUsed {
-				plot, axis = panes.KDJ, panes.KDJAxis
-				kdjUsed = true
-				break
-			}
-			plot, axis = extraSubRect(panes, extraUsed)
-			extraUsed++
+		switch band {
+		case bandMACD:
+			plot, axis = panes.MACD, panes.MACDAxis
+		case bandKDJ:
+			plot, axis = panes.KDJ, panes.KDJAxis
 		default:
 			plot, axis = extraSubRect(panes, extraUsed)
 			extraUsed++
@@ -152,7 +143,7 @@ func subLayers(panes Panes, inds []Indicator, first, last int) []subLayer {
 		if plot.H <= 1 {
 			continue
 		}
-		out = append(out, subLayer{ind: ind, plot: plot, axis: axis, scale: subScale(ind, first, last)})
+		out = append(out, subLayer{ind: inds[i], plot: plot, axis: axis, scale: subScale(inds[i], first, last)})
 	}
 	return out
 }
@@ -204,11 +195,9 @@ func extraSubRect(panes Panes, i int) (plot, axis ui.Rect) {
 // knows how to draw. Sub-pane colors are applied only when that pane
 // is open. Callers do not need the indicators back.
 func applyIndicatorStyle(inds []Indicator, panes Panes, style Style) {
-	macdUsed, kdjUsed, extraUsed := false, false, 0
-	for _, ind := range inds {
-		if ind == nil {
-			continue
-		}
+	extraUsed := 0
+	for i, band := range subBands(inds) {
+		ind := inds[i]
 		switch v := ind.(type) {
 		case *MA:
 			v.SetColors([]ui.Color{style.MA5, style.MA20})
@@ -216,9 +205,7 @@ func applyIndicatorStyle(inds []Indicator, panes Panes, style Style) {
 			v.SetColors(style.BOLLMid, style.BOLLUp, style.BOLLLow)
 		case *MACD:
 			plot := panes.MACD
-			if !macdUsed {
-				macdUsed = true
-			} else {
+			if band != bandMACD {
 				plot, _ = extraSubRect(panes, extraUsed)
 				extraUsed++
 			}
@@ -227,9 +214,7 @@ func applyIndicatorStyle(inds []Indicator, panes Panes, style Style) {
 			}
 		case *KDJ:
 			plot := panes.KDJ
-			if !kdjUsed {
-				kdjUsed = true
-			} else {
+			if band != bandKDJ {
 				plot, _ = extraSubRect(panes, extraUsed)
 				extraUsed++
 			}
@@ -237,7 +222,7 @@ func applyIndicatorStyle(inds []Indicator, panes Panes, style Style) {
 				v.SetColors(style.KDJK, style.KDJD, style.KDJJ)
 			}
 		default:
-			if ind.PaneKind() == PaneSub {
+			if band == bandExtra {
 				extraUsed++
 			}
 		}
