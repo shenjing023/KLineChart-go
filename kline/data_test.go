@@ -172,8 +172,8 @@ func TestSyntheticForwardExhaustsHistory(t *testing.T) {
 		total += len(older)
 		more = next
 	}
-	if total != 50 {
-		t.Fatalf("walked %d bars, want 50", total)
+	if total != DefaultLimit+30 {
+		t.Fatalf("walked %d bars, want %d", total, DefaultLimit+30)
 	}
 }
 

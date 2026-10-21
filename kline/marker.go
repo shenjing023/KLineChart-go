@@ -62,6 +62,7 @@ type tradeMark struct {
 // zero until means there is no cutoff.
 type markerView struct {
 	period  Period
+	from    time.Time
 	until   time.Time
 	bounded bool
 }
@@ -186,8 +187,13 @@ func (a *Chart) reindexMarks(s *series, view markerView) {
 	for i := range s.marks {
 		s.marks[i].bar = -1
 		s.marks[i].stack = 0
-		if view.bounded && !s.marks[i].m.Time.Before(view.until) {
-			continue
+		if view.bounded {
+			if !view.from.IsZero() && s.marks[i].m.Time.Before(view.from) {
+				continue
+			}
+			if !s.marks[i].m.Time.Before(view.until) {
+				continue
+			}
 		}
 		s.marks[i].bar = barContaining(s.candles, s.marks[i].m.Time, step)
 		if s.marks[i].bar < 0 {
@@ -255,7 +261,7 @@ func markerTickY(plot ui.Rect, scale chart.Linear, m tradeMark, factor float64) 
 // scales raw prices onto the scale argument; 1 is identity. Pan does not
 // allocate for the markers: the triangle path is reused, and the label
 // string was built when the marker was stored.
-func (a *Chart) drawMarkers(p *ui.Painter, plot ui.Rect, pane int, cs []Candle, vp Viewport, scale chart.Linear, style Style, factor float64) {
+func (a *Chart) drawMarkers(p *ui.Painter, plot ui.Rect, pane int, cs []Candle, vp Viewport, scale chart.Linear, style Style, factor float64, anchorClose bool) {
 	if a == nil || p == nil || pane < 0 || pane >= len(a.panes) || plot.H < 2 || len(cs) == 0 {
 		return
 	}
@@ -278,6 +284,9 @@ func (a *Chart) drawMarkers(p *ui.Painter, plot ui.Rect, pane int, cs []Candle, 
 			}
 			c := cs[mk.bar]
 			low, high := c.Low*factor, c.High*factor
+			if anchorClose {
+				low, high = c.Close*factor, c.Close*factor
+			}
 			cx := plot.X + float32(vp.BarLeft(mk.bar)+vp.BarWidth/2)
 			if cx < plot.X || cx > plot.X+plot.W {
 				continue

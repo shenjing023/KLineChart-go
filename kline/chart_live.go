@@ -32,10 +32,12 @@ func (a *Chart) followLive() error {
 			a.onLiveBar(gen, symbol, period, bar)
 		})
 		if err != nil {
+			// Fence handlers before calling UnsubscribeBar. A feed may
+			// invoke a still-held handler from its unsubscribe path.
+			a.liveGen.Add(1)
 			for _, sub := range subs {
 				_ = live.UnsubscribeBar(sub.symbol, sub.period)
 			}
-			a.liveGen.Add(1)
 			return err
 		}
 		subs = append(subs, liveSub{symbol: symbol, period: period})

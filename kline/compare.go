@@ -16,7 +16,7 @@ func NormalizeClose(cs []Candle, base int) []float64 {
 		return nil
 	}
 	baseClose := cs[base].Close
-	if baseClose <= 0 || math.IsNaN(baseClose) {
+	if !positiveFinite(baseClose) {
 		return nil
 	}
 	out := make([]float64, len(cs))
@@ -38,7 +38,7 @@ func NormalizeToIndex(cs []Candle, base int) []Candle {
 		return nil
 	}
 	baseClose := cs[base].Close
-	if baseClose <= 0 || math.IsNaN(baseClose) {
+	if !positiveFinite(baseClose) {
 		return nil
 	}
 	out := make([]Candle, len(cs))
@@ -53,7 +53,7 @@ func NormalizeToIndex(cs []Candle, base int) []Candle {
 }
 
 func scalePrice(v, baseClose float64) float64 {
-	if math.IsNaN(v) {
+	if !finite(v) {
 		return math.NaN()
 	}
 	return v / baseClose * 100
@@ -107,11 +107,15 @@ func commonPositiveClose(series [][]Candle, i int) bool {
 			return false
 		}
 		c := s[i].Close
-		if c <= 0 || math.IsNaN(c) {
+		if !positiveFinite(c) {
 			return false
 		}
 	}
 	return true
+}
+
+func positiveFinite(v float64) bool {
+	return v > 0 && finite(v)
 }
 
 // CompareScales is the overlay price scale. index maps the normalized
@@ -167,7 +171,10 @@ func CompareScales(primary, compare []Candle, inds []Indicator, vp Viewport, plo
 // shows, and that window. Every overlay reader uses it, so the header's
 // index and the painted base agree.
 func overlayBase(primary, compare []Candle, vp Viewport, plotW float64) (base, first, last int) {
-	first, last = vp.Visible(commonLen(primary, compare), plotW)
+	// PaintCompare draws every visible primary candle. The compare line
+	// contributes only where it has values, so a short compare series
+	// cannot shrink the scale window under the primary tail.
+	first, last = vp.Visible(len(primary), plotW)
 	if compare == nil {
 		return IndexBase(first, last, primary), first, last
 	}
@@ -176,7 +183,7 @@ func overlayBase(primary, compare []Candle, vp Viewport, plotW float64) (base, f
 
 // indexable reports whether bar base of cs has a close that can be 100.
 func indexable(cs []Candle, base int) bool {
-	return base >= 0 && base < len(cs) && cs[base].Close > 0 && !math.IsNaN(cs[base].Close)
+	return base >= 0 && base < len(cs) && positiveFinite(cs[base].Close)
 }
 
 // indexableOverlay requires every participating series to share a
@@ -290,7 +297,7 @@ func drawCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []I
 
 	layers := subLayers(panes, inds, first, last)
 
-	drawGrid(p, panes, primary, vp, index, volScale, style)
+	drawGrid(p, panes, primary, vp, index, volScale, style, labels)
 	p.Clip(price, 0, func() {
 		drawCandles(p, price, primary, vp, index, first, last, style, baseClose)
 		if style.Compare != (ui.Color{}) {

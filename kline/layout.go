@@ -143,7 +143,7 @@ func splitOne(r ui.Rect, showTime, showMACD bool) Panes {
 		macdY = volY + volH + gap
 		timeY = macdY + macdH
 	}
-	return Panes{
+	return fitPanes(r, Panes{
 		Price:      ui.Rect{X: r.X, Y: r.Y, W: plotW, H: priceH},
 		Volume:     ui.Rect{X: r.X, Y: volY, W: plotW, H: volH},
 		MACD:       ui.Rect{X: r.X, Y: macdY, W: plotW, H: macdH},
@@ -151,7 +151,7 @@ func splitOne(r ui.Rect, showTime, showMACD bool) Panes {
 		PriceAxis:  ui.Rect{X: r.X + plotW, Y: r.Y, W: axisW, H: priceH},
 		VolumeAxis: ui.Rect{X: r.X + plotW, Y: volY, W: axisW, H: volH},
 		MACDAxis:   ui.Rect{X: r.X + plotW, Y: macdY, W: axisW, H: macdH},
-	}
+	})
 }
 
 // splitBoth is price, volume, MACD, then KDJ. Each sub-pane has its own
@@ -214,7 +214,7 @@ func splitBoth(r ui.Rect, showTime bool) Panes {
 	macdY := volY + volH + gap
 	kdjY := macdY + macdH + gap
 	timeY := kdjY + kdjH
-	return Panes{
+	return fitPanes(r, Panes{
 		Price:      ui.Rect{X: r.X, Y: r.Y, W: plotW, H: priceH},
 		Volume:     ui.Rect{X: r.X, Y: volY, W: plotW, H: volH},
 		MACD:       ui.Rect{X: r.X, Y: macdY, W: plotW, H: macdH},
@@ -224,7 +224,7 @@ func splitBoth(r ui.Rect, showTime bool) Panes {
 		VolumeAxis: ui.Rect{X: r.X + plotW, Y: volY, W: axisW, H: volH},
 		MACDAxis:   ui.Rect{X: r.X + plotW, Y: macdY, W: axisW, H: macdH},
 		KDJAxis:    ui.Rect{X: r.X + plotW, Y: kdjY, W: axisW, H: kdjH},
-	}
+	})
 }
 
 // splitMany is price, volume, then n sub-panes of equal height. n > 2.
@@ -293,7 +293,7 @@ func splitMany(r ui.Rect, showTime bool, n int) Panes {
 		extraAxes[i] = ui.Rect{X: r.X + plotW, Y: y, W: axisW, H: subH}
 		y += subH + gap
 	}
-	return Panes{
+	return fitPanes(r, Panes{
 		Price:      ui.Rect{X: r.X, Y: r.Y, W: plotW, H: priceH},
 		Volume:     ui.Rect{X: r.X, Y: volY, W: plotW, H: volH},
 		Extra:      extras,
@@ -301,5 +301,52 @@ func splitMany(r ui.Rect, showTime bool, n int) Panes {
 		Time:       ui.Rect{X: r.X, Y: y - gap, W: plotW, H: timeH},
 		PriceAxis:  ui.Rect{X: r.X + plotW, Y: r.Y, W: axisW, H: priceH},
 		VolumeAxis: ui.Rect{X: r.X + plotW, Y: volY, W: axisW, H: volH},
+	})
+}
+
+// fitPanes keeps a collapsed layout inside its host rectangle. The
+// normal shares already do this; the fallback used when every fixed
+// minimum does not fit needs one more pass so a host never paints into
+// a neighbouring element.
+func fitPanes(r ui.Rect, panes Panes) Panes {
+	for _, p := range []*ui.Rect{
+		&panes.Price, &panes.Volume, &panes.MACD, &panes.KDJ, &panes.Time,
+		&panes.PriceAxis, &panes.VolumeAxis, &panes.MACDAxis, &panes.KDJAxis,
+	} {
+		*p = fitRect(r, *p)
 	}
+	for i := range panes.Extra {
+		panes.Extra[i] = fitRect(r, panes.Extra[i])
+	}
+	for i := range panes.ExtraAxis {
+		panes.ExtraAxis[i] = fitRect(r, panes.ExtraAxis[i])
+	}
+	return panes
+}
+
+func fitRect(r, p ui.Rect) ui.Rect {
+	if p.W <= 0 || p.H <= 0 {
+		return p
+	}
+	if p.X < r.X {
+		p.W -= r.X - p.X
+		p.X = r.X
+	}
+	if p.Y < r.Y {
+		p.H -= r.Y - p.Y
+		p.Y = r.Y
+	}
+	if p.X+p.W > r.X+r.W {
+		p.W = r.X + r.W - p.X
+	}
+	if p.Y+p.H > r.Y+r.H {
+		p.H = r.Y + r.H - p.Y
+	}
+	if p.W < 0 {
+		p.W = 0
+	}
+	if p.H < 0 {
+		p.H = 0
+	}
+	return p
 }

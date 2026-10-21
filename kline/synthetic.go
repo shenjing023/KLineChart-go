@@ -40,8 +40,9 @@ var otherOrigin = time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 // window without a jump, and two windows that share open times agree on
 // every shared bar.
 //
-// Extra is how many bars exist before an init window. Zero means
-// defaultExtra. Negative means the init window is the whole history.
+// Extra adds history to DefaultLimit, independently of request page size.
+// Zero means defaultExtra. Negative serves exactly the requested init
+// window with no older history. Total history is capped at 65,536 bars.
 // The default symbols use deterministic seeds: 600519 is 42 and 000001
 // is 99. It implements DataSource only and is not a LiveSource.
 type SyntheticSource struct {
@@ -63,8 +64,24 @@ func (s *SyntheticSource) GetBars(req BarRequest) ([]Candle, bool, error) {
 	if limit > maxSyntheticBars {
 		limit = maxSyntheticBars
 	}
+	if req.Kind != KindInit && req.Kind != KindForward {
+		return nil, false, fmt.Errorf("%w: %q", ErrUnsupportedKind, req.Kind)
+	}
+	if req.Kind == KindForward && req.Anchor.IsZero() {
+		return nil, false, fmt.Errorf("kline: forward request requires anchor")
+	}
+	if _, err := req.Period.Duration(); err != nil {
+		return nil, false, err
+	}
+	count := DefaultLimit + min(s.extra(), maxSyntheticBars-DefaultLimit)
+	if s.Extra < 0 {
+		if req.Kind == KindForward {
+			return []Candle{}, false, nil
+		}
+		count = limit
+	}
 	seed := symbolSeed(req.Symbol)
-	bars, err := s.series(seed, req.Period, max(limit+s.extra(), limit))
+	bars, err := s.series(seed, req.Period, count)
 	if err != nil {
 		return nil, false, err
 	}
@@ -76,9 +93,6 @@ func (s *SyntheticSource) GetBars(req BarRequest) ([]Candle, bool, error) {
 		start := max(len(bars)-limit, 0)
 		return cloneCandles(bars[start:]), start > 0, nil
 	case KindForward:
-		if req.Anchor.IsZero() {
-			return nil, false, fmt.Errorf("kline: forward request requires anchor")
-		}
 		end := len(bars)
 		for end > 0 && !bars[end-1].Time.Before(req.Anchor) {
 			end--

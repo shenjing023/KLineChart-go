@@ -457,8 +457,8 @@ func (a *Chart) SyncIndicators() {
 }
 
 // Crosshair is the bar under the pointer. ok is false when the pointer
-// is outside every plot. symbol is the pane under the pointer; in
-// overlay mode that is the primary symbol.
+// is outside every plot, including over the price axis. symbol is the
+// pane under the pointer; in overlay mode that is the primary symbol.
 func (a *Chart) Crosshair() (symbol string, index int, ok bool) {
 	if a.crossIndex < 0 {
 		return "", -1, false

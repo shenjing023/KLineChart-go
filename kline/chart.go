@@ -498,7 +498,13 @@ func (a *Chart) View(c *ui.Context) {
 				anyHover = true
 				nextPane = pane
 				hoverX, hoverY = x, y
-				if bar, ok := a.vp.IndexAt(float64(x), a.bars()); ok {
+				inPlot := pane >= 0 && pane < len(a.painted) && x >= 0 && x <= a.painted[pane].Price.W
+				if !inPlot {
+					// A pointer over the price axis has no bar to report.
+					// Clear the pane as well, or paintPane still draws its
+					// horizontal line and price tag from the stale pane.
+					nextPane = -1
+				} else if bar, ok := a.vp.IndexAt(float64(x), a.bars()); ok {
 					nextIndex = bar
 				}
 			}
@@ -569,7 +575,7 @@ func (a *Chart) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime
 		rubber = &Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}
 	}
 	DrawOverlays(p, panes.Price, s.overlays.live(), a.vp, scale, s.candles, style, rubber)
-	a.drawMarkers(p, panes.Price, i, s.candles, a.vp, scale, style, 1)
+	a.drawMarkers(p, panes.Price, i, s.candles, a.vp, scale, style, 1, false)
 	a.applyDeferred(i)
 }
 
@@ -599,14 +605,16 @@ func (a *Chart) paintCompare(p *ui.Painter, r ui.Rect, t *ui.Theme) {
 		rubber = &Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}
 	}
 	DrawOverlays(p, panes.Price, a.panes[0].overlays.live(), a.vp, scale, primary, style, rubber)
-	a.drawMarkers(p, panes.Price, 0, primary, a.vp, scale, style, 1)
+	a.drawMarkers(p, panes.Price, 0, primary, a.vp, scale, style, 1, false)
 	if indexed && len(a.panes) > 1 {
 		// Compare prices are indexed to the primary base close. The
-		// marker scale is the raw scale, so convert by that ratio.
+		// marker scale is the raw scale, so convert by that ratio. The
+		// compare series is drawn as a close line, so its arrows anchor
+		// on Close rather than the unplotted high or low.
 		base := a.compareBase()
 		compare := a.panes[1].candles
 		if indexable(primary, base) && indexable(compare, base) {
-			a.drawMarkers(p, panes.Price, 1, compare, a.vp, scale, style, primary[base].Close/compare[base].Close)
+			a.drawMarkers(p, panes.Price, 1, compare, a.vp, scale, style, primary[base].Close/compare[base].Close, true)
 		}
 	}
 	a.applyDeferred(0)

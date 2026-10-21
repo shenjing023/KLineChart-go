@@ -83,7 +83,7 @@ func drawPrice(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Vie
 	}
 	layers := subLayers(panes, inds, first, last)
 
-	drawGrid(p, panes, cs, vp, yScale, volScale, style)
+	drawGrid(p, panes, cs, vp, yScale, volScale, style, labels)
 	p.Clip(price, 0, func() {
 		drawCandles(p, price, cs, vp, yScale, first, last, style, 0)
 		for _, ind := range inds {
@@ -229,7 +229,7 @@ func applyIndicatorStyle(inds []Indicator, panes Panes, style Style) {
 	}
 }
 
-func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volScale chart.Linear, style Style) {
+func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volScale chart.Linear, style Style, labels labelFmt) {
 	price := panes.Price
 	for _, tick := range yScale.Ticks(5) {
 		if tick.At < -0.01 || tick.At > 1.01 {
@@ -247,22 +247,18 @@ func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volS
 			drawLabel(p, panes.VolumeAxis.X+6, y, tick.Label, style.Muted, ui.Start)
 		}
 	}
-	if len(cs) > 0 && vp.BarWidth > 0 {
-		left := TimeAt(cs, vp.Offset)
-		right := TimeAt(cs, vp.Offset+float64(price.W)/vp.BarWidth)
-		for _, tick := range chart.NewTime(left, right).Ticks(6) {
-			position, ok := timeBarPosition(cs, time.UnixMilli(int64(tick.Value)))
-			if !ok {
-				continue
-			}
-			x := price.X + float32((position-vp.Offset)*vp.BarWidth)
-			if x < price.X || x > price.X+price.W {
-				continue
-			}
-			p.Line(x, price.Y, x, bandsBottom(panes), 1, style.Grid)
-			if panes.Time.H > 0 {
-				drawLabel(p, x, panes.Time.Y+panes.Time.H/2, tick.Label, style.Muted, ui.Center)
-			}
+	for _, tick := range timeTicks(cs, vp, price.W, labels) {
+		position, ok := timeBarPosition(cs, time.UnixMilli(int64(tick.Value)))
+		if !ok {
+			continue
+		}
+		x := price.X + float32((position-vp.Offset)*vp.BarWidth)
+		if x < price.X || x > price.X+price.W {
+			continue
+		}
+		p.Line(x, price.Y, x, bandsBottom(panes), 1, style.Grid)
+		if panes.Time.H > 0 {
+			drawLabel(p, x, panes.Time.Y+panes.Time.H/2, tick.Label, style.Muted, ui.Center)
 		}
 	}
 	bands := []ui.Rect{panes.Price, panes.Volume}
@@ -285,6 +281,24 @@ func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volS
 		y := bands[i].Y - float32(paneGap)/2
 		p.Line(price.X, y, price.X+price.W, y, 1, style.Grid)
 	}
+}
+
+// timeTicks builds the six round times the axis may label. The ticks are
+// chosen in the chart's display zone, while their Value stays an
+// absolute instant: the candle axis maps that instant to X.
+func timeTicks(cs []Candle, vp Viewport, plotW float32, labels labelFmt) []chart.Tick {
+	if len(cs) == 0 || vp.BarWidth <= 0 || plotW <= 0 {
+		return nil
+	}
+	left := TimeAt(cs, vp.Offset)
+	right := TimeAt(cs, vp.Offset+float64(plotW)/vp.BarWidth)
+	loc := labels.loc
+	if loc == nil {
+		loc = time.UTC
+	}
+	// Ticks are chosen and labeled in the display zone. Their Value stays
+	// the absolute instant, which is what timeBarPosition maps to X.
+	return chart.NewTime(left.In(loc), right.In(loc)).Ticks(6)
 }
 
 // timeBarPosition maps t onto the same fractional bar axis as candles.

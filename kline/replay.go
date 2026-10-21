@@ -506,13 +506,13 @@ func (r *Replay) markerView() markerView {
 	if r == nil || r.chart == nil || len(r.base) == 0 {
 		return view
 	}
-	switch {
-	case r.cursor <= 0:
-		return view
-	case r.cursor < len(r.base[0]):
-		view.until = r.base[0][r.cursor].Time
+	if r.cursor <= 0 {
 		return view
 	}
+	// The visible interval depends only on bars that have already been
+	// revealed. Reading the next hidden bar's open would make a marker
+	// appear or disappear when that unseen bar changed.
+	view.from = r.base[0][0].Time
 	if step, err := r.basePeriod.Duration(); err == nil && step > 0 {
 		view.until = r.base[0][r.cursor-1].Time.Add(step)
 	}
@@ -526,10 +526,6 @@ func (r *Replay) markerView() markerView {
 // mapped onto the new bars.
 func (r *Replay) setPeriod(p Period) error {
 	if err := r.ready(); err != nil {
-		return err
-	}
-	gen := r.nextOp()
-	if err := r.opReady(gen); err != nil {
 		return err
 	}
 	if !p.Valid() {
@@ -549,6 +545,10 @@ func (r *Replay) setPeriod(p Period) error {
 	if p == r.chart.period {
 		return nil
 	}
+	// Only a change that can alter the chart starts a new operation.
+	// A callback asking for the current or a refused period is a no-op
+	// for the batch that is still unwinding.
+	gen := r.nextOp()
 	r.chart.period = p
 	for i := range r.chart.panes {
 		r.chart.panes[i].overlays = Layer{}
