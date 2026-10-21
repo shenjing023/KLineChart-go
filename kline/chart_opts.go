@@ -263,7 +263,10 @@ func (a *Chart) LimitPct() float64 { return a.limitPct }
 // the previous subscription does not apply.
 //
 // During replay, SetPeriod does not ask the source. A coarser period
-// aggregates only the revealed bars, including a partial last bucket.
+// aggregates only the revealed bars, including a partial last bucket. A
+// daily bucket opens on the first revealed bar of its local day, in
+// ChartOptions.Location, so it names the same instant a plain daily load
+// does; hourly and minute buckets stay epoch-aligned.
 // A finer period returns ErrReplayPeriod and leaves the cursor in place.
 func (a *Chart) SetPeriod(p Period) error {
 	if a != nil && a.replay != nil {

@@ -451,13 +451,14 @@ func (r *Replay) revealAggregate(idx int) error {
 	if err != nil {
 		return err
 	}
-	bt := bucketFloor(r.base[0][idx].Time, d)
+	loc := r.chart.bucketZone()
+	bt := bucketOpen(r.base[0], idx, d, loc)
 	same := false
 	if n := len(r.chart.panes[0].candles); n > 0 {
 		same = r.chart.panes[0].candles[n-1].Time.Equal(bt)
 	}
 	for i := range r.base {
-		c := aggregateOne(r.base[i], idx, d)
+		c := aggregateOne(r.base[i], idx, d, loc)
 		name := r.chart.panes[i].name
 		var err error
 		if same {
@@ -605,18 +606,18 @@ func (r *Replay) displayed(sym int) []Candle {
 	if err != nil {
 		return cloneCandles(prefix)
 	}
-	return aggregate(prefix, d)
+	return aggregate(prefix, d, r.chart.bucketZone())
 }
 
-func aggregate(cs []Candle, d time.Duration) []Candle {
+func aggregate(cs []Candle, d time.Duration, loc *time.Location) []Candle {
 	if len(cs) == 0 || d <= 0 {
 		return nil
 	}
 	out := make([]Candle, 0, len(cs)/4+1)
 	var cur Candle
 	have := false
-	for _, b := range cs {
-		bt := bucketFloor(b.Time, d)
+	for i, b := range cs {
+		bt := bucketOpen(cs, i, d, loc)
 		if !have || !bt.Equal(cur.Time) {
 			if have {
 				out = append(out, cur)
@@ -640,10 +641,10 @@ func aggregate(cs []Candle, d time.Duration) []Candle {
 	return out
 }
 
-func aggregateOne(cs []Candle, idx int, d time.Duration) Candle {
-	bt := bucketFloor(cs[idx].Time, d)
+func aggregateOne(cs []Candle, idx int, d time.Duration, loc *time.Location) Candle {
+	bt := bucketOpen(cs, idx, d, loc)
 	start := idx
-	for start > 0 && bucketFloor(cs[start-1].Time, d).Equal(bt) {
+	for start > 0 && bucketOpen(cs, start-1, d, loc).Equal(bt) {
 		start--
 	}
 	b0 := cs[start]
@@ -662,16 +663,38 @@ func aggregateOne(cs []Candle, idx int, d time.Duration) Candle {
 	return c
 }
 
-// bucketFloor is the UTC bucket that contains t. Hours and minutes
-// truncate to the epoch. A day truncates to UTC midnight, which is the
-// same rule. 09:30 in a 4h period lands on 08:00.
-func bucketFloor(t time.Time, d time.Duration) time.Time {
+// bucketOpen is the open time of the aggregate bar that holds cs[i].
+// Hours and minutes truncate to the epoch, so 09:30 in a 4h period lands
+// on 08:00. A day is different: it names the first base bar of the local
+// calendar day. A source that serves daily bars opens them at the session
+// start, such as 09:30 for an A-share day, so the aggregate has to name
+// that same instant; otherwise a marker, a drawing, and the readout would
+// not line up between a replay and a plain load of the same period.
+func bucketOpen(cs []Candle, i int, d time.Duration, loc *time.Location) time.Time {
+	if d%(24*time.Hour) != 0 {
+		return bucketFloor(cs[i].Time, d, loc)
+	}
+	floor := bucketFloor(cs[i].Time, d, loc)
+	start := i
+	for start > 0 && bucketFloor(cs[start-1].Time, d, loc).Equal(floor) {
+		start--
+	}
+	return cs[start].Time
+}
+
+// bucketFloor is the nominal open of the bucket that contains t.
+func bucketFloor(t time.Time, d time.Duration, loc *time.Location) time.Time {
 	if d <= 0 {
 		return t.UTC()
 	}
 	step := d.Nanoseconds()
 	if step <= 0 {
 		return t.UTC()
+	}
+	if d%(24*time.Hour) == 0 {
+		local := t.In(bucketLocation(loc))
+		y, m, day := local.Date()
+		return time.Date(y, m, day, 0, 0, 0, 0, local.Location())
 	}
 	unix := t.UTC().UnixNano()
 	if unix < 0 {
@@ -684,4 +707,13 @@ func bucketFloor(t time.Time, d time.Duration) time.Time {
 		return time.Unix(0, unix).UTC()
 	}
 	return time.Unix(0, unix-unix%step).UTC()
+}
+
+// bucketLocation is the zone a daily bucket starts in. A nil zone is
+// UTC, matching the label formatter's default.
+func bucketLocation(loc *time.Location) *time.Location {
+	if loc == nil {
+		return time.UTC
+	}
+	return loc
 }

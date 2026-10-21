@@ -865,3 +865,76 @@ func TestReplayStepFollowsEdgeUnlessPanned(t *testing.T) {
 		t.Fatalf("panned step moved offset from %v to %v", stayed, c.vp.Offset)
 	}
 }
+
+// A daily aggregate opens on the first base bar of the local calendar
+// day, which is what a plain 1d load of the same source returns. A UTC
+// day bucket would open at 08:00 Shanghai instead, so the replay and the
+// load would name different instants for the same day.
+func TestReplayDailyBucketUsesChartZone(t *testing.T) {
+	day := time.Date(2024, 6, 3, 9, 30, 0, 0, ashareLocation)
+	base := make([]Candle, 0, 4)
+	for i := 0; i < 4; i++ {
+		base = append(base, Candle{
+			Time: day.Add(time.Duration(i) * time.Hour), Open: 10, High: 11, Low: 9, Close: 10.5, Volume: 100,
+		})
+	}
+	all := map[string][]Candle{"600519": base}
+	c, _ := replayChart(t, []string{"600519"}, all, LayoutStack)
+	replay, err := StartReplay(c, all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replay.SeekIndex(len(base)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetPeriod(Period{Span: 1, Unit: UnitDay}); err != nil {
+		t.Fatal(err)
+	}
+	if c.Bars() != 1 {
+		t.Fatalf("4 hourly bars in one day made %d daily bars", c.Bars())
+	}
+	got, _ := c.Bar("600519", 0)
+	want := time.Date(2024, 6, 3, 9, 30, 0, 0, ashareLocation)
+	if !got.Time.Equal(want) {
+		t.Fatalf("daily bucket opened at %s, want the first base open %s", got.Time, want)
+	}
+	if clock := got.Time.In(ashareLocation).Format("15:04"); clock != "09:30" {
+		t.Fatalf("daily bucket opens at %s, want the session open", clock)
+	}
+	if got.Open != 10 || got.Close != 10.5 || got.Volume != 400 {
+		t.Fatalf("aggregate %+v", got)
+	}
+}
+
+// A UTC chart splits its daily buckets on UTC calendar days, and each
+// bucket opens on its first base bar.
+func TestReplayDailyBucketRespectsLocation(t *testing.T) {
+	utc := time.Date(2024, 6, 3, 9, 30, 0, 0, time.UTC)
+	base := []Candle{
+		{Time: utc, Open: 1, High: 2, Low: 1, Close: 1.5, Volume: 1},
+		{Time: utc.Add(24 * time.Hour), Open: 1.5, High: 3, Low: 1.5, Close: 2, Volume: 1},
+	}
+	all := map[string][]Candle{"600519": base}
+	src := &memBars{by: all}
+	c := NewChart(ChartOptions{
+		Source: src, Symbols: []string{"600519"}, Period: Period{Span: 1, Unit: UnitHour},
+		Indicators: []string{}, Location: time.UTC,
+	})
+	replay, err := StartReplay(c, all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replay.SeekIndex(len(base)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetPeriod(Period{Span: 1, Unit: UnitDay}); err != nil {
+		t.Fatal(err)
+	}
+	if c.Bars() != 2 {
+		t.Fatalf("two days made %d daily bars", c.Bars())
+	}
+	first, _ := c.Bar("600519", 0)
+	if !first.Time.Equal(utc) {
+		t.Fatalf("UTC daily bucket %s, want the first base open %s", first.Time, utc)
+	}
+}

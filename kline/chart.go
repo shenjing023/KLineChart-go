@@ -188,7 +188,8 @@ type Chart struct {
 	// which still prints two decimals.
 	priceDigits int
 	digitsSet   bool
-	// zone formats bar times in the header and the crosshair tag. Nil is UTC.
+	// zone formats bar times in the header and the crosshair tag. It is
+	// also the calendar a daily aggregate bucket starts on. Nil is UTC.
 	zone *time.Location
 	// frames is the outer box of each pane from the last paint. Hit
 	// testing relayouts from it so a click after an indicator toggle
@@ -228,6 +229,16 @@ func (a *Chart) labels() labelFmt {
 		return defaultLabels()
 	}
 	return labelFmt{digits: a.priceDigits, loc: a.zone}
+}
+
+// bucketZone is the calendar a daily replay aggregate starts on. It is
+// the zone the labels use, so the aggregate's open time is the day the
+// header shows.
+func (a *Chart) bucketZone() *time.Location {
+	if a == nil {
+		return nil
+	}
+	return a.zone
 }
 
 // active is s's indicators whose toolbar toggle is on, calculated for
