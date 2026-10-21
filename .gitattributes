@@ -1,0 +1,8 @@
+# Normalize Go sources to LF so `gofmt -l` is meaningful on every
+# platform. Without this, core.autocrlf=true makes every file look
+# unformatted on Windows.
+*.go text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+*.txt text eol=lf
+*.json text eol=lf

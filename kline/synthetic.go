@@ -10,23 +10,35 @@ import (
 
 const defaultExtra = 1800
 
-// hourlyOrigin is the open time of bar 0 from Generate, so an hourly
-// init window is that series and not a different walk.
-var hourlyOrigin = time.Date(2024, 1, 2, 9, 30, 0, 0, time.UTC)
+// ashareLocation is a fixed UTC+8 zone. Mainland China has no daylight
+// saving, so the synthetic calendar does not depend on host tzdata.
+var ashareLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
 
-// otherOrigin is the open time of the newest bar for periods other than
-// one hour. Those series are regenerated at the period step; they are
-// not aggregated from the hourly walk.
+// ashareLatestClose is the close of the newest synthetic session.
+var ashareLatestClose = time.Date(2024, 6, 28, 15, 0, 0, 0, ashareLocation)
+
+// otherOrigin remains the arbitrary start used by focused tests that do
+// not exercise the A-share calendar.
 var otherOrigin = time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
 
-// SyntheticSource builds deterministic OHLCV bars in memory.
+// SyntheticSource builds deterministic OHLCV bars in memory on the
+// regular mainland China A-share weekday session: 09:30-11:30 and
+// 13:00-15:00 Asia/Shanghai. Weekend gaps are omitted. Exchange
+// holidays are not guessed because no authoritative holiday calendar
+// is bundled, so this is demo/test data, not a production trading
+// calendar.
+//
 // Extra is how many bars exist before an init window. Zero means
 // defaultExtra. Negative means the init window is the whole history.
-// ALPHA and BETA use the same seeds as the original demo (42 and 99).
-// It implements DataSource only. It is not a LiveSource: nothing is
-// pushed, and a chart that type-asserts LiveSource skips it.
+// The default symbols use deterministic seeds: 600519 is 42 and 000001
+// is 99. It implements DataSource only and is not a LiveSource.
 type SyntheticSource struct {
 	Extra int
+}
+
+type syntheticSeries struct {
+	newest time.Time
+	bars   []Candle
 }
 
 // GetBars implements DataSource.
@@ -37,24 +49,36 @@ func (s *SyntheticSource) GetBars(req BarRequest) ([]Candle, bool, error) {
 	if !req.Period.Valid() {
 		return nil, false, ErrInvalidPeriod
 	}
-	step, err := req.Period.Duration()
-	if err != nil {
-		return nil, false, err
-	}
 	limit := req.Limit
 	if limit <= 0 {
 		limit = DefaultLimit
 	}
 	seed := symbolSeed(req.Symbol)
+	series, err := s.series(seed, req.Period, max(limit+s.extra(), limit))
+	if err != nil {
+		return nil, false, err
+	}
 	switch req.Kind {
 	case KindInit:
-		bars := s.initBars(seed, step, limit)
-		return bars, s.extra() > 0, nil
+		if len(series.bars) == 0 {
+			return nil, false, nil
+		}
+		start := max(len(series.bars)-limit, 0)
+		bars := cloneCandles(series.bars[start:])
+		return bars, start > 0, nil
 	case KindForward:
 		if req.Anchor.IsZero() {
 			return nil, false, fmt.Errorf("kline: forward request requires anchor")
 		}
-		return s.forwardBars(seed, step, limit, req.Anchor)
+		end := len(series.bars)
+		for end > 0 && !series.bars[end-1].Time.Before(req.Anchor) {
+			end--
+		}
+		start := max(end-limit, 0)
+		if end == 0 {
+			return []Candle{}, false, nil
+		}
+		return cloneCandles(series.bars[start:end]), start > 0, nil
 	default:
 		return nil, false, fmt.Errorf("%w: %q", ErrUnsupportedKind, req.Kind)
 	}
@@ -70,67 +94,73 @@ func (s *SyntheticSource) extra() int {
 	return s.Extra
 }
 
-func (s *SyntheticSource) initBars(seed int64, step time.Duration, limit int) []Candle {
-	if step == time.Hour {
-		return Generate(limit, seed)
+func (s *SyntheticSource) series(seed int64, period Period, count int) (syntheticSeries, error) {
+	opens := ashareOpens(ashareLatestClose, period, count)
+	if len(opens) == 0 {
+		return syntheticSeries{}, fmt.Errorf("kline: no A-share bars for %s", period)
 	}
-	start := otherOrigin.Add(-time.Duration(limit-1) * step)
-	return sampleWalk(limit, seed, start, step)
+	bars := make([]Candle, len(opens))
+	synthesizeWalk(bars, opens, seed)
+	return syntheticSeries{
+		newest: bars[len(bars)-1].Time,
+		bars:   bars,
+	}, nil
 }
 
-func (s *SyntheticSource) forwardBars(seed int64, step time.Duration, limit int, anchor time.Time) ([]Candle, bool, error) {
-	floor := s.floor(step)
-	if !anchor.After(floor) {
-		return []Candle{}, false, nil
-	}
-	available := int(anchor.Sub(floor) / step)
-	if available > limit {
-		available = limit
-	}
-	if available <= 0 {
-		return []Candle{}, false, nil
-	}
-	start := anchor.Add(-time.Duration(available) * step)
-	// A different stream from Generate, so older hourly bars stay
-	// deterministic without rewriting the init window's walk.
-	bars := sampleWalk(available, seed^0x51ed, start, step)
-	return bars, start.After(floor), nil
-}
-
-func (s *SyntheticSource) floor(step time.Duration) time.Time {
-	extra := time.Duration(s.extra()) * step
-	if step == time.Hour {
-		return hourlyOrigin.Add(-extra)
-	}
-	first := otherOrigin.Add(-time.Duration(DefaultLimit-1) * step)
-	return first.Add(-extra)
-}
-
-func symbolSeed(symbol string) int64 {
-	switch symbol {
-	case "ALPHA":
-		return 42
-	case "BETA":
-		return 99
-	default:
-		h := fnv.New64a()
-		_, _ = h.Write([]byte(symbol))
-		return int64(h.Sum64() & 0x7fffffffffffffff)
-	}
-}
-
-// sampleWalk is the same OHLC construction as Generate, at an arbitrary
-// start and step. Generate itself is unchanged so the hourly demo and
-// its tests keep their bytes.
-func sampleWalk(n int, seed int64, start time.Time, step time.Duration) []Candle {
+// ashareOpens returns the newest n opens ending no later than end, in
+// ascending order. One-hour bars use the four regular hourly starts.
+// Sub-hour bars walk each two-hour session at their period. Four-hour and
+// daily periods use one 09:30 open per weekday. Weekends are skipped.
+// Exchange holidays are not guessed without an authoritative calendar.
+func ashareOpens(end time.Time, period Period, n int) []time.Time {
 	if n <= 0 {
 		return nil
 	}
+	out := make([]time.Time, 0, n)
+	day := end.In(ashareLocation)
+	day = time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, ashareLocation)
+	for len(out) < n {
+		if day.Weekday() != time.Saturday && day.Weekday() != time.Sunday {
+			opens := ashareDayOpens(day, period)
+			for i := len(opens) - 1; i >= 0 && len(out) < n; i-- {
+				if opens[i].Before(end) {
+					out = append(out, opens[i])
+				}
+			}
+		}
+		day = day.AddDate(0, 0, -1)
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
+func ashareDayOpens(day time.Time, period Period) []time.Time {
+	step, err := period.Duration()
+	if err != nil {
+		return nil
+	}
+	morning := day.Add(9*time.Hour + 30*time.Minute)
+	afternoon := day.Add(13 * time.Hour)
+	if period.Unit == UnitDay || step >= 4*time.Hour {
+		return []time.Time{morning}
+	}
+	var out []time.Time
+	for t := morning; !t.After(day.Add(11*time.Hour + 30*time.Minute).Add(-step)); t = t.Add(step) {
+		out = append(out, t)
+	}
+	for t := afternoon; !t.After(day.Add(15 * time.Hour).Add(-step)); t = t.Add(step) {
+		out = append(out, t)
+	}
+	return out
+}
+
+func synthesizeWalk(bars []Candle, opens []time.Time, seed int64) {
 	u := uint64(seed)
 	rng := rand.New(rand.NewPCG(u, u^0x9e3779b97f4a7c15))
 	price := 100.0
-	out := make([]Candle, n)
-	for i := range out {
+	for i := range bars {
 		change := (rng.Float64() - 0.48) * 1.6
 		open := price
 		closePx := open + change
@@ -143,17 +173,42 @@ func sampleWalk(n int, seed int64, start time.Time, step time.Duration) []Candle
 			closePx += shift
 			high += shift
 		}
-		span := math.Abs(closePx - open)
-		volume := 600 + rng.Float64()*4200 + span*1800
-		out[i] = Candle{
-			Time:   start.Add(time.Duration(i) * step),
+		bars[i] = Candle{
+			Time:   opens[i],
 			Open:   open,
 			High:   high,
 			Low:    low,
 			Close:  closePx,
-			Volume: volume,
+			Volume: 600 + rng.Float64()*4200 + math.Abs(closePx-open)*1800,
 		}
 		price = closePx
 	}
+}
+
+func symbolSeed(symbol string) int64 {
+	switch symbol {
+	case "600519", "ALPHA":
+		return 42
+	case "000001", "BETA":
+		return 99
+	default:
+		h := fnv.New64a()
+		_, _ = h.Write([]byte(symbol))
+		return int64(h.Sum64() & 0x7fffffffffffffff)
+	}
+}
+
+// sampleWalk remains an arbitrary-time fixture for focused tests. The
+// A-share SyntheticSource above owns the session calendar.
+func sampleWalk(n int, seed int64, start time.Time, step time.Duration) []Candle {
+	if n <= 0 {
+		return nil
+	}
+	out := make([]Candle, n)
+	opens := make([]time.Time, n)
+	for i := range opens {
+		opens[i] = start.Add(time.Duration(i) * step)
+	}
+	synthesizeWalk(out, opens, seed)
 	return out
 }

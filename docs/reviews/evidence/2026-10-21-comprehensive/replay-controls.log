@@ -1,0 +1,12 @@
+=== RUN   TestReplayCloseRestoresMore
+--- PASS: TestReplayCloseRestoresMore (0.00s)
+=== RUN   TestCloseThenSetPeriodResubscribes
+--- PASS: TestCloseThenSetPeriodResubscribes (0.00s)
+=== RUN   TestReplayPartialHigherPeriod
+--- PASS: TestReplayPartialHigherPeriod (0.00s)
+=== RUN   TestReplayPanesMarkersDrawingsAndLiveFence
+--- PASS: TestReplayPanesMarkersDrawingsAndLiveFence (0.02s)
+=== RUN   TestReplayTickStopsWhenRevealFails
+--- PASS: TestReplayTickStopsWhenRevealFails (0.00s)
+PASS
+ok  	github.com/shenjing023/KLineChart-go/kline	0.151s

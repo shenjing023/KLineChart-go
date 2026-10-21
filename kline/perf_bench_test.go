@@ -84,6 +84,26 @@ func TestCompareScalesAllocationBudget(t *testing.T) {
 // about 84KB. One extra CompareScales is about 15KB and lands above this.
 const overlayPanByteCeiling = 92 * 1024
 
+// stackPanByteCeiling is BenchmarkPanFrames/stack_8k, the default layout.
+// The stack frame paints two full panes, so it allocates about twice the
+// overlay frame: the committed Linux baseline is 174 493 B/op and this
+// host measures 173 KB, with a cold first sample near 193 KB. The
+// ceiling leaves room for that first sample and for platform
+// differences, but not for a second copy of the per-frame work.
+const stackPanByteCeiling = 216 * 1024
+
+// TestStackPanAllocationBudget keeps the default layout honest. The
+// overlay frame has had a ceiling since the double CompareScales fix;
+// the stack frame did not, and it is the more expensive of the two.
+func TestStackPanAllocationBudget(t *testing.T) {
+	result := testing.Benchmark(func(b *testing.B) {
+		benchPanFrames(b, 8000, LayoutStack)
+	})
+	if got := result.AllocedBytesPerOp(); got > stackPanByteCeiling {
+		t.Fatalf("stack pan allocated %d bytes/op, ceiling is %d", got, stackPanByteCeiling)
+	}
+}
+
 // TestOverlayPanAllocationBudget fails when an overlay pan frame starts
 // allocating like it did when paint and DrawOverlays each called
 // CompareScales. The bench has no drawings; TestOverlayFrameSkipsItemCopy
@@ -224,7 +244,7 @@ func BenchmarkIndicatorCalc(b *testing.B) {
 func mountBenchBars(b *testing.B, c *Chart, n int) {
 	b.Helper()
 	for i := range c.panes {
-		c.panes[i] = c.mount(c.panes[i], benchSeries(n, int64(i+1)), false)
+		c.panes[i] = c.mount(c.panes[i], benchSeries(n, int64(i+1)), false, c.period)
 	}
 	c.vp.FitRight(c.Bars(), 900)
 	c.fitted = true
@@ -236,7 +256,7 @@ func mountBenchBars(b *testing.B, c *Chart, n int) {
 func benchChart(b *testing.B, n int, layout string) (*Chart, *ui.Tester) {
 	b.Helper()
 	c := NewChart(ChartOptions{
-		Symbols:    []string{"ALPHA", "BETA"},
+		Symbols:    []string{"600519", "000001"},
 		Layout:     layout,
 		Indicators: benchIndicatorNames(layout),
 	})
@@ -319,7 +339,7 @@ func BenchmarkCrosshairFrames(b *testing.B) {
 	for _, layout := range []struct {
 		name, value, label string
 	}{
-		{"stack", LayoutStack, "ALPHA chart"},
+		{"stack", LayoutStack, "600519 chart"},
 		{"overlay", LayoutOverlay, "Compare chart"},
 	} {
 		for _, size := range benchBarCounts {
@@ -346,7 +366,7 @@ func BenchmarkCrosshairFrames(b *testing.B) {
 	}
 }
 
-// BenchmarkLivePushFrames revises ALPHA's last bar through StubLiveSource
+// BenchmarkLivePushFrames revises 600519's last bar through StubLiveSource
 // and paints one frame. The open time stays the same, so the series length
 // does not grow during the run.
 func BenchmarkLivePushFrames(b *testing.B) {
@@ -367,15 +387,15 @@ func BenchmarkLivePushFrames(b *testing.B) {
 func benchLivePushFrames(b *testing.B, n int, layout string) {
 	period := Period{Span: 1, Unit: UnitHour}
 	src := &StubLiveSource{}
-	if err := src.SetBars("ALPHA", period, benchSeries(n, 1)); err != nil {
+	if err := src.SetBars("600519", period, benchSeries(n, 1)); err != nil {
 		b.Fatal(err)
 	}
-	if err := src.SetBars("BETA", period, benchSeries(n, 2)); err != nil {
+	if err := src.SetBars("000001", period, benchSeries(n, 2)); err != nil {
 		b.Fatal(err)
 	}
 	c := NewChart(ChartOptions{
 		Source:     src,
-		Symbols:    []string{"ALPHA", "BETA"},
+		Symbols:    []string{"600519", "000001"},
 		Period:     period,
 		Layout:     layout,
 		Indicators: benchIndicatorNames(layout),
@@ -394,7 +414,7 @@ func benchLivePushFrames(b *testing.B, n int, layout string) {
 	if revised.Low > revised.Close {
 		revised.Low = revised.Close
 	}
-	src.Push("ALPHA", period, revised)
+	src.Push("600519", period, revised)
 	tt.Frame()
 	last := c.panes[0].candles[len(c.panes[0].candles)-1]
 	if c.Bars() != n || last.Close != revised.Close {
@@ -403,7 +423,7 @@ func benchLivePushFrames(b *testing.B, n int, layout string) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		src.Push("ALPHA", period, revised)
+		src.Push("600519", period, revised)
 		tt.Frame()
 	}
 }
@@ -460,7 +480,7 @@ func BenchmarkAppendBar(b *testing.B) {
 
 func benchAppendBar(b *testing.B, n int) {
 	c := NewChart(ChartOptions{
-		Symbols:    []string{"ALPHA"},
+		Symbols:    []string{"600519"},
 		Period:     Period{Span: 1, Unit: UnitHour},
 		Indicators: benchIndicatorNames(LayoutStack),
 	})
@@ -471,7 +491,7 @@ func benchAppendBar(b *testing.B, n int) {
 	for i := 0; i < b.N; i++ {
 		bar.Time = bar.Time.Add(time.Hour)
 		bar.Close += 0.01
-		if err := c.AppendBar("ALPHA", bar); err != nil {
+		if err := c.AppendBar("600519", bar); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -498,11 +518,11 @@ func benchReplayStep(b *testing.B, n int) {
 	alpha := benchSeries(n, 1)
 	beta := benchSeries(n, 2)
 	c := NewChart(ChartOptions{
-		Symbols:    []string{"ALPHA", "BETA"},
+		Symbols:    []string{"600519", "000001"},
 		Period:     Period{Span: 1, Unit: UnitHour},
 		Indicators: benchIndicatorNames(LayoutStack),
 	})
-	replay, err := StartReplay(c, map[string][]Candle{"ALPHA": alpha, "BETA": beta})
+	replay, err := StartReplay(c, map[string][]Candle{"600519": alpha, "000001": beta})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -545,7 +565,7 @@ func benchMarkerPan(b *testing.B, n, count int) {
 			marks = append(marks, Marker{Time: cs[i*step].Time, Side: side})
 		}
 	}
-	if err := c.SetMarkers("ALPHA", marks); err != nil {
+	if err := c.SetMarkers("600519", marks); err != nil {
 		b.Fatal(err)
 	}
 	tt.Frame()

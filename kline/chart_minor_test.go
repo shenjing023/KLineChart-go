@@ -44,15 +44,15 @@ func TestChartPriceDecimalsAndLocation(t *testing.T) {
 	digits := 4
 	loc := time.FixedZone("UTC+8", 8*3600)
 	a := NewChart(ChartOptions{
-		Symbols:       []string{"ALPHA"},
+		Symbols:       []string{"600519"},
 		PriceDecimals: &digits,
 		Location:      loc,
 	})
-	bar, ok := a.Bar("ALPHA", a.Bars()-1)
+	bar, ok := a.Bar("600519", a.Bars()-1)
 	if !ok {
 		t.Fatal("no bar")
 	}
-	got := a.Readout("ALPHA")
+	got := a.Readout("600519")
 	wantTime := bar.Time.In(loc).Format("2006-01-02 15:04")
 	wantPx := FormatPriceDigits(bar.Close, 4)
 	if !strings.Contains(got, wantTime) || !strings.Contains(got, "C "+wantPx) {
@@ -60,16 +60,16 @@ func TestChartPriceDecimalsAndLocation(t *testing.T) {
 	}
 
 	neg := -3
-	b := NewChart(ChartOptions{Symbols: []string{"ALPHA"}, PriceDecimals: &neg})
-	bar, _ = b.Bar("ALPHA", b.Bars()-1)
-	got = b.Readout("ALPHA")
-	if !strings.Contains(got, bar.Time.UTC().Format("2006-01-02 15:04")) || !strings.Contains(got, "C "+FormatPrice(bar.Close)) {
+	b := NewChart(ChartOptions{Symbols: []string{"600519"}, PriceDecimals: &neg})
+	bar, _ = b.Bar("600519", b.Bars()-1)
+	got = b.Readout("600519")
+	if !strings.Contains(got, bar.Time.In(ashareLocation).Format("2006-01-02 15:04")) || !strings.Contains(got, "C "+FormatPrice(bar.Close)) {
 		t.Fatalf("default format changed: %q", got)
 	}
 }
 
 func TestClickBeforeFirstPaintIsKept(t *testing.T) {
-	a := NewChart(ChartOptions{Symbols: []string{"ALPHA"}, Indicators: []string{}})
+	a := NewChart(ChartOptions{Symbols: []string{"600519"}, Indicators: []string{}})
 	if len(a.painted) != 0 {
 		t.Fatal("paint ran before the click")
 	}
@@ -91,7 +91,7 @@ func TestClickBeforeFirstPaintIsKept(t *testing.T) {
 }
 
 func TestClickAfterIndicatorChangeUsesNewPriceRect(t *testing.T) {
-	a := NewChart(ChartOptions{Symbols: []string{"ALPHA"}, Indicators: []string{"MACD"}})
+	a := NewChart(ChartOptions{Symbols: []string{"600519"}, Indicators: []string{"MACD"}})
 	tt := ui.NewTester(a.View, 900, 700)
 	if err := a.SetTool(ToolHLine); err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func (k *kindLog) GetBars(req BarRequest) ([]Candle, bool, error) {
 
 func TestChartNeverRequestsBackward(t *testing.T) {
 	src := &kindLog{DataSource: &SyntheticSource{}}
-	a := NewChart(ChartOptions{Source: src, Symbols: []string{"ALPHA", "BETA"}})
+	a := NewChart(ChartOptions{Source: src, Symbols: []string{"600519", "000001"}})
 	tt := ui.NewTester(a.View, 800, 600)
 	a.vp.Offset = 1
 	tt.Frame()
@@ -144,7 +144,7 @@ func TestChartNeverRequestsBackward(t *testing.T) {
 }
 
 func TestEscapeAndRightClickCancelDraft(t *testing.T) {
-	a := NewChart(ChartOptions{Symbols: []string{"ALPHA"}, Indicators: []string{}})
+	a := NewChart(ChartOptions{Symbols: []string{"600519"}, Indicators: []string{}})
 	tt := ui.NewTester(a.View, 900, 640)
 	if err := a.SetTool(ToolSegment); err != nil {
 		t.Fatal(err)

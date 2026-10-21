@@ -1,0 +1,53 @@
+package kline
+
+import (
+	"testing"
+
+	"github.com/egoist/mygo/ui"
+)
+
+func TestReviewReopenSamePeriod(t *testing.T) {
+	p := Period{Span: 1, Unit: UnitHour}
+	src := &StubLiveSource{}
+	_ = src.SetBars("A", p, Generate(5, 1))
+	c := NewChart(ChartOptions{Source: src, Symbols: []string{"A"}, Period: p, Indicators: []string{}})
+	before, _ := c.Bar("A", c.Bars()-1)
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetPeriod(c.Period()); err != nil {
+		t.Fatal(err)
+	}
+	revised := before
+	revised.Close += 1
+	src.Push("A", p, revised)
+	after, _ := c.Bar("A", c.Bars()-1)
+	if after.Close != revised.Close {
+		t.Fatalf("Close -> SetPeriod(current) did not resume live updates: before=%v wanted=%v got=%v subscriptions=%d", before.Close, revised.Close, after.Close, len(src.subs))
+	}
+}
+
+func TestReviewBuiltinIndicatorsStayReserved(t *testing.T) {
+	saved := Registry()
+	defer func() { registryMu.Lock(); registry = saved; registryMu.Unlock() }()
+	Unregister("MA")
+	err := Register(Spec{Name: "MA", Kind: PaneSub, New: func() Indicator { return NewMACD(12, 26, 9) }})
+	if err == nil {
+		t.Fatal("README says built-in names stay reserved; removed built-in MA and replaced it by MACD under MA successfully")
+	}
+}
+
+func TestReviewSecondMACDActuallyPaints(t *testing.T) {
+	name := "FASTMACD"
+	defer Unregister(name)
+	if err := Register(Spec{Name: name, Kind: PaneSub, New: func() Indicator { return NewMACD(3, 6, 2) }}); err != nil {
+		t.Fatal(err)
+	}
+	c := NewChart(ChartOptions{Symbols: []string{"A"}, Indicators: []string{"MACD", name}})
+	p := c.layoutPanes(ui.Rect{W: 900, H: 600}, true)
+	inds := c.active(&c.panes[0])
+	layers := subLayers(p, inds, 0, c.Bars()-1)
+	if len(layers) != 2 {
+		t.Fatalf("two enabled sub-pane indicators yield %d painted layers; enabled=%v MACD rect=%+v extras=%d", len(layers), c.IndicatorNames(), p.MACD, len(p.Extra))
+	}
+}

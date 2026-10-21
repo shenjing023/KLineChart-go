@@ -1,0 +1,18 @@
+goos: windows
+goarch: amd64
+pkg: github.com/shenjing023/KLineChart-go/kline
+cpu: AMD Ryzen 7 7735H with Radeon Graphics         
+BenchmarkCompareScales/8k-16    	   15723	     15621 ns/op	   14672 B/op	      10 allocs/op
+BenchmarkCompareScales/8k-16    	   16231	     14904 ns/op	   14672 B/op	      10 allocs/op
+BenchmarkCompareScales/8k-16    	   16173	     14905 ns/op	   14672 B/op	      10 allocs/op
+BenchmarkPanFrames/stack_8k-16  	     132	   1764339 ns/op	  172987 B/op	     738 allocs/op
+BenchmarkPanFrames/stack_8k-16  	     136	   1707185 ns/op	  172978 B/op	     738 allocs/op
+BenchmarkPanFrames/stack_8k-16  	     134	   1744040 ns/op	  172990 B/op	     738 allocs/op
+BenchmarkOverlayPanFrames/8k-16 	     168	   1771492 ns/op	   83991 B/op	     336 allocs/op
+BenchmarkOverlayPanFrames/8k-16 	     154	   1668420 ns/op	   83995 B/op	     336 allocs/op
+BenchmarkOverlayPanFrames/8k-16 	     142	   1637854 ns/op	   83998 B/op	     336 allocs/op
+BenchmarkAppendBar/8k-16        	  704625	       323.7 ns/op	     848 B/op	       1 allocs/op
+BenchmarkAppendBar/8k-16        	  773793	       326.5 ns/op	     961 B/op	       1 allocs/op
+BenchmarkAppendBar/8k-16        	  761058	       295.7 ns/op	     894 B/op	       1 allocs/op
+PASS
+ok  	github.com/shenjing023/KLineChart-go/kline	4.800s

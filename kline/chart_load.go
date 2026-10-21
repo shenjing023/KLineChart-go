@@ -16,21 +16,25 @@ func (a *Chart) setPeriod(p Period) error {
 	if !p.Valid() {
 		return ErrInvalidPeriod
 	}
-	next, err := a.fetchInit(a.src, p)
+	next, dropErr, err := a.fetchInit(a.src, p)
 	if err != nil {
 		return err
 	}
-	return a.install(p, next)
+	return a.install(p, next, dropErr)
 }
 
 // fetchInit loads the latest window of every symbol at p from src. It
 // does not change the chart. Each batch is copied as it arrives, so a
 // source may reuse the slice it returned.
-func (a *Chart) fetchInit(src DataSource, p Period) ([]series, error) {
+// fetchInit returns the aligned window and, separately, the report of
+// pending bars a symbol's window held past the shared tail. That drop
+// is not a load failure: the returned index is still usable, and the
+// report becomes AlignError after install.
+func (a *Chart) fetchInit(src DataSource, p Period) (next []series, dropErr error, err error) {
 	if src == nil {
-		return nil, ErrNilSource
+		return nil, nil, ErrNilSource
 	}
-	next := make([]series, len(a.panes))
+	next = make([]series, len(a.panes))
 	for i, s := range a.panes {
 		bars, more, err := src.GetBars(BarRequest{
 			Symbol: s.name,
@@ -39,14 +43,35 @@ func (a *Chart) fetchInit(src DataSource, p Period) ([]series, error) {
 			Limit:  sampleBars,
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		if err := checkBarOrder(bars); err != nil {
+			return nil, nil, fmt.Errorf("%w: %s", err, s.name)
 		}
 		next[i] = series{name: s.name, candles: cloneCandles(bars), more: more}
 	}
-	if err := alignInit(next); err != nil {
-		return nil, err
+	dropErr, err = alignInit(next)
+	if err != nil {
+		return nil, nil, err
 	}
-	return next, nil
+	return next, dropErr, nil
+}
+
+// checkBarOrder reports whether bars are in strictly ascending open-time
+// order, which DataSource requires. Everything downstream assumes it:
+// aggregation, barContaining, and Point.Index all binary-search the
+// series, so a swapped or duplicated open time silently attaches a
+// marker, a drawing, or a higher-period bar to the wrong candle.
+func checkBarOrder(bars []Candle) error {
+	for i := 1; i < len(bars); i++ {
+		if !bars[i].Time.After(bars[i-1].Time) {
+			return fmt.Errorf("%w: %s is not after %s",
+				ErrBarOrder,
+				bars[i].Time.UTC().Format("2006-01-02 15:04"),
+				bars[i-1].Time.UTC().Format("2006-01-02 15:04"))
+		}
+	}
+	return nil
 }
 
 // alignInit puts every symbol's init window on one bar index. Windows
@@ -56,9 +81,9 @@ func (a *Chart) fetchInit(src DataSource, p Period) ([]series, error) {
 // the usual case when one feed has opened the next bar first. What is
 // left must match open time for open time. A symbol with no bars next to
 // one that has bars cannot share an index.
-func alignInit(next []series) error {
+func alignInit(next []series) (dropErr error, err error) {
 	if len(next) < 2 {
-		return nil
+		return nil, nil
 	}
 	empty, full := -1, -1
 	var first, last time.Time
@@ -80,11 +105,11 @@ func alignInit(next []series) error {
 	}
 	switch {
 	case full < 0:
-		return nil
+		return nil, nil
 	case empty >= 0:
-		return fmt.Errorf("%w: %s has no bars and %s does", ErrMisaligned, next[empty].name, next[full].name)
+		return nil, fmt.Errorf("%w: %s has no bars and %s does", ErrMisaligned, next[empty].name, next[full].name)
 	case first.After(last):
-		return fmt.Errorf("%w: the windows share no open time", ErrMisaligned)
+		return nil, fmt.Errorf("%w: the windows share no open time", ErrMisaligned)
 	}
 	lo := make([]int, len(next))
 	hi := make([]int, len(next))
@@ -101,7 +126,7 @@ func alignInit(next []series) error {
 	ref := next[0].candles[lo[0]:hi[0]]
 	for i := 1; i < len(next); i++ {
 		if at, ok := firstTimeDiff(ref, next[i].candles[lo[i]:hi[i]]); ok {
-			return fmt.Errorf("%w: %s and %s differ at %s", ErrMisaligned, next[0].name, next[i].name, at.UTC().Format("2006-01-02 15:04"))
+			return nil, fmt.Errorf("%w: %s and %s differ at %s", ErrMisaligned, next[0].name, next[i].name, at.UTC().Format("2006-01-02 15:04"))
 		}
 	}
 	for i := range next {
@@ -110,12 +135,17 @@ func alignInit(next []series) error {
 			s.more = true
 		}
 		if hi[i] < len(s.candles) {
-			s.held = append([]Candle(nil), s.candles[hi[i]:]...)
+			s.held = cloneCandles(s.candles[hi[i]:])
+			if trimHeld(nil, s) && dropErr == nil {
+				drop := len(s.candles[hi[i]:]) - maxHeldBars
+				oldest := s.candles[hi[i]+drop-1]
+				dropErr = heldDropError(s.name, drop, oldest)
+			}
 		}
 		// Capped so an append to candles cannot write over held.
 		s.candles = s.candles[lo[i]:hi[i]:hi[i]]
 	}
-	return nil
+	return dropErr, nil
 }
 
 // firstTimeDiff is the earliest open time at which a and b disagree,
@@ -144,7 +174,7 @@ func firstTimeDiff(a, b []Candle) (time.Time, bool) {
 // paint, because layout has not run yet. Drawings, the crosshair, and a
 // drawing or drag in progress belong to the old bars and are dropped.
 // The live subscription follows the new period and source.
-func (a *Chart) install(p Period, next []series) error {
+func (a *Chart) install(p Period, next []series, dropErr error) error {
 	for i := range next {
 		for _, old := range a.panes {
 			if old.name == next[i].name {
@@ -152,7 +182,7 @@ func (a *Chart) install(p Period, next []series) error {
 				break
 			}
 		}
-		next[i] = a.mount(next[i], next[i].candles, next[i].more)
+		next[i] = a.mount(next[i], next[i].candles, next[i].more, p)
 	}
 	a.period = p
 	a.panes = next
@@ -165,8 +195,11 @@ func (a *Chart) install(p Period, next []series) error {
 		a.fitted = true
 	}
 	a.clearForwardHold()
-	a.alignErr = nil
+	a.alignErr = dropErr
 	a.loadErr = a.followLive()
+	if a.loadErr == nil {
+		a.closed = false
+	}
 	return a.loadErr
 }
 
@@ -221,6 +254,14 @@ func (a *Chart) ensureForward() {
 			a.holdForward()
 			return
 		}
+		if err := checkBarOrder(bars); err != nil {
+			// A forward batch that is out of order would corrupt the
+			// prepend, so drop it and wait out the backoff instead of
+			// retrying on every frame.
+			a.alignErr = fmt.Errorf("%w: %s", err, s.name)
+			a.holdForward()
+			return
+		}
 		// Copy before the next symbol's request: a source may reuse
 		// one buffer for every GetBars.
 		bars = cloneCandles(strictlyBefore(bars, s.candles[0].Time))
@@ -247,7 +288,7 @@ func (a *Chart) ensureForward() {
 		}
 		older := got[i].bars
 		more := got[i].more || len(older) > n
-		a.panes[i] = a.mount(a.panes[i], prependBars(older[len(older)-n:], a.panes[i].candles), more)
+		a.panes[i] = a.mount(a.panes[i], prependBars(older[len(older)-n:], a.panes[i].candles), more, a.period)
 	}
 	a.vp.Offset += float64(n)
 	if a.crossIndex >= 0 {
@@ -351,11 +392,11 @@ func prependBars(older, newer []Candle) []Candle {
 // mount stores bars on s and recalculates the indicators that are on.
 // Existing instances are kept so a prepend does not allocate a new MA
 // or MACD, only a new value slice inside Calc.
-func (a *Chart) mount(s series, bars []Candle, more bool) series {
+func (a *Chart) mount(s series, bars []Candle, more bool, period Period) series {
 	s.candles = bars
 	s.more = more
 	a.recalc(&s)
-	a.reindexMarks(&s)
+	a.reindexMarks(&s, markerView{period: period})
 	return s
 }
 

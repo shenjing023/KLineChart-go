@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Windows amd64
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The view tests render frames in memory through ui.NewTester, so
+      # the job does not need to open a desktop window.
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Format
+        run: |
+          $unformatted = gofmt -l .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($unformatted) {
+            $unformatted | Write-Error
+            exit 1
+          }
+
+      - name: Test
+        run: go test ./... -count=1
+
+      # Windows is the primary native target. The live fence and Marshal
+      # contract need a real Windows race run, so provision MinGW only for
+      # this step instead of depending on a compiler in the runner image.
+      - name: Set up MinGW for race
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+          path-type: inherit
+
+      - name: Test with the race detector
+        env:
+          CGO_ENABLED: "1"
+          GOOS: windows
+          GOARCH: amd64
+        shell: msys2 {0}
+        run: |
+          which gcc
+          gcc --version | head -n 1
+          go test ./... -race -count=1

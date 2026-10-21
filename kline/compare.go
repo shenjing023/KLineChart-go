@@ -120,13 +120,15 @@ func commonPositiveClose(series [][]Candle, i int) bool {
 // raw price lands on the indexed candles. base is the bar whose close
 // is 100 on each series.
 //
-// When base has no positive primary close, the overlay cannot be
-// indexed and PaintCompare draws Paint's plot instead. index and raw are
-// then both MainScale, the scale that plot uses, so drawings and hit
-// tests still land on its candles.
+// When a participating compare series is present and any series lacks
+// a positive close at base, the overlay cannot be indexed and
+// PaintCompare draws Paint's plot instead. index and raw are then both
+// MainScale, the scale that plot uses, so drawings and hit tests still
+// land on its candles. A nil compare keeps the single-series overlay
+// behavior.
 func CompareScales(primary, compare []Candle, inds []Indicator, vp Viewport, plotW float64) (index, raw chart.Linear, base int) {
 	base, first, last := overlayBase(primary, compare, vp, plotW)
-	if !indexable(primary, base) {
+	if !indexableOverlay(primary, compare, base) {
 		index = MainScale(primary, inds, vp, plotW)
 		return index, index, base
 	}
@@ -166,7 +168,7 @@ func CompareScales(primary, compare []Candle, inds []Indicator, vp Viewport, plo
 // index and the painted base agree.
 func overlayBase(primary, compare []Candle, vp Viewport, plotW float64) (base, first, last int) {
 	first, last = vp.Visible(commonLen(primary, compare), plotW)
-	if len(compare) == 0 {
+	if compare == nil {
 		return IndexBase(first, last, primary), first, last
 	}
 	return IndexBase(first, last, primary, compare), first, last
@@ -175,6 +177,15 @@ func overlayBase(primary, compare []Candle, vp Viewport, plotW float64) (base, f
 // indexable reports whether bar base of cs has a close that can be 100.
 func indexable(cs []Candle, base int) bool {
 	return base >= 0 && base < len(cs) && cs[base].Close > 0 && !math.IsNaN(cs[base].Close)
+}
+
+// indexableOverlay requires every participating series to share a
+// positive base. compare nil is the documented single-series path.
+func indexableOverlay(primary, compare []Candle, base int) bool {
+	if !indexable(primary, base) {
+		return false
+	}
+	return compare == nil || indexable(compare, base)
 }
 
 func rawScale(index chart.Linear, baseClose float64) chart.Linear {
@@ -227,7 +238,7 @@ func windowScaled(series []float64, baseClose float64, first, last int) []float6
 }
 
 func commonLen(primary, compare []Candle) int {
-	if len(compare) == 0 || len(primary) < len(compare) {
+	if compare == nil || len(primary) < len(compare) {
 		return len(primary)
 	}
 	return len(compare)
@@ -258,7 +269,7 @@ func drawCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []I
 		return MainScale(primary, inds, vp, float64(price.W)), false
 	}
 	index, raw, base := CompareScales(primary, compare, inds, vp, float64(price.W))
-	if !indexable(primary, base) {
+	if !indexableOverlay(primary, compare, base) {
 		return drawPrice(p, panes, primary, inds, vp, ptr, barIndex, style, labels), false
 	}
 	baseClose := primary[base].Close

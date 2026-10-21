@@ -172,6 +172,10 @@ type Chart struct {
 	// alignErr is AlignError: forward or live bars left off the shared
 	// index since the last load.
 	alignErr error
+	// closed records that Close dropped the live subscription. A
+	// same-period SetPeriod must load again while this is set; a
+	// successful load and subscription clears it.
+	closed bool
 	// symbolErr is set when NewChart refused the symbol list. The chart
 	// then has no panes, and every load returns it.
 	symbolErr error
@@ -282,15 +286,28 @@ func assignSubRects(p Panes, subs []Indicator, n int) Panes {
 	p.MACD, p.MACDAxis = ui.Rect{}, ui.Rect{}
 	p.KDJ, p.KDJAxis = ui.Rect{}, ui.Rect{}
 	p.Extra, p.ExtraAxis = nil, nil
+	macdUsed, kdjUsed := false, false
 	for i, ind := range subs {
 		if i >= len(plots) || i >= len(axes) {
 			break
 		}
 		switch ind.(type) {
 		case *MACD:
-			p.MACD, p.MACDAxis = plots[i], axes[i]
+			if !macdUsed {
+				p.MACD, p.MACDAxis = plots[i], axes[i]
+				macdUsed = true
+				break
+			}
+			p.Extra = append(p.Extra, plots[i])
+			p.ExtraAxis = append(p.ExtraAxis, axes[i])
 		case *KDJ:
-			p.KDJ, p.KDJAxis = plots[i], axes[i]
+			if !kdjUsed {
+				p.KDJ, p.KDJAxis = plots[i], axes[i]
+				kdjUsed = true
+				break
+			}
+			p.Extra = append(p.Extra, plots[i])
+			p.ExtraAxis = append(p.ExtraAxis, axes[i])
 		default:
 			p.Extra = append(p.Extra, plots[i])
 			p.ExtraAxis = append(p.ExtraAxis, axes[i])
@@ -585,7 +602,9 @@ func (a *Chart) readout(i int) string {
 		if i > 1 {
 			return line
 		}
-		line += "  idx " + labels.price(a.indexValue(i, idx))
+		if indexed := a.overlayIndexed(); indexed {
+			line += "  idx " + labels.price(a.indexValue(i, idx))
+		}
 		// The compare series is a close line. Its MA and MACD are not
 		// drawn, so they stay off this header.
 		if i != 0 {
@@ -622,4 +641,10 @@ func (a *Chart) compareBase() int {
 	primary, compare := a.overlayPair()
 	base, _, _ := overlayBase(primary, compare, a.vp, a.plotW)
 	return base
+}
+
+func (a *Chart) overlayIndexed() bool {
+	primary, compare := a.overlayPair()
+	base := a.compareBase()
+	return indexableOverlay(primary, compare, base)
 }

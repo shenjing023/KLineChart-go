@@ -43,10 +43,10 @@ func TestForwardSkipsWhenOnePaneHasNoMore(t *testing.T) {
 	assertScreen(t, a.panes[0], t0, a.vp.Offset, want)
 	assertScreen(t, a.panes[1], t1, a.vp.Offset, want)
 	if a.panes[1].more {
-		t.Fatal("BETA more changed")
+		t.Fatal("000001 more changed")
 	}
 	if !a.panes[0].more {
-		t.Fatal("ALPHA more changed")
+		t.Fatal("600519 more changed")
 	}
 }
 
@@ -103,7 +103,7 @@ func TestForwardOneEmptyBatchDoesNotShift(t *testing.T) {
 	n0, n1 := len(a.panes[0].candles), len(a.panes[1].candles)
 	inner := a.src
 	a.src = sourceFunc(func(req BarRequest) ([]Candle, bool, error) {
-		if req.Kind == KindForward && req.Symbol == "BETA" {
+		if req.Kind == KindForward && req.Symbol == "000001" {
 			return []Candle{}, false, nil
 		}
 		return inner.GetBars(req)
@@ -118,10 +118,10 @@ func TestForwardOneEmptyBatchDoesNotShift(t *testing.T) {
 	assertScreen(t, a.panes[0], t0, a.vp.Offset, want)
 	assertScreen(t, a.panes[1], t1, a.vp.Offset, want)
 	if a.panes[1].more {
-		t.Fatal("BETA more should stay the source's false")
+		t.Fatal("000001 more should stay the source's false")
 	}
 	if !a.panes[0].more {
-		t.Fatal("ALPHA more should stay the source's true")
+		t.Fatal("600519 more should stay the source's true")
 	}
 }
 
@@ -168,23 +168,23 @@ func TestLiveHandlerAfterUnsubscribeDoesNotAppend(t *testing.T) {
 	stub := &keepHandlers{StubLiveSource: &StubLiveSource{}}
 	alpha := Generate(30, 42)
 	beta := Generate(30, 99)
-	if err := stub.SetBars("ALPHA", hour, alpha); err != nil {
+	if err := stub.SetBars("600519", hour, alpha); err != nil {
 		t.Fatal(err)
 	}
-	if err := stub.SetBars("BETA", hour, beta); err != nil {
+	if err := stub.SetBars("000001", hour, beta); err != nil {
 		t.Fatal(err)
 	}
 	fourA := sampleWalk(30, 42, otherOrigin, 4*time.Hour)
 	fourB := sampleWalk(30, 99, otherOrigin, 4*time.Hour)
-	if err := stub.SetBars("ALPHA", four, fourA); err != nil {
+	if err := stub.SetBars("600519", four, fourA); err != nil {
 		t.Fatal(err)
 	}
-	if err := stub.SetBars("BETA", four, fourB); err != nil {
+	if err := stub.SetBars("000001", four, fourB); err != nil {
 		t.Fatal(err)
 	}
 	a := NewChart(ChartOptions{
 		Source:     stub,
-		Symbols:    []string{"ALPHA", "BETA"},
+		Symbols:    []string{"600519", "000001"},
 		Period:     hour,
 		Indicators: []string{},
 	})
@@ -211,7 +211,7 @@ func TestLiveHandlerAfterUnsubscribeDoesNotAppend(t *testing.T) {
 	if len(a.panes[0].candles) != before {
 		t.Fatalf("handler after Close appended, len %d", len(a.panes[0].candles))
 	}
-	stub.Push("ALPHA", four, Candle{Time: fourA[len(fourA)-1].Time.Add(8 * time.Hour), Close: 8})
+	stub.Push("600519", four, Candle{Time: fourA[len(fourA)-1].Time.Add(8 * time.Hour), Close: 8})
 	if len(a.panes[0].candles) != before {
 		t.Fatal("Push after Close appended")
 	}
@@ -222,16 +222,16 @@ func TestSubscribeBarErrorRollsBack(t *testing.T) {
 	stub := &StubLiveSource{}
 	alpha := Generate(20, 42)
 	beta := Generate(20, 99)
-	if err := stub.SetBars("ALPHA", hour, alpha); err != nil {
+	if err := stub.SetBars("600519", hour, alpha); err != nil {
 		t.Fatal(err)
 	}
-	if err := stub.SetBars("BETA", hour, beta); err != nil {
+	if err := stub.SetBars("000001", hour, beta); err != nil {
 		t.Fatal(err)
 	}
-	bad := &subscribeFail{StubLiveSource: stub, fail: "BETA"}
+	bad := &subscribeFail{StubLiveSource: stub, fail: "000001"}
 	a := NewChart(ChartOptions{
 		Source:     bad,
-		Symbols:    []string{"ALPHA", "BETA"},
+		Symbols:    []string{"600519", "000001"},
 		Period:     hour,
 		Indicators: []string{},
 	})
@@ -243,25 +243,25 @@ func TestSubscribeBarErrorRollsBack(t *testing.T) {
 		t.Fatal("no handler captured")
 	}
 	bad.handlers[0](Candle{Time: alpha[len(alpha)-1].Time.Add(time.Hour), Close: 3})
-	stub.Push("ALPHA", hour, Candle{Time: alpha[len(alpha)-1].Time.Add(2 * time.Hour), Close: 4})
+	stub.Push("600519", hour, Candle{Time: alpha[len(alpha)-1].Time.Add(2 * time.Hour), Close: 4})
 	if len(a.panes[0].candles) != n {
 		t.Fatalf("partial subscribe still applied, len %d", len(a.panes[0].candles))
 	}
 
 	good := &StubLiveSource{}
-	if err := good.SetBars("ALPHA", hour, alpha); err != nil {
+	if err := good.SetBars("600519", hour, alpha); err != nil {
 		t.Fatal(err)
 	}
-	if err := good.SetBars("BETA", hour, beta); err != nil {
+	if err := good.SetBars("000001", hour, beta); err != nil {
 		t.Fatal(err)
 	}
 	base := NewChart(ChartOptions{
 		Source:     good,
-		Symbols:    []string{"ALPHA", "BETA"},
+		Symbols:    []string{"600519", "000001"},
 		Period:     hour,
 		Indicators: []string{},
 	})
-	next := &subscribeFail{StubLiveSource: stub, fail: "BETA"}
+	next := &subscribeFail{StubLiveSource: stub, fail: "000001"}
 	if err := base.SetSource(next); err == nil {
 		t.Fatal("SetSource swallowed SubscribeBar error")
 	}
@@ -270,7 +270,7 @@ func TestSubscribeBarErrorRollsBack(t *testing.T) {
 		t.Fatal("SetSource captured no handler")
 	}
 	next.handlers[0](Candle{Time: alpha[len(alpha)-1].Time.Add(3 * time.Hour), Close: 5})
-	stub.Push("ALPHA", hour, Candle{Time: alpha[len(alpha)-1].Time.Add(4 * time.Hour), Close: 6})
+	stub.Push("600519", hour, Candle{Time: alpha[len(alpha)-1].Time.Add(4 * time.Hour), Close: 6})
 	if len(base.panes[0].candles) != n {
 		t.Fatalf("SetSource partial subscribe applied, len %d", len(base.panes[0].candles))
 	}
@@ -281,18 +281,18 @@ func TestLiveMarshalHopsApply(t *testing.T) {
 	stub := &StubLiveSource{}
 	alpha := Generate(16, 42)
 	beta := Generate(16, 99)
-	if err := stub.SetBars("ALPHA", hour, alpha); err != nil {
+	if err := stub.SetBars("600519", hour, alpha); err != nil {
 		t.Fatal(err)
 	}
-	if err := stub.SetBars("BETA", hour, beta); err != nil {
+	if err := stub.SetBars("000001", hour, beta); err != nil {
 		t.Fatal(err)
 	}
 	var chart *Chart
 	hopped := 0
-	// One symbol, so the pushed bar is shown without waiting for BETA.
+	// One symbol, so the pushed bar is shown without waiting for 000001.
 	chart = NewChart(ChartOptions{
 		Source:     stub,
-		Symbols:    []string{"ALPHA"},
+		Symbols:    []string{"600519"},
 		Period:     hour,
 		Indicators: []string{},
 		Marshal: func(fn func()) {
@@ -309,7 +309,7 @@ func TestLiveMarshalHopsApply(t *testing.T) {
 	next := last
 	next.Time = last.Time.Add(time.Hour)
 	next.Close = last.Close + 1
-	stub.Push("ALPHA", hour, next)
+	stub.Push("600519", hour, next)
 	if hopped != 1 {
 		t.Fatalf("marshal calls %d", hopped)
 	}
@@ -323,18 +323,18 @@ func TestLiveOffThreadPushIsFenced(t *testing.T) {
 	stub := &keepHandlers{StubLiveSource: &StubLiveSource{}}
 	alpha := Generate(16, 42)
 	beta := Generate(16, 99)
-	if err := stub.SetBars("ALPHA", hour, alpha); err != nil {
+	if err := stub.SetBars("600519", hour, alpha); err != nil {
 		t.Fatal(err)
 	}
-	if err := stub.SetBars("BETA", hour, beta); err != nil {
+	if err := stub.SetBars("000001", hour, beta); err != nil {
 		t.Fatal(err)
 	}
 	hop := make(chan func(), 4)
 	var chart *Chart
-	// One symbol, so the pushed bar is shown without waiting for BETA.
+	// One symbol, so the pushed bar is shown without waiting for 000001.
 	chart = NewChart(ChartOptions{
 		Source:     stub,
-		Symbols:    []string{"ALPHA"},
+		Symbols:    []string{"600519"},
 		Period:     hour,
 		Indicators: []string{},
 		Marshal:    func(fn func()) { hop <- fn },
@@ -344,7 +344,7 @@ func TestLiveOffThreadPushIsFenced(t *testing.T) {
 	next := last
 	next.Time = last.Time.Add(time.Hour)
 	next.Close = last.Close + 1
-	go stub.Push("ALPHA", hour, next)
+	go stub.Push("600519", hour, next)
 	var fn func()
 	select {
 	case fn = <-hop:

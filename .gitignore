@@ -36,3 +36,6 @@ go.work.sum
 /build/
 /.mygo/
 mygo_windows_*.syso
+
+# benchstat comparison run, written by the README benchmarking flow
+bench/new.txt

@@ -1,0 +1,78 @@
+=== RUN   TestReviewCompareFallbackNeedsBothSeries
+    math_paint_review_test.go:33: no common positive close; indexed=true base=0 primaryClose=9.96132724207699 compareClose=0 axis=[96,104] raw=[9.56287415239391,10.35978033176007] MainScale=[9.6,10.3]
+    math_paint_review_test.go:35: overlay should fall back to the primary's raw price scale when no common positive close exists
+--- FAIL: TestReviewCompareFallbackNeedsBothSeries (0.02s)
+=== RUN   TestReviewNilLinePlotCallsDrawMain
+    math_paint_review_test.go:62: LinePlot.Series()==nil, DrawMain calls=0
+    math_paint_review_test.go:64: documented nil-Series fallback to DrawMain is not called
+--- FAIL: TestReviewNilLinePlotCallsDrawMain (0.00s)
+=== RUN   TestReviewSessionGapMisplacesTimeTick
+    math_paint_review_test.go:83: Monday tick 2024-01-08 at x=225.00 falls in bar 2 (2024-01-09); Monday candle spans x=[100,200]
+    math_paint_review_test.go:85: time tick labels the wrong trading session
+--- FAIL: TestReviewSessionGapMisplacesTimeTick (0.02s)
+=== RUN   TestReviewMarkersMustStayInsidePricePlot
+    math_paint_review_test.go:118: marker pixels price=230 volume=46; price={X:0 Y:0 W:728 H:445} volume={X:0 Y:453 W:728 H:125}
+    math_paint_review_test.go:121: stacked trade arrows paint over the volume strip
+--- FAIL: TestReviewMarkersMustStayInsidePricePlot (0.02s)
+=== RUN   TestReviewFiniteIndicatorTails
+=== RUN   TestReviewFiniteIndicatorTails/MA_1,2,5,20
+=== RUN   TestReviewFiniteIndicatorTails/BOLL_1
+=== RUN   TestReviewFiniteIndicatorTails/BOLL_2
+=== RUN   TestReviewFiniteIndicatorTails/BOLL_20
+=== RUN   TestReviewFiniteIndicatorTails/MACD_2,5,2
+=== RUN   TestReviewFiniteIndicatorTails/MACD_5,2,3
+=== RUN   TestReviewFiniteIndicatorTails/MACD_12,26,9
+=== RUN   TestReviewFiniteIndicatorTails/KDJ_1,1,1
+=== RUN   TestReviewFiniteIndicatorTails/KDJ_3,2,4
+=== RUN   TestReviewFiniteIndicatorTails/KDJ_9,3,3
+--- PASS: TestReviewFiniteIndicatorTails (0.02s)
+    --- PASS: TestReviewFiniteIndicatorTails/MA_1,2,5,20 (0.00s)
+    --- PASS: TestReviewFiniteIndicatorTails/BOLL_1 (0.00s)
+    --- PASS: TestReviewFiniteIndicatorTails/BOLL_2 (0.00s)
+    --- PASS: TestReviewFiniteIndicatorTails/BOLL_20 (0.00s)
+    --- PASS: TestReviewFiniteIndicatorTails/MACD_2,5,2 (0.00s)
+    --- PASS: TestReviewFiniteIndicatorTails/MACD_5,2,3 (0.00s)
+    --- PASS: TestReviewFiniteIndicatorTails/MACD_12,26,9 (0.00s)
+    --- PASS: TestReviewFiniteIndicatorTails/KDJ_1,1,1 (0.00s)
+    --- PASS: TestReviewFiniteIndicatorTails/KDJ_3,2,4 (0.00s)
+    --- PASS: TestReviewFiniteIndicatorTails/KDJ_9,3,3 (0.00s)
+=== RUN   TestReviewPeriodSwitchReindexesLastBarWithNewPeriod
+=== RUN   TestReviewPeriodSwitchReindexesLastBarWithNewPeriod/coarsen
+    review_primary_probe_test.go:38: period=4h markerBar=-1 visible=false readout="Last  2026-10-20 00:00  O 100.00  H 101.00  L 99.00  C 100.00  V 10"
+    review_primary_probe_test.go:40: marker visibility=false, want true after switching 1h -> 4h
+=== RUN   TestReviewPeriodSwitchReindexesLastBarWithNewPeriod/refine
+    review_primary_probe_test.go:38: period=1h markerBar=0 visible=true readout="Last  2026-10-20 00:00  O 100.00  H 101.00  L 99.00  C 100.00  V 10  late_trade @ 99.00"
+    review_primary_probe_test.go:40: marker visibility=true, want false after switching 4h -> 1h
+--- FAIL: TestReviewPeriodSwitchReindexesLastBarWithNewPeriod (0.00s)
+    --- FAIL: TestReviewPeriodSwitchReindexesLastBarWithNewPeriod/coarsen (0.00s)
+    --- FAIL: TestReviewPeriodSwitchReindexesLastBarWithNewPeriod/refine (0.00s)
+=== RUN   TestReviewInitHeldCap
+    review_primary_probe_test.go:61: bars=1 held=599 cap=512 alignmentError=<nil>
+    review_primary_probe_test.go:63: init held=599 exceeds documented cap=512
+--- FAIL: TestReviewInitHeldCap (0.00s)
+=== RUN   TestReviewBuiltinIndicatorsStayReserved
+    review_standards_probe_test.go:36: README says built-in names stay reserved; removed built-in MA and replaced it by MACD under MA successfully
+--- FAIL: TestReviewBuiltinIndicatorsStayReserved (0.00s)
+=== RUN   TestReviewSecondMACDActuallyPaints
+    review_standards_probe_test.go:51: two enabled sub-pane indicators yield 1 painted layers; enabled=[MA MACD BOLL KDJ FASTMACD] MACD rect={X:0 Y:467 W:828 H:111} extras=0
+--- FAIL: TestReviewSecondMACDActuallyPaints (0.00s)
+=== RUN   TestReviewCloseDuringOnBarStopsAdvance
+    review_state_probe_test.go:20: after callback Close: Step err=<nil> closed=true cursor=5 bars=5 callbacks=5
+    review_state_probe_test.go:22: the detached replay continued to mutate the chart
+--- FAIL: TestReviewCloseDuringOnBarStopsAdvance (0.00s)
+=== RUN   TestReviewStartReplayDuringOnBarPreservesNewCursor
+    review_state_probe_test.go:46: old Step err=<nil> old closed=true old cursor=4 new cursor=0 chart bars=3 attachedNew=true
+    review_state_probe_test.go:48: old replay exposed bars that the attached replacement did not reveal
+--- FAIL: TestReviewStartReplayDuringOnBarPreservesNewCursor (0.00s)
+=== RUN   TestReviewPauseDuringOnBarStopsTick
+    review_state_probe_test.go:66: paused=true cursor=5 bars=5
+    review_state_probe_test.go:68: Tick continued after callback paused playback
+--- FAIL: TestReviewPauseDuringOnBarStopsTick (0.00s)
+=== RUN   TestReviewCoarseReplayHidesFutureMarkers
+    review_state_probe_test.go:87: before 4h: cursor=2 marker bar=-1
+    review_state_probe_test.go:93: after 4h: cursor=2 newestRevealed=2024-03-01 09:00:00 +0000 UTC markerTime=2024-03-01 10:00:00 +0000 UTC marker bar=0 readout="Hover  2024-03-01 08:00  O 100.00  H 100.87  L 98.91  C 99.66  V 6525  HIDDEN_TRADE @ 98.91"
+    review_state_probe_test.go:95: future trade is visible before its base bar is revealed
+--- FAIL: TestReviewCoarseReplayHidesFutureMarkers (0.00s)
+FAIL
+FAIL	github.com/shenjing023/KLineChart-go/kline	6.227s
+FAIL

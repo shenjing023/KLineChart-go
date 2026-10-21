@@ -203,23 +203,23 @@ func registerHostSpecs(t *testing.T) {
 
 func TestHostEmbedWithoutToolbar(t *testing.T) {
 	period := kline.Period{Span: 1, Unit: kline.UnitHour}
-	feed := newHostFeed(period, "ALPHA", "BETA")
+	feed := newHostFeed(period, "600519", "000001")
 	c := kline.NewChart(kline.ChartOptions{
 		Source:     feed,
-		Symbols:    []string{"ALPHA", "BETA"},
+		Symbols:    []string{"600519", "000001"},
 		Period:     period,
 		Layout:     kline.LayoutStack,
 		Indicators: []string{"MA", "MACD"},
 		HideHeader: false,
 	})
 	tt := ui.NewTester(c.View, 960, 720)
-	if !tt.HasText("ALPHA") || !tt.HasText("Last") {
+	if !tt.HasText("600519") || !tt.HasText("Last") {
 		t.Fatalf("built-in header missing, texts %q", tt.Texts())
 	}
 	if _, ok := tt.Find("K-line"); ok {
 		t.Fatal("View should not paint the demo toolbar title")
 	}
-	box, ok := tt.Find("ALPHA chart")
+	box, ok := tt.Find("600519 chart")
 	if !ok {
 		t.Fatal("stack plot missing")
 	}
@@ -238,10 +238,10 @@ func TestHostEmbedWithoutToolbar(t *testing.T) {
 		t.Fatalf("crosshair readout missing, texts %q", tt.Texts())
 	}
 	symbol, idx, ok := c.Crosshair()
-	if !ok || symbol != "ALPHA" || idx < 0 {
+	if !ok || symbol != "600519" || idx < 0 {
 		t.Fatalf("crosshair symbol %q index %d ok %v", symbol, idx, ok)
 	}
-	bar, ok := c.Bar("ALPHA", idx)
+	bar, ok := c.Bar("600519", idx)
 	if !ok || bar.Time.IsZero() {
 		t.Fatal("Bar should return the hovered candle")
 	}
@@ -249,7 +249,7 @@ func TestHostEmbedWithoutToolbar(t *testing.T) {
 	if first < 0 || last < first || idx < first || idx > last {
 		t.Fatalf("visible %d..%d does not contain %d", first, last, idx)
 	}
-	if c.Readout("ALPHA") == "" || c.Readout("BETA") == "" {
+	if c.Readout("600519") == "" || c.Readout("000001") == "" {
 		t.Fatal("host readout should be available without scraping the header")
 	}
 	if _, ok := c.Bar("NOPE", 0); ok {
@@ -259,7 +259,7 @@ func TestHostEmbedWithoutToolbar(t *testing.T) {
 
 func TestHideHeaderLeavesPlotAndReadout(t *testing.T) {
 	c := kline.NewChart(kline.ChartOptions{
-		Symbols:    []string{"ALPHA"},
+		Symbols:    []string{"600519"},
 		Indicators: []string{"MA"},
 		HideHeader: true,
 	})
@@ -267,7 +267,7 @@ func TestHideHeaderLeavesPlotAndReadout(t *testing.T) {
 	if tt.HasText("Last") || tt.HasText("Hover") {
 		t.Fatalf("hidden header still drew a readout, texts %q", tt.Texts())
 	}
-	box, ok := tt.Find("ALPHA chart")
+	box, ok := tt.Find("600519 chart")
 	if !ok {
 		t.Fatal("plot missing when the header is hidden")
 	}
@@ -278,7 +278,7 @@ func TestHideHeaderLeavesPlotAndReadout(t *testing.T) {
 	if _, _, ok := c.Crosshair(); !ok {
 		t.Fatal("crosshair state should still update for the host readout")
 	}
-	if c.Readout("ALPHA") == "" {
+	if c.Readout("600519") == "" {
 		t.Fatal("Readout replaces the hidden header")
 	}
 }
@@ -345,7 +345,7 @@ func TestSetIndicatorsAndPeriodFootguns(t *testing.T) {
 	if c.Bars() != before {
 		t.Fatalf("failed SetSource changed bars %d -> %d", before, c.Bars())
 	}
-	if _, ok := c.Bar("ALPHA", 0); !ok {
+	if _, ok := c.Bar("600519", 0); !ok {
 		t.Fatal("failed SetSource dropped the previous series")
 	}
 }
@@ -360,7 +360,7 @@ func (failSource) GetBars(kline.BarRequest) ([]kline.Candle, bool, error) {
 func TestHostIndicatorAndSubPane(t *testing.T) {
 	registerHostSpecs(t)
 	c := kline.NewChart(kline.ChartOptions{
-		Symbols:    []string{"ALPHA"},
+		Symbols:    []string{"600519"},
 		Indicators: []string{"HOST", "HOSTOSC"},
 	})
 	if !c.IndicatorOn("HOST") || !c.IndicatorOn("HOSTOSC") || c.IndicatorOn("MA") {
@@ -394,7 +394,7 @@ func TestHostIndicatorAndSubPane(t *testing.T) {
 
 func TestSyncIndicatorsPicksUpLateRegistration(t *testing.T) {
 	t.Cleanup(func() { kline.Unregister("HOSTLATE") })
-	c := kline.NewChart(kline.ChartOptions{Symbols: []string{"ALPHA"}, Indicators: []string{}})
+	c := kline.NewChart(kline.ChartOptions{Symbols: []string{"600519"}, Indicators: []string{}})
 	// A ui.Toggle bound before the sync keeps driving the chart after it.
 	ma := c.IndicatorEnabled("MA")
 	had := false
@@ -477,7 +477,7 @@ func TestHostOverlayTool(t *testing.T) {
 	}); err == nil {
 		t.Fatal("hline is reserved")
 	}
-	c := kline.NewChart(kline.ChartOptions{Symbols: []string{"ALPHA"}, Indicators: []string{}})
+	c := kline.NewChart(kline.ChartOptions{Symbols: []string{"600519"}, Indicators: []string{}})
 	if err := c.SetTool("hostmark"); err != nil {
 		t.Fatal(err)
 	}
@@ -491,7 +491,7 @@ func TestHostOverlayTool(t *testing.T) {
 		t.Fatal("failed SetTool changed the tool")
 	}
 	tt := ui.NewTester(c.View, 960, 720)
-	box, ok := tt.Find("ALPHA chart")
+	box, ok := tt.Find("600519 chart")
 	if !ok {
 		t.Fatal("plot missing")
 	}
@@ -509,27 +509,27 @@ func TestHostOverlayTool(t *testing.T) {
 
 func TestHostLiveSourceAppendsBar(t *testing.T) {
 	period := kline.Period{Span: 1, Unit: kline.UnitHour}
-	feed := newHostFeed(period, "ALPHA")
+	feed := newHostFeed(period, "600519")
 	c := kline.NewChart(kline.ChartOptions{
 		Source:     feed,
-		Symbols:    []string{"ALPHA"},
+		Symbols:    []string{"600519"},
 		Period:     period,
 		Indicators: []string{},
 	})
 	tt := ui.NewTester(c.View, 960, 720)
 	before := c.Bars()
-	last, ok := c.Bar("ALPHA", before-1)
+	last, ok := c.Bar("600519", before-1)
 	if !ok {
 		t.Fatal("missing last bar")
 	}
-	feed.Push("ALPHA", kline.Candle{
+	feed.Push("600519", kline.Candle{
 		Time: last.Time.Add(time.Hour), Open: last.Close, High: last.Close + 1, Low: last.Close - 1, Close: last.Close + 0.5, Volume: 10,
 	})
 	tt.Frame()
 	if c.Bars() != before+1 {
 		t.Fatalf("bars %d, was %d", c.Bars(), before)
 	}
-	got, ok := c.Bar("ALPHA", c.Bars()-1)
+	got, ok := c.Bar("600519", c.Bars()-1)
 	if !ok || !got.Time.Equal(last.Time.Add(time.Hour)) {
 		t.Fatalf("last bar %+v", got)
 	}
@@ -537,11 +537,11 @@ func TestHostLiveSourceAppendsBar(t *testing.T) {
 
 func TestBuiltInToolsStillPanAndDraw(t *testing.T) {
 	c := kline.NewChart(kline.ChartOptions{
-		Symbols:    []string{"ALPHA", "BETA"},
+		Symbols:    []string{"600519", "000001"},
 		Indicators: []string{"MA", "MACD"},
 	})
 	tt := ui.NewTester(c.View, 960, 720)
-	box, ok := tt.Find("ALPHA chart")
+	box, ok := tt.Find("600519 chart")
 	if !ok {
 		t.Fatal("plot missing")
 	}

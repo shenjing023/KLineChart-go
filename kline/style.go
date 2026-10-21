@@ -65,9 +65,10 @@ func DarkDefault() Style { return StyleFrom(ui.DarkTheme()) }
 // LightDefault is the chart style on MyGo's light theme.
 func LightDefault() Style { return StyleFrom(ui.LightTheme()) }
 
-// StyleFrom builds colors that stay readable on the window theme.
-// Rising bars are green and falling bars are red, matching KLineChart's
-// default, on both light and dark themes. A nil theme is DarkDefault.
+// StyleFrom builds colors that stay readable on the window theme. The
+// defaults follow mainland China market conventions: rising bars are
+// red and falling bars are green on both light and dark themes. A nil
+// theme is DarkDefault.
 func StyleFrom(t *ui.Theme) Style {
 	if t == nil {
 		t = ui.DarkTheme()
@@ -79,14 +80,14 @@ func StyleFrom(t *ui.Theme) Style {
 	if labelText == (ui.Color{}) {
 		labelText = t.Background
 	}
-	up, down := ui.RGB(38, 166, 154), ui.RGB(239, 83, 80)
+	up, down := ui.RGB(239, 83, 80), ui.RGB(38, 166, 154)
 	return Style{
 		Up:         up,
 		Down:       down,
 		Buy:        up,
 		Sell:       down,
-		LimitUp:    ui.RGB(0, 230, 118),
-		LimitDown:  ui.RGB(255, 59, 48),
+		LimitUp:    ui.RGB(255, 59, 48),
+		LimitDown:  ui.RGB(0, 230, 118),
 		MA5:        t.Accent,
 		MA20:       t.Warning,
 		MACDDIF:    t.Accent,

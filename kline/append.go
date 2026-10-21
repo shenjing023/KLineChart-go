@@ -17,7 +17,20 @@ var ErrBarTime = errors.New("kline: bar time is not at the series edge")
 // A view sitting on the right edge follows the new bar. A panned view
 // keeps its offset. An empty chart is treated as already at the edge,
 // so the first bar is fitted once the plot has a width.
+//
+// While a replay is attached it returns ErrReplayActive and changes
+// nothing: only the replay may add a bar, because a bar past its cursor
+// would be a lookahead.
 func (a *Chart) AppendBar(symbol string, bar Candle) error {
+	if a != nil && a.replay != nil {
+		return ErrReplayActive
+	}
+	return a.appendBar(symbol, bar)
+}
+
+// appendBar is AppendBar without the replay fence. Replay reveals bars
+// through it.
+func (a *Chart) appendBar(symbol string, bar Candle) error {
 	if a == nil {
 		return fmt.Errorf("%w: %s", ErrUnknownSymbol, symbol)
 	}
@@ -41,7 +54,7 @@ func (a *Chart) AppendBar(symbol string, bar Candle) error {
 	}
 	before := a.bars()
 	pinned := a.pinnedRight()
-	s.held = append(s.held, bar)
+	a.hold(s, bar)
 	if !a.promote() {
 		return nil
 	}
@@ -55,7 +68,20 @@ func (a *Chart) AppendBar(symbol string, bar Candle) error {
 // viewport does not move: the series length is unchanged. A bar still
 // held for the other symbols is revised there and does not touch the
 // indicators yet.
+//
+// While a replay is attached it returns ErrReplayActive and changes
+// nothing: a revision could replace a revealed bar with a value from
+// the hidden suffix.
 func (a *Chart) UpdateLast(symbol string, bar Candle) error {
+	if a != nil && a.replay != nil {
+		return ErrReplayActive
+	}
+	return a.updateLast(symbol, bar)
+}
+
+// updateLast is UpdateLast without the replay fence. Replay reveals an
+// aggregate bar through it.
+func (a *Chart) updateLast(symbol string, bar Candle) error {
 	if a == nil {
 		return fmt.Errorf("%w: %s", ErrUnknownSymbol, symbol)
 	}
@@ -96,7 +122,7 @@ func (a *Chart) afterPromote(before int, pinned bool) {
 		} else {
 			a.recalc(&a.panes[j])
 		}
-		a.reindexMarks(&a.panes[j])
+		a.reindexMarks(&a.panes[j], a.markerView())
 	}
 	a.followEdge(before, pinned)
 }

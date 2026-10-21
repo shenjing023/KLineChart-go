@@ -56,6 +56,16 @@ type tradeMark struct {
 	text  string
 }
 
+// markerView is the period whose candles markers are mapped onto and,
+// during replay, the exclusive end of the revealed base interval.
+// bounded distinguishes an empty replay from a normal chart, where a
+// zero until means there is no cutoff.
+type markerView struct {
+	period  Period
+	until   time.Time
+	bounded bool
+}
+
 const (
 	markerH      float32 = 8
 	markerW      float32 = 8
@@ -81,7 +91,7 @@ func (a *Chart) SetMarkers(symbol string, in []Marker) error {
 		marks[j] = tradeMark{m: m, text: markerText(m)}
 	}
 	a.panes[i].marks = marks
-	a.reindexMarks(&a.panes[i])
+	a.reindexMarks(&a.panes[i], a.markerView())
 	return nil
 }
 
@@ -95,7 +105,7 @@ func (a *Chart) AppendMarker(symbol string, m Marker) error {
 		return fmt.Errorf("%w: %d", ErrUnknownMarker, m.Side)
 	}
 	a.panes[i].marks = append(a.panes[i].marks, tradeMark{m: m, text: markerText(m)})
-	a.reindexMarks(&a.panes[i])
+	a.reindexMarks(&a.panes[i], a.markerView())
 	return nil
 }
 
@@ -141,32 +151,51 @@ func markerText(m Marker) string {
 	return label
 }
 
-// reindexMarks maps each marker onto the bar that contains its time and
-// stacks markers that share a bar and a side. It writes the existing
-// slice and does not allocate.
-func (a *Chart) reindexMarks(s *series) {
+// markKey identifies one stack: a bar and a side. Markers with the same
+// key step away from the candle in insertion order.
+type markKey struct {
+	bar  int
+	side MarkerSide
+}
+
+// markerView is the mapping the chart currently exposes. A replay
+// bounds it by the next hidden base open, so a partial aggregate bucket
+// cannot reveal a marker whose base bar is still private.
+func (a *Chart) markerView() markerView {
+	view := markerView{period: a.period}
+	if a.replay != nil {
+		view = a.replay.markerView()
+	}
+	return view
+}
+
+// reindexMarks maps each visible marker onto the bar that contains its
+// time and stacks markers that share a bar and a side. It writes the
+// existing slice. The stack pass is one walk with a small map, so a bar
+// carrying thousands of trades does not rescan the prefix for every
+// marker.
+func (a *Chart) reindexMarks(s *series, view markerView) {
 	if s == nil {
 		return
 	}
-	step, err := a.period.Duration()
+	step, err := view.period.Duration()
 	if err != nil {
 		step = 0
 	}
+	seen := make(map[markKey]int, len(s.marks))
 	for i := range s.marks {
-		s.marks[i].bar = barContaining(s.candles, s.marks[i].m.Time, step)
+		s.marks[i].bar = -1
 		s.marks[i].stack = 0
-	}
-	for i := range s.marks {
+		if view.bounded && !s.marks[i].m.Time.Before(view.until) {
+			continue
+		}
+		s.marks[i].bar = barContaining(s.candles, s.marks[i].m.Time, step)
 		if s.marks[i].bar < 0 {
 			continue
 		}
-		n := 0
-		for j := 0; j < i; j++ {
-			if s.marks[j].bar == s.marks[i].bar && s.marks[j].m.Side == s.marks[i].m.Side {
-				n++
-			}
-		}
-		s.marks[i].stack = n
+		key := markKey{bar: s.marks[i].bar, side: s.marks[i].m.Side}
+		s.marks[i].stack = seen[key]
+		seen[key]++
 	}
 }
 
@@ -241,43 +270,45 @@ func (a *Chart) drawMarkers(p *ui.Painter, plot ui.Rect, pane int, cs []Candle, 
 	if last < first {
 		return
 	}
-	for i := range marks {
-		mk := &marks[i]
-		if mk.bar < first || mk.bar > last || mk.bar >= len(cs) {
-			continue
-		}
-		c := cs[mk.bar]
-		low, high := c.Low*factor, c.High*factor
-		cx := plot.X + float32(vp.BarLeft(mk.bar)+vp.BarWidth/2)
-		if cx < plot.X || cx > plot.X+plot.W {
-			continue
-		}
-		yLow := chart.Y(plot, scale.At(low))
-		yHigh := chart.Y(plot, scale.At(high))
-		color := style.Buy
-		if mk.m.Side == SideSell {
-			color = style.Sell
-		}
-		tipY := markerTipY(mk.m.Side, yLow, yHigh, mk.stack)
-		baseY := tipY + markerH
-		if mk.m.Side == SideSell {
-			baseY = tipY - markerH
-		}
-		path := a.markPath.Reset()
-		path.MoveTo(cx, tipY)
-		path.LineTo(cx-markerW/2, baseY)
-		path.LineTo(cx+markerW/2, baseY)
-		path.Close()
-		p.FillPath(path, color)
-		mid := (tipY + baseY) / 2
-		p.Text(cx+markerW/2+2, mid-5, mk.text, 10, color)
-		if markerTick(*mk) {
-			y := markerTickY(plot, scale, *mk, factor)
-			if y >= plot.Y && y <= plot.Y+plot.H {
-				p.Line(cx-4, y, cx+4, y, 2, color)
+	p.Clip(plot, 0, func() {
+		for i := range marks {
+			mk := &marks[i]
+			if mk.bar < first || mk.bar > last || mk.bar >= len(cs) {
+				continue
+			}
+			c := cs[mk.bar]
+			low, high := c.Low*factor, c.High*factor
+			cx := plot.X + float32(vp.BarLeft(mk.bar)+vp.BarWidth/2)
+			if cx < plot.X || cx > plot.X+plot.W {
+				continue
+			}
+			yLow := chart.Y(plot, scale.At(low))
+			yHigh := chart.Y(plot, scale.At(high))
+			color := style.Buy
+			if mk.m.Side == SideSell {
+				color = style.Sell
+			}
+			tipY := markerTipY(mk.m.Side, yLow, yHigh, mk.stack)
+			baseY := tipY + markerH
+			if mk.m.Side == SideSell {
+				baseY = tipY - markerH
+			}
+			path := a.markPath.Reset()
+			path.MoveTo(cx, tipY)
+			path.LineTo(cx-markerW/2, baseY)
+			path.LineTo(cx+markerW/2, baseY)
+			path.Close()
+			p.FillPath(path, color)
+			mid := (tipY + baseY) / 2
+			p.Text(cx+markerW/2+2, mid-5, mk.text, 10, color)
+			if markerTick(*mk) {
+				y := markerTickY(plot, scale, *mk, factor)
+				if y >= plot.Y && y <= plot.Y+plot.H {
+					p.Line(cx-4, y, cx+4, y, 2, color)
+				}
 			}
 		}
-	}
+	})
 }
 
 // markerReadout is the header text for markers on bar idx. It is empty

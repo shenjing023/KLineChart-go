@@ -25,7 +25,7 @@ var (
 
 func main() {
 	chart := kline.NewChart(kline.ChartOptions{
-		Symbols:    []string{"ALPHA", "BETA"},
+		Symbols:    []string{"600519", "000001"},
 		Period:     kline.Period{Span: 1, Unit: kline.UnitHour},
 		Layout:     kline.LayoutStack,
 		Indicators: []string{"MA", "MACD"},
@@ -125,7 +125,7 @@ func demoView(c *ui.Context, chart *kline.Chart) {
 			}
 			if chart.Layout() == kline.LayoutOverlay {
 				ui.Text(c, "idx 100").FontSize(12).TextColor(t.TextMuted)
-				ui.Text(c, "BETA line").FontSize(12).TextColor(style.Compare)
+				ui.Text(c, "000001 line").FontSize(12).TextColor(style.Compare)
 			}
 			for _, choice := range toolChoices {
 				var b ui.Element
@@ -197,7 +197,7 @@ func demoView(c *ui.Context, chart *kline.Chart) {
 		})
 		hint := "Pan drags both panes. H-Line, Segment, and Fib draw on the pane you click, and pan is off while a draw tool is selected. Escape cancels a line that is still waiting for its second point. Delete removes the selected line. Right-click removes the line under the pointer, or cancels that unfinished line. Replay hides the series and reveals it one bar at a time."
 		if chart.Layout() == kline.LayoutOverlay {
-			hint = "Overlay indexes both symbols to 100 at the first visible bar where both closes are positive. ALPHA stays candles. BETA is the close line. Volume and MACD are ALPHA only, and drawings stay on ALPHA. Pan and the wheel still move the shared viewport."
+			hint = "Overlay indexes both symbols to 100 at the first visible bar where both closes are positive. 600519 stays candles. 000001 is the close line. Volume and MACD are 600519 only, and drawings stay on 600519. Pan and the wheel still move the shared viewport."
 		}
 		ui.Text(c, hint).Padding(4, 14, 6, 14).FontSize(12).TextColor(t.TextMuted)
 		ui.Column(c).Grow(1).WidthPercent(100).Children(func() {
@@ -243,16 +243,16 @@ var layoutChoices = []struct {
 }
 
 // colorPresets recolor candle bodies and the trade markers. Classic is
-// the default green-up red-down pair. US swaps them. Contrast is a
-// high-contrast pair that stays off the plot background. Limit colors
-// are the brighter step of the same pair. Hollow and the limit percent
-// are left as they are.
+// the default red-up green-down A-share pair. US swaps them. Contrast
+// is a high-contrast pair that stays off the plot background. Limit
+// colors are the brighter step of the same pair. Hollow and the limit
+// percent are left as they are.
 var colorPresets = []struct {
 	label                        string
 	up, down, limitUp, limitDown ui.Color
 }{
-	{"Classic", ui.RGB(38, 166, 154), ui.RGB(239, 83, 80), ui.RGB(0, 230, 118), ui.RGB(255, 59, 48)},
-	{"US", ui.RGB(239, 83, 80), ui.RGB(38, 166, 154), ui.RGB(255, 59, 48), ui.RGB(0, 230, 118)},
+	{"Classic", ui.RGB(239, 83, 80), ui.RGB(38, 166, 154), ui.RGB(255, 59, 48), ui.RGB(0, 230, 118)},
+	{"US", ui.RGB(38, 166, 154), ui.RGB(239, 83, 80), ui.RGB(0, 230, 118), ui.RGB(255, 59, 48)},
 	{"Contrast", ui.RGB(255, 214, 0), ui.RGB(56, 189, 248), ui.RGB(255, 255, 255), ui.RGB(168, 85, 247)},
 }
 

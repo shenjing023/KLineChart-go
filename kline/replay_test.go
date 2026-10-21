@@ -190,7 +190,7 @@ func specNew(ind Indicator) Indicator {
 
 func TestAppendBarFollowsOnlyTheRightEdge(t *testing.T) {
 	cs := Generate(180, 3)
-	c, _ := replayChart(t, []string{"ALPHA"}, map[string][]Candle{"ALPHA": cs}, LayoutStack)
+	c, _ := replayChart(t, []string{"600519"}, map[string][]Candle{"600519": cs}, LayoutStack)
 	tt := ui.NewTester(c.View, 960, 640)
 	tt.Frame()
 	if !c.pinnedRight() {
@@ -202,7 +202,7 @@ func TestAppendBarFollowsOnlyTheRightEdge(t *testing.T) {
 	if next.High < next.Close {
 		next.High = next.Close
 	}
-	if err := c.AppendBar("ALPHA", next); err != nil {
+	if err := c.AppendBar("600519", next); err != nil {
 		t.Fatal(err)
 	}
 	if c.Bars() != len(cs)+1 {
@@ -220,7 +220,7 @@ func TestAppendBarFollowsOnlyTheRightEdge(t *testing.T) {
 	}
 	next.Time = next.Time.Add(time.Hour)
 	next.Close += 1
-	if err := c.AppendBar("ALPHA", next); err != nil {
+	if err := c.AppendBar("600519", next); err != nil {
 		t.Fatal(err)
 	}
 	if math.Abs(c.vp.Offset-stayed) > 1e-9 {
@@ -233,13 +233,13 @@ func TestAppendBarFollowsOnlyTheRightEdge(t *testing.T) {
 		revised.Low = revised.Close
 	}
 	off := c.vp.Offset
-	if err := c.UpdateLast("ALPHA", revised); err != nil {
+	if err := c.UpdateLast("600519", revised); err != nil {
 		t.Fatal(err)
 	}
 	if c.Bars() != len(cs)+2 || math.Abs(c.vp.Offset-off) > 1e-9 {
 		t.Fatalf("update last bars %d offset %v, want %d and %v", c.Bars(), c.vp.Offset, len(cs)+2, off)
 	}
-	if err := c.AppendBar("ALPHA", revised); !errors.Is(err, ErrBarTime) {
+	if err := c.AppendBar("600519", revised); !errors.Is(err, ErrBarTime) {
 		t.Fatalf("same open time: %v", err)
 	}
 	if err := c.AppendBar("NOPE", next); !errors.Is(err, ErrUnknownSymbol) {
@@ -250,19 +250,19 @@ func TestAppendBarFollowsOnlyTheRightEdge(t *testing.T) {
 func TestAppendBarHoldsUntilEverySymbol(t *testing.T) {
 	a := Generate(40, 1)
 	b := Generate(40, 2)
-	c, _ := replayChart(t, []string{"ALPHA", "BETA"}, map[string][]Candle{"ALPHA": a, "BETA": b}, LayoutStack)
+	c, _ := replayChart(t, []string{"600519", "000001"}, map[string][]Candle{"600519": a, "000001": b}, LayoutStack)
 	n := c.Bars()
 	nextA := a[len(a)-1]
 	nextA.Time = nextA.Time.Add(time.Hour)
 	nextB := nextA
 	nextB.Close = b[len(b)-1].Close
-	if err := c.AppendBar("ALPHA", nextA); err != nil {
+	if err := c.AppendBar("600519", nextA); err != nil {
 		t.Fatal(err)
 	}
 	if c.Bars() != n {
 		t.Fatalf("one symbol appended, bars %d want %d", c.Bars(), n)
 	}
-	if err := c.AppendBar("BETA", nextB); err != nil {
+	if err := c.AppendBar("000001", nextB); err != nil {
 		t.Fatal(err)
 	}
 	if c.Bars() != n+1 {
@@ -275,7 +275,7 @@ func TestAppendBarHoldsUntilEverySymbol(t *testing.T) {
 
 func TestAppendBarAmortizedAlloc(t *testing.T) {
 	cs := Generate(8000, 9)
-	c, _ := replayChart(t, []string{"ALPHA"}, map[string][]Candle{"ALPHA": cs}, LayoutStack)
+	c, _ := replayChart(t, []string{"600519"}, map[string][]Candle{"600519": cs}, LayoutStack)
 	tt := ui.NewTester(c.View, 960, 640)
 	tt.Frame()
 	if c.Bars() < 1000 {
@@ -290,7 +290,7 @@ func TestAppendBarAmortizedAlloc(t *testing.T) {
 		for i := 0; i < b.N; i++ {
 			bar.Time = bar.Time.Add(time.Hour)
 			bar.Close += 0.01
-			if err := c.AppendBar("ALPHA", bar); err != nil {
+			if err := c.AppendBar("600519", bar); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -315,9 +315,9 @@ func TestReplayMatchesLoadedPrefix(t *testing.T) {
 		cs[100].Volume = 1e12
 	}
 	const n = 80
-	full := map[string][]Candle{"ALPHA": fullA, "BETA": fullB}
-	prefix := map[string][]Candle{"ALPHA": cloneCandles(fullA[:n]), "BETA": cloneCandles(fullB[:n])}
-	blind, _ := replayChart(t, []string{"ALPHA", "BETA"}, full, LayoutStack)
+	full := map[string][]Candle{"600519": fullA, "000001": fullB}
+	prefix := map[string][]Candle{"600519": cloneCandles(fullA[:n]), "000001": cloneCandles(fullB[:n])}
+	blind, _ := replayChart(t, []string{"600519", "000001"}, full, LayoutStack)
 	replay, err := StartReplay(blind, full)
 	if err != nil {
 		t.Fatal(err)
@@ -325,14 +325,14 @@ func TestReplayMatchesLoadedPrefix(t *testing.T) {
 	if err := replay.SeekIndex(n); err != nil {
 		t.Fatal(err)
 	}
-	plain, _ := replayChart(t, []string{"ALPHA", "BETA"}, prefix, LayoutStack)
+	plain, _ := replayChart(t, []string{"600519", "000001"}, prefix, LayoutStack)
 	sameIndicators(t, blind, plain)
 	if hi := mustDomainHi(blind); hi > 1e6 {
 		t.Fatalf("price domain saw a hidden high: %v", hi)
 	}
 	_ = ui.NewTester(blind.View, 960, 720)
 	_ = ui.NewTester(plain.View, 960, 720)
-	for _, sym := range []string{"ALPHA", "BETA"} {
+	for _, sym := range []string{"600519", "000001"} {
 		gLo, gHi, gVol := visibleSpan(blind, sym)
 		wLo, wHi, wVol := visibleSpan(plain, sym)
 		if !nearVal(gLo, wLo) || !nearVal(gHi, wHi) || !nearVal(gVol, wVol) {
@@ -341,10 +341,10 @@ func TestReplayMatchesLoadedPrefix(t *testing.T) {
 	}
 	blind.crossIndex = 40
 	plain.crossIndex = 40
-	if blind.Readout("ALPHA") != plain.Readout("ALPHA") {
-		t.Fatalf("readout %q\nprefix %q", blind.Readout("ALPHA"), plain.Readout("ALPHA"))
+	if blind.Readout("600519") != plain.Readout("600519") {
+		t.Fatalf("readout %q\nprefix %q", blind.Readout("600519"), plain.Readout("600519"))
 	}
-	if _, ok := blind.Bar("ALPHA", n); ok {
+	if _, ok := blind.Bar("600519", n); ok {
 		t.Fatal("bar at the cursor is still hidden")
 	}
 	for _, cs := range [][]Candle{blind.panes[0].candles, blind.panes[1].candles} {
@@ -373,8 +373,8 @@ func visibleSpan(c *Chart, sym string) (lo, hi, vol float64) {
 func TestReplayStepSeekAndBack(t *testing.T) {
 	fullA := Generate(70, 4)
 	fullB := Generate(70, 6)
-	full := map[string][]Candle{"ALPHA": fullA, "BETA": fullB}
-	c, _ := replayChart(t, []string{"ALPHA", "BETA"}, full, LayoutStack)
+	full := map[string][]Candle{"600519": fullA, "000001": fullB}
+	c, _ := replayChart(t, []string{"600519", "000001"}, full, LayoutStack)
 	replay, err := StartReplay(c, full)
 	if err != nil {
 		t.Fatal(err)
@@ -413,7 +413,7 @@ func TestReplayStepSeekAndBack(t *testing.T) {
 	if replay.Cursor() != 33 || c.Bars() != 33 {
 		t.Fatalf("back cursor %d bars %d", replay.Cursor(), c.Bars())
 	}
-	stepped, _ := replayChart(t, []string{"ALPHA", "BETA"}, full, LayoutStack)
+	stepped, _ := replayChart(t, []string{"600519", "000001"}, full, LayoutStack)
 	other, err := StartReplay(stepped, full)
 	if err != nil {
 		t.Fatal(err)
@@ -422,8 +422,8 @@ func TestReplayStepSeekAndBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	sameIndicators(t, c, stepped)
-	prefix := map[string][]Candle{"ALPHA": cloneCandles(fullA[:33]), "BETA": cloneCandles(fullB[:33])}
-	plain, _ := replayChart(t, []string{"ALPHA", "BETA"}, prefix, LayoutStack)
+	prefix := map[string][]Candle{"600519": cloneCandles(fullA[:33]), "000001": cloneCandles(fullB[:33])}
+	plain, _ := replayChart(t, []string{"600519", "000001"}, prefix, LayoutStack)
 	sameIndicators(t, c, plain)
 	if len(revealed) == 0 || !revealed[0].Equal(fullA[0].Time) {
 		t.Fatalf("first event %v", revealed)
@@ -449,8 +449,8 @@ func TestReplayPartialHigherPeriod(t *testing.T) {
 		{Time: hourAt(2024, 3, 1, 11), Open: 3, High: 3.5, Low: 2.5, Close: 3.2, Volume: 40},
 		{Time: hourAt(2024, 3, 1, 12), Open: 3.2, High: 8, Low: 3, Close: 7, Volume: 50},
 	}
-	bars := map[string][]Candle{"ALPHA": base, "BETA": cloneCandles(base)}
-	c, src := replayChart(t, []string{"ALPHA", "BETA"}, bars, LayoutStack)
+	bars := map[string][]Candle{"600519": base, "000001": cloneCandles(base)}
+	c, src := replayChart(t, []string{"600519", "000001"}, bars, LayoutStack)
 	replay, err := StartReplay(c, bars)
 	if err != nil {
 		t.Fatal(err)
@@ -491,8 +491,8 @@ func TestReplayPartialHigherPeriod(t *testing.T) {
 	}
 	// 09:30 sits in the 08:00 4h bucket.
 	late := []Candle{{Time: time.Date(2024, 3, 1, 9, 30, 0, 0, time.UTC), Open: 2, High: 3, Low: 1, Close: 2.5, Volume: 4}}
-	lateBars := map[string][]Candle{"ALPHA": late, "BETA": cloneCandles(late)}
-	lateChart, _ := replayChart(t, []string{"ALPHA", "BETA"}, lateBars, LayoutStack)
+	lateBars := map[string][]Candle{"600519": late, "000001": cloneCandles(late)}
+	lateChart, _ := replayChart(t, []string{"600519", "000001"}, lateBars, LayoutStack)
 	lateReplay, err := StartReplay(lateChart, lateBars)
 	if err != nil {
 		t.Fatal(err)
@@ -510,8 +510,8 @@ func TestReplayPartialHigherPeriod(t *testing.T) {
 
 func TestReplayPlayPauseUsesClock(t *testing.T) {
 	cs := Generate(30, 8)
-	bars := map[string][]Candle{"ALPHA": cs}
-	c, _ := replayChart(t, []string{"ALPHA"}, bars, LayoutStack)
+	bars := map[string][]Candle{"600519": cs}
+	c, _ := replayChart(t, []string{"600519"}, bars, LayoutStack)
 	replay, err := StartReplay(c, bars)
 	if err != nil {
 		t.Fatal(err)
@@ -551,15 +551,15 @@ func TestReplayPanesMarkersDrawingsAndLiveFence(t *testing.T) {
 	fullB[40].Close = 5000
 	period := Period{Span: 1, Unit: UnitHour}
 	src := &StubLiveSource{}
-	if err := src.SetBars("ALPHA", period, fullA); err != nil {
+	if err := src.SetBars("600519", period, fullA); err != nil {
 		t.Fatal(err)
 	}
-	if err := src.SetBars("BETA", period, fullB); err != nil {
+	if err := src.SetBars("000001", period, fullB); err != nil {
 		t.Fatal(err)
 	}
 	c := NewChart(ChartOptions{
 		Source:     src,
-		Symbols:    []string{"ALPHA", "BETA"},
+		Symbols:    []string{"600519", "000001"},
 		Period:     period,
 		Layout:     LayoutOverlay,
 		Indicators: []string{"MA", "MACD", "BOLL"},
@@ -567,22 +567,22 @@ func TestReplayPanesMarkersDrawingsAndLiveFence(t *testing.T) {
 	if err := c.LoadError(); err != nil {
 		t.Fatal(err)
 	}
-	replay, err := StartReplay(c, map[string][]Candle{"ALPHA": fullA, "BETA": fullB})
+	replay, err := StartReplay(c, map[string][]Candle{"600519": fullA, "000001": fullB})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := replay.SeekIndex(20); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.SetMarkers("ALPHA", []Marker{{Time: fullA[30].Time, Side: SideBuy, Qty: 1}}); err != nil {
+	if err := c.SetMarkers("600519", []Marker{{Time: fullA[30].Time, Side: SideBuy, Qty: 1}}); err != nil {
 		t.Fatal(err)
 	}
 	if c.panes[0].marks[0].bar != -1 {
 		t.Fatalf("future marker bar %d", c.panes[0].marks[0].bar)
 	}
 	c.crossIndex = c.Bars() - 1
-	if strings.Contains(c.Readout("ALPHA"), "B") {
-		t.Fatalf("readout leaked a future marker: %s", c.Readout("ALPHA"))
+	if strings.Contains(c.Readout("600519"), "B") {
+		t.Fatalf("readout leaked a future marker: %s", c.Readout("600519"))
 	}
 	if err := replay.SeekIndex(31); err != nil {
 		t.Fatal(err)
@@ -591,8 +591,8 @@ func TestReplayPanesMarkersDrawingsAndLiveFence(t *testing.T) {
 		t.Fatalf("marker bar %d", c.panes[0].marks[0].bar)
 	}
 	c.crossIndex = 30
-	if !strings.Contains(c.Readout("ALPHA"), "B") {
-		t.Fatalf("readout %s", c.Readout("ALPHA"))
+	if !strings.Contains(c.Readout("600519"), "B") {
+		t.Fatalf("readout %s", c.Readout("600519"))
 	}
 	c.panes[0].overlays.Add(OverlaySegment, Point{BarIndex: 4, Price: 10}, Point{BarIndex: 28, Price: 12})
 	if err := replay.SeekIndex(6); err != nil {
@@ -617,8 +617,8 @@ func TestReplayPanesMarkersDrawingsAndLiveFence(t *testing.T) {
 	pushed := fullA[len(fullA)-1]
 	pushed.Time = pushed.Time.Add(time.Hour)
 	pushed.Close = 99999
-	src.Push("ALPHA", period, pushed)
-	src.Push("BETA", period, pushed)
+	src.Push("600519", period, pushed)
+	src.Push("000001", period, pushed)
 	if c.Bars() != replay.Cursor() {
 		t.Fatalf("live push changed replay bars to %d, cursor %d", c.Bars(), replay.Cursor())
 	}
@@ -644,10 +644,201 @@ func TestReplayPanesMarkersDrawingsAndLiveFence(t *testing.T) {
 	}
 }
 
+func TestAppendBarRejectedDuringReplay(t *testing.T) {
+	base := Generate(60, 7)
+	c, _ := replayChart(t, []string{"600519"}, map[string][]Candle{"600519": base}, LayoutStack)
+	replay, err := StartReplay(c, map[string][]Candle{"600519": base})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replay.SeekIndex(5); err != nil {
+		t.Fatal(err)
+	}
+	for _, bar := range []Candle{
+		base[40],                             // a revealed-suffix bar
+		{Time: base[59].Time.Add(time.Hour)}, // past the end of the series
+	} {
+		if err := c.AppendBar("600519", bar); !errors.Is(err, ErrReplayActive) {
+			t.Fatalf("AppendBar(%s) = %v, want ErrReplayActive", bar.Time, err)
+		}
+	}
+	if c.Bars() != 5 || replay.Cursor() != 5 {
+		t.Fatalf("bars %d cursor %d, want 5 and 5", c.Bars(), replay.Cursor())
+	}
+	if err := replay.Step(1); err != nil {
+		t.Fatalf("the replay is wedged: %v", err)
+	}
+	if c.Bars() != 6 || replay.Cursor() != 6 {
+		t.Fatalf("step after a refused append: bars %d cursor %d", c.Bars(), replay.Cursor())
+	}
+	if !c.panes[0].candles[5].Time.Equal(base[5].Time) {
+		t.Fatalf("bar 5 is %s, want the revealed %s", c.panes[0].candles[5].Time, base[5].Time)
+	}
+}
+
+func TestUpdateLastRejectedDuringReplay(t *testing.T) {
+	base := Generate(60, 7)
+	c, _ := replayChart(t, []string{"600519"}, map[string][]Candle{"600519": base}, LayoutStack)
+	replay, err := StartReplay(c, map[string][]Candle{"600519": base})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replay.SeekIndex(5); err != nil {
+		t.Fatal(err)
+	}
+	revealed := c.panes[0].candles[4].Close
+	hidden := base[40]
+	hidden.Time = c.panes[0].candles[4].Time
+	if err := c.UpdateLast("600519", hidden); !errors.Is(err, ErrReplayActive) {
+		t.Fatalf("UpdateLast = %v, want ErrReplayActive", err)
+	}
+	if got := c.panes[0].candles[4].Close; got != revealed {
+		t.Fatalf("a hidden value replaced the revealed close: %v -> %v", revealed, got)
+	}
+}
+
+// A replay appends through the private path, so the public fence must not
+// stop it revealing bars.
+func TestReplayRevealsThroughPrivateAppend(t *testing.T) {
+	base := Generate(40, 7)
+	c, _ := replayChart(t, []string{"600519"}, map[string][]Candle{"600519": base}, LayoutStack)
+	replay, err := StartReplay(c, map[string][]Candle{"600519": base})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 10; i++ {
+		if err := replay.Step(1); err != nil {
+			t.Fatalf("step %d: %v", i, err)
+		}
+		if c.Bars() != i {
+			t.Fatalf("step %d: bars %d", i, c.Bars())
+		}
+	}
+	sameBars(t, c.panes[0].candles, base[:10])
+	if err := replay.StepBack(3); err != nil {
+		t.Fatal(err)
+	}
+	sameBars(t, c.panes[0].candles, base[:7])
+}
+
+// Playback must stop when a reveal cannot happen, or View asks for frames
+// forever on a replay that can never advance.
+func TestReplayTickStopsWhenRevealFails(t *testing.T) {
+	base := Generate(60, 7)
+	c, _ := replayChart(t, []string{"600519"}, map[string][]Candle{"600519": base}, LayoutStack)
+	replay, err := StartReplay(c, map[string][]Candle{"600519": base})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replay.SeekIndex(5); err != nil {
+		t.Fatal(err)
+	}
+	// Corrupt the edge behind the chart's back, the way a stray writer
+	// would: the next reveal is refused by AppendBar's edge check.
+	c.panes[0].candles = append(c.panes[0].candles, base[40])
+	now := time.Date(2024, 5, 1, 0, 0, 0, 0, time.UTC)
+	replay.SetClock(func() time.Time { return now })
+	replay.Play(1000)
+	now = now.Add(time.Second) // one second at 1000 bars/s is due
+	before := replay.Cursor()
+	replay.Tick()
+	if replay.Playing() {
+		t.Fatal("Playing stayed true although no bar can be revealed")
+	}
+	if replay.Cursor() != before {
+		t.Fatalf("cursor moved from %d to %d", before, replay.Cursor())
+	}
+}
+
+// Starting a replacement replay from OnBar transfers ownership at the
+// callback boundary. The old batch must not reveal its remaining bars
+// into the replacement's empty prefix.
+func TestReplayCallbackReplacementStopsOldAdvance(t *testing.T) {
+	base := Generate(20, 7)
+	all := map[string][]Candle{"600519": base}
+	c, _ := replayChart(t, []string{"600519"}, all, LayoutStack)
+	old, err := StartReplay(c, all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var replacement *Replay
+	callbacks := 0
+	old.OnBar(func(ReplayBar) {
+		callbacks++
+		old.OnBar(nil)
+		replacement, err = StartReplay(c, all)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err := old.Step(4); !errors.Is(err, ErrReplayClosed) {
+		t.Fatalf("Step after replacement = %v, want ErrReplayClosed", err)
+	}
+	if replacement == nil || c.replay != replacement {
+		t.Fatal("the replacement replay is not attached")
+	}
+	if callbacks != 1 || old.Cursor() != 1 {
+		t.Fatalf("callbacks %d old cursor %d, want 1 and 1", callbacks, old.Cursor())
+	}
+	if replacement.Cursor() != 0 || c.Bars() != 0 {
+		t.Fatalf("replacement cursor %d bars %d, want an empty prefix", replacement.Cursor(), c.Bars())
+	}
+}
+
+// Close from OnBar is terminal for the current batch. The already
+// revealed bar stays visible, but no later bar is written.
+func TestReplayCallbackCloseStopsBatch(t *testing.T) {
+	base := Generate(20, 9)
+	all := map[string][]Candle{"600519": base}
+	c, _ := replayChart(t, []string{"600519"}, all, LayoutStack)
+	r, err := StartReplay(c, all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callbacks := 0
+	r.OnBar(func(ReplayBar) {
+		callbacks++
+		r.Close()
+	})
+	if err := r.Step(5); !errors.Is(err, ErrReplayClosed) {
+		t.Fatalf("Step after callback Close = %v, want ErrReplayClosed", err)
+	}
+	if callbacks != 1 || r.Cursor() != 1 || c.Bars() != 1 {
+		t.Fatalf("callbacks %d cursor %d bars %d, want 1", callbacks, r.Cursor(), c.Bars())
+	}
+	sameBars(t, c.panes[0].candles, base[:1])
+}
+
+// Tick may have several due bars in one frame. Pause from the callback
+// stops the batch at the bar that was just revealed.
+func TestReplayCallbackPauseStopsTick(t *testing.T) {
+	base := Generate(30, 11)
+	all := map[string][]Candle{"600519": base}
+	c, _ := replayChart(t, []string{"600519"}, all, LayoutStack)
+	r, err := StartReplay(c, all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2024, 5, 1, 0, 0, 0, 0, time.UTC)
+	r.SetClock(func() time.Time { return now })
+	r.OnBar(func(ReplayBar) { r.Pause() })
+	r.Play(10)
+	now = now.Add(500 * time.Millisecond)
+	r.Tick()
+	if r.Playing() || r.Cursor() != 1 || c.Bars() != 1 {
+		t.Fatalf("playing %v cursor %d bars %d, want paused at 1", r.Playing(), r.Cursor(), c.Bars())
+	}
+	now = now.Add(time.Second)
+	r.Tick()
+	if r.Cursor() != 1 || c.Bars() != 1 {
+		t.Fatalf("paused Tick advanced to cursor %d bars %d", r.Cursor(), c.Bars())
+	}
+}
+
 func TestReplayStepFollowsEdgeUnlessPanned(t *testing.T) {
 	cs := Generate(160, 15)
-	bars := map[string][]Candle{"ALPHA": cs}
-	c, _ := replayChart(t, []string{"ALPHA"}, bars, LayoutStack)
+	bars := map[string][]Candle{"600519": cs}
+	c, _ := replayChart(t, []string{"600519"}, bars, LayoutStack)
 	replay, err := StartReplay(c, bars)
 	if err != nil {
 		t.Fatal(err)

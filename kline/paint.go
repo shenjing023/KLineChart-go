@@ -3,6 +3,7 @@ package kline
 import (
 	"math"
 	"sort"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/chart"
@@ -89,7 +90,7 @@ func drawPrice(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Vie
 			if ind == nil || ind.PaneKind() != PaneMain {
 				continue
 			}
-			if lp, ok := ind.(LinePlot); ok {
+			if lp, ok := ind.(LinePlot); ok && lp.Series() != nil {
 				drawLinePlot(p, price, lp, vp, yScale)
 				continue
 			}
@@ -120,41 +121,38 @@ type subLayer struct {
 }
 
 func subLayers(panes Panes, inds []Indicator, first, last int) []subLayer {
-	var macd, kdj Indicator
-	var extra []Indicator
+	macdUsed, kdjUsed, extraUsed := false, false, 0
+	var out []subLayer
 	for _, ind := range inds {
 		if ind == nil || ind.PaneKind() != PaneSub {
 			continue
 		}
+		var plot, axis ui.Rect
 		switch ind.(type) {
 		case *MACD:
-			if macd == nil {
-				macd = ind
+			if !macdUsed {
+				plot, axis = panes.MACD, panes.MACDAxis
+				macdUsed = true
+				break
 			}
+			plot, axis = extraSubRect(panes, extraUsed)
+			extraUsed++
 		case *KDJ:
-			if kdj == nil {
-				kdj = ind
+			if !kdjUsed {
+				plot, axis = panes.KDJ, panes.KDJAxis
+				kdjUsed = true
+				break
 			}
+			plot, axis = extraSubRect(panes, extraUsed)
+			extraUsed++
 		default:
-			extra = append(extra, ind)
+			plot, axis = extraSubRect(panes, extraUsed)
+			extraUsed++
 		}
-	}
-	var out []subLayer
-	if macd != nil && panes.MACD.H > 1 {
-		out = append(out, subLayer{ind: macd, plot: panes.MACD, axis: panes.MACDAxis, scale: subScale(macd, first, last)})
-	}
-	if kdj != nil && panes.KDJ.H > 1 {
-		out = append(out, subLayer{ind: kdj, plot: panes.KDJ, axis: panes.KDJAxis, scale: subScale(kdj, first, last)})
-	}
-	for i, ind := range extra {
-		if i >= len(panes.Extra) || panes.Extra[i].H <= 1 {
+		if plot.H <= 1 {
 			continue
 		}
-		axis := ui.Rect{}
-		if i < len(panes.ExtraAxis) {
-			axis = panes.ExtraAxis[i]
-		}
-		out = append(out, subLayer{ind: ind, plot: panes.Extra[i], axis: axis, scale: subScale(ind, first, last)})
+		out = append(out, subLayer{ind: ind, plot: plot, axis: axis, scale: subScale(ind, first, last)})
 	}
 	return out
 }
@@ -191,10 +189,22 @@ func drawLinePlot(p *ui.Painter, plot ui.Rect, lp LinePlot, vp Viewport, yScale 
 	}
 }
 
+func extraSubRect(panes Panes, i int) (plot, axis ui.Rect) {
+	if i < 0 || i >= len(panes.Extra) {
+		return ui.Rect{}, ui.Rect{}
+	}
+	plot = panes.Extra[i]
+	if i < len(panes.ExtraAxis) {
+		axis = panes.ExtraAxis[i]
+	}
+	return plot, axis
+}
+
 // applyIndicatorStyle copies theme colors onto the indicators Paint
 // knows how to draw. Sub-pane colors are applied only when that pane
 // is open. Callers do not need the indicators back.
 func applyIndicatorStyle(inds []Indicator, panes Panes, style Style) {
+	macdUsed, kdjUsed, extraUsed := false, false, 0
 	for _, ind := range inds {
 		if ind == nil {
 			continue
@@ -205,12 +215,30 @@ func applyIndicatorStyle(inds []Indicator, panes Panes, style Style) {
 		case *BOLL:
 			v.SetColors(style.BOLLMid, style.BOLLUp, style.BOLLLow)
 		case *MACD:
-			if panes.MACD.H > 1 {
+			plot := panes.MACD
+			if !macdUsed {
+				macdUsed = true
+			} else {
+				plot, _ = extraSubRect(panes, extraUsed)
+				extraUsed++
+			}
+			if plot.H > 1 {
 				v.SetColors(style.MACDDIF, style.MACDDEA, style.Up, style.Down, style.MACDZero)
 			}
 		case *KDJ:
-			if panes.KDJ.H > 1 {
+			plot := panes.KDJ
+			if !kdjUsed {
+				kdjUsed = true
+			} else {
+				plot, _ = extraSubRect(panes, extraUsed)
+				extraUsed++
+			}
+			if plot.H > 1 {
 				v.SetColors(style.KDJK, style.KDJD, style.KDJJ)
+			}
+		default:
+			if ind.PaneKind() == PaneSub {
+				extraUsed++
 			}
 		}
 	}
@@ -238,10 +266,14 @@ func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volS
 		left := TimeAt(cs, vp.Offset)
 		right := TimeAt(cs, vp.Offset+float64(price.W)/vp.BarWidth)
 		for _, tick := range chart.NewTime(left, right).Ticks(6) {
-			if tick.At < 0 || tick.At > 1 {
+			position, ok := timeBarPosition(cs, time.UnixMilli(int64(tick.Value)))
+			if !ok {
 				continue
 			}
-			x := chart.X(price, tick.At)
+			x := price.X + float32((position-vp.Offset)*vp.BarWidth)
+			if x < price.X || x > price.X+price.W {
+				continue
+			}
 			p.Line(x, price.Y, x, bandsBottom(panes), 1, style.Grid)
 			if panes.Time.H > 0 {
 				drawLabel(p, x, panes.Time.Y+panes.Time.H/2, tick.Label, style.Muted, ui.Center)
@@ -268,6 +300,47 @@ func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volS
 		y := bands[i].Y - float32(paneGap)/2
 		p.Line(price.X, y, price.X+price.W, y, 1, style.Grid)
 	}
+}
+
+// timeBarPosition maps t onto the same fractional bar axis as candles.
+// Each interval between neighboring opens is stretched to one bar,
+// while a tick outside the series extrapolates with the nearest pair.
+// This keeps a calendar gap from shifting every later tick, and it
+// still accepts ticks such as 09:30 between off-grid candles.
+func timeBarPosition(cs []Candle, t time.Time) (float64, bool) {
+	if len(cs) == 0 {
+		return 0, false
+	}
+	if len(cs) == 1 || !t.After(cs[0].Time) {
+		if len(cs) == 1 {
+			return 0, t.Equal(cs[0].Time)
+		}
+		gap := cs[1].Time.Sub(cs[0].Time)
+		if gap <= 0 {
+			return 0, t.Equal(cs[0].Time)
+		}
+		return float64(t.Sub(cs[0].Time)) / float64(gap), true
+	}
+	last := len(cs) - 1
+	if !t.Before(cs[last].Time) {
+		gap := cs[last].Time.Sub(cs[last-1].Time)
+		if gap <= 0 {
+			return float64(last), t.Equal(cs[last].Time)
+		}
+		return float64(last) + float64(t.Sub(cs[last].Time))/float64(gap), true
+	}
+	i := sort.Search(len(cs), func(i int) bool { return !cs[i].Time.Before(t) }) - 1
+	if i < 0 {
+		i = 0
+	}
+	if i >= last {
+		i = last - 1
+	}
+	gap := cs[i+1].Time.Sub(cs[i].Time)
+	if gap <= 0 {
+		return float64(i), t.Equal(cs[i].Time)
+	}
+	return float64(i) + float64(t.Sub(cs[i].Time))/float64(gap), true
 }
 
 func drawSubAxis(p *ui.Painter, plot, axis ui.Rect, scale chart.Linear, style Style) {

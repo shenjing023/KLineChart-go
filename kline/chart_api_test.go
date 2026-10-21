@@ -11,7 +11,7 @@ import (
 
 func TestNewChartFrameNonEmpty(t *testing.T) {
 	c := NewChart(ChartOptions{
-		Symbols:    []string{"ALPHA", "BETA"},
+		Symbols:    []string{"600519", "000001"},
 		Period:     Period{Span: 1, Unit: UnitHour},
 		Layout:     LayoutStack,
 		Indicators: []string{"MA", "MACD"},
@@ -24,7 +24,7 @@ func TestNewChartFrameNonEmpty(t *testing.T) {
 	if !frameHasInk(img) {
 		t.Fatal("tester frame has no painted pixels")
 	}
-	if !tt.HasText("ALPHA") || !tt.HasText("BETA") {
+	if !tt.HasText("600519") || !tt.HasText("000001") {
 		t.Fatalf("headers missing, texts %q", tt.Texts())
 	}
 	if len(c.painted) != 2 {
@@ -39,7 +39,7 @@ func TestNewChartFrameNonEmpty(t *testing.T) {
 		t.Fatalf("indicator defaults MA=%v MACD=%v BOLL=%v KDJ=%v", c.IndicatorOn("MA"), c.IndicatorOn("MACD"), c.IndicatorOn("BOLL"), c.IndicatorOn("KDJ"))
 	}
 
-	top := mustBox(t, tt, "ALPHA chart")
+	top := mustBox(t, tt, "600519 chart")
 	x, y := top.X+top.W/2, top.Y+24
 	start := c.vp.Offset
 	width := c.vp.BarWidth
@@ -95,10 +95,10 @@ func TestSetSourceRejectsNilAndSwaps(t *testing.T) {
 	}
 	stub := &StubLiveSource{}
 	bars := append([]Candle(nil), c.panes[0].candles...)
-	if err := stub.SetBars("ALPHA", c.Period(), bars); err != nil {
+	if err := stub.SetBars("600519", c.Period(), bars); err != nil {
 		t.Fatal(err)
 	}
-	if err := stub.SetBars("BETA", c.Period(), c.panes[1].candles); err != nil {
+	if err := stub.SetBars("000001", c.Period(), c.panes[1].candles); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.SetSource(stub); err != nil {

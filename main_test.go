@@ -13,7 +13,7 @@ import (
 
 func TestDemoToolbarBindsChart(t *testing.T) {
 	chart := kline.NewChart(kline.ChartOptions{
-		Symbols:    []string{"ALPHA", "BETA"},
+		Symbols:    []string{"600519", "000001"},
 		Period:     kline.Period{Span: 1, Unit: kline.UnitHour},
 		Layout:     kline.LayoutStack,
 		Indicators: []string{"MA", "MACD"},
@@ -24,7 +24,7 @@ func TestDemoToolbarBindsChart(t *testing.T) {
 			t.Fatalf("toolbar missing %q, texts %q", text, tt.Texts())
 		}
 	}
-	if _, ok := tt.Find("ALPHA chart"); !ok {
+	if _, ok := tt.Find("600519 chart"); !ok {
 		t.Fatal("demo should show the stack chart under the toolbar")
 	}
 	if err := tt.Click("4h"); err != nil {
@@ -75,7 +75,7 @@ func TestDemoToolbarBindsChart(t *testing.T) {
 		t.Fatal(err)
 	}
 	us := chart.Style(nil)
-	if us.Up != ui.RGB(239, 83, 80) || us.Down != ui.RGB(38, 166, 154) || us.Buy != us.Up || us.Sell != us.Down {
+	if us.Up != ui.RGB(38, 166, 154) || us.Down != ui.RGB(239, 83, 80) || us.Buy != us.Up || us.Sell != us.Down {
 		t.Fatalf("US preset up %+v down %+v buy %+v sell %+v", us.Up, us.Down, us.Buy, us.Sell)
 	}
 	if err := tt.Click("Limit 10%"); err != nil {
@@ -97,7 +97,7 @@ func TestDemoToolbarBindsChart(t *testing.T) {
 		t.Fatal(err)
 	}
 	classic := chart.Style(nil)
-	if classic.Up != ui.RGB(38, 166, 154) || classic.Buy != classic.Up || classic.Sell != classic.Down {
+	if classic.Up != ui.RGB(239, 83, 80) || classic.Down != ui.RGB(38, 166, 154) || classic.Buy != classic.Up || classic.Sell != classic.Down {
 		t.Fatalf("classic up %+v buy %+v sell %+v", classic.Up, classic.Buy, classic.Sell)
 	}
 	if err := tt.Click("Reset view"); err != nil {

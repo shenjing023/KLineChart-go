@@ -1,0 +1,10 @@
+=== RUN   TestReviewReopenSamePeriod
+    review_standards_probe_test.go:26: Close -> SetPeriod(current) did not resume live updates: before=99.37018765419461 wanted=100.37018765419461 got=99.37018765419461 subscriptions=0
+--- FAIL: TestReviewReopenSamePeriod (0.00s)
+=== RUN   TestReviewCloseThenSamePeriodResubscribes
+    review_state_probe_test.go:114: bars=1 liveSubs=0 loadError=<nil>
+    review_state_probe_test.go:116: same-period reopen did not resubscribe
+--- FAIL: TestReviewCloseThenSamePeriodResubscribes (0.00s)
+FAIL
+FAIL	github.com/shenjing023/KLineChart-go/kline	0.119s
+FAIL

@@ -61,13 +61,14 @@ var ErrDuplicateSymbol = errors.New("kline: duplicate symbol")
 // bars that had to be left out after a load.
 var ErrMisaligned = errors.New("kline: symbols do not share bar open times")
 
-// ChartOptions configures NewChart. Zero values pick the demo defaults:
-// SyntheticSource, symbols ALPHA and BETA, period 1h, stack layout,
-// MA and MACD on, magnet off, hollow off, and colors from the window theme.
+// ChartOptions configures NewChart. Zero values pick the A-share demo
+// defaults: SyntheticSource, symbols 600519 and 000001, period 1h, stack
+// layout, MA and MACD on, magnet off, hollow off, Asia/Shanghai labels,
+// and red-up/green-down colors from the window theme.
 type ChartOptions struct {
 	Source DataSource
-	// Symbols are the panes, top to bottom, e.g. ALPHA and BETA. A name
-	// may appear once: a repeated name leaves the chart without panes,
+	// Symbols are the panes, top to bottom, e.g. 600519 and 000001. A
+	// name may appear once: a repeated name leaves the chart without panes,
 	// and LoadError wraps ErrDuplicateSymbol. Every symbol shares one bar
 	// index, so the source must report the same open times for each; see
 	// ErrMisaligned.
@@ -101,7 +102,8 @@ type ChartOptions struct {
 	// still call FormatPrice and stay at two decimals.
 	PriceDecimals *int
 	// Location formats the times in Readout and the crosshair time tag.
-	// Nil is UTC. Candle.Time itself is not rewritten.
+	// Nil uses Asia/Shanghai for the A-share default; pass time.UTC for
+	// UTC or another zone explicitly. Candle.Time itself is not rewritten.
 	Location *time.Location
 }
 
@@ -117,7 +119,7 @@ func NewChart(opts ChartOptions) *Chart {
 	}
 	symbols := append([]string(nil), opts.Symbols...)
 	if len(symbols) == 0 {
-		symbols = []string{"ALPHA", "BETA"}
+		symbols = []string{"600519", "000001"}
 	}
 	symbolErr := uniqueSymbols(symbols)
 	if symbolErr != nil {
@@ -126,6 +128,10 @@ func NewChart(opts ChartOptions) *Chart {
 	period := opts.Period
 	if !period.Valid() {
 		period = Period{Span: 1, Unit: UnitHour}
+	}
+	zone := opts.Location
+	if zone == nil {
+		zone = ashareLocation
 	}
 	layout := layoutStack
 	if opts.Layout == LayoutOverlay {
@@ -168,7 +174,7 @@ func NewChart(opts ChartOptions) *Chart {
 		symbolErr:   symbolErr,
 		priceDigits: priceDigitsOf(opts.PriceDecimals),
 		digitsSet:   true,
-		zone:        opts.Location,
+		zone:        zone,
 	}
 	if a.styleSet {
 		a.style = completeStyle(a.style)
@@ -248,10 +254,11 @@ func (a *Chart) LimitPct() float64 { return a.limitPct }
 // crosshair are dropped. When p is the period already loaded and
 // LoadError is nil, SetPeriod does nothing and returns nil: drawings and
 // the live subscription stay. While LoadError is set, the same period
-// loads again. An invalid period returns ErrInvalidPeriod without asking
-// the source, and leaves the current bars in place. A GetBars error also
-// leaves them in place. When the source implements LiveSource, a
-// SubscribeBar error is returned after the new bars are loaded.
+// loads again, as it does after Close because Close is not final. An
+// invalid period returns ErrInvalidPeriod without asking the source,
+// and leaves the current bars in place. A GetBars error also leaves
+// them in place. When the source implements LiveSource, a SubscribeBar
+// error is returned after the new bars are loaded.
 // Subscriptions opened for that call are rolled back, and a handler from
 // the previous subscription does not apply.
 //
@@ -265,7 +272,7 @@ func (a *Chart) SetPeriod(p Period) error {
 	if !p.Valid() {
 		return ErrInvalidPeriod
 	}
-	if p == a.period && a.loadErr == nil {
+	if p == a.period && a.loadErr == nil && !a.closed {
 		return nil
 	}
 	return a.setPeriod(p)
@@ -296,6 +303,7 @@ func (a *Chart) Close() error {
 	if a.replay != nil {
 		a.replay.Close()
 	}
+	a.closed = true
 	return a.dropLive()
 }
 
@@ -339,14 +347,13 @@ func (a *Chart) Layout() string {
 // already in use, which is how a host refreshes a plain DataSource. A
 // live subscription on the previous source is dropped. Nil returns
 // ErrNilSource. A failed GetBars keeps the previous source, its bars,
-// its drawings, and its subscription. A SubscribeBar error is returned
-// after the new source's bars are loaded; that source stays, and
-// subscriptions opened for the call are rolled back. The handler must
-// not call SetPeriod, SetSource, or View.
+// its drawings, and its subscription, and leaves an attached replay
+// running. A successful load ends the replay, because the new bars were
+// not revealed by its cursor. A SubscribeBar error is returned after the
+// new source's bars are loaded; that source stays, and subscriptions
+// opened for the call are rolled back. The handler must not call
+// SetPeriod, SetSource, or View.
 func (a *Chart) SetSource(src DataSource) error {
-	if a != nil && a.replay != nil {
-		a.replay.Close()
-	}
 	if src == nil {
 		return ErrNilSource
 	}
@@ -356,12 +363,17 @@ func (a *Chart) SetSource(src DataSource) error {
 	if !a.period.Valid() {
 		return ErrInvalidPeriod
 	}
-	next, err := a.fetchInit(src, a.period)
+	// Load before touching the replay: a refused source or a failed
+	// GetBars must leave playback where it was.
+	next, dropErr, err := a.fetchInit(src, a.period)
 	if err != nil {
 		return err
 	}
+	if a.replay != nil {
+		a.replay.Close()
+	}
 	a.src = src
-	return a.install(a.period, next)
+	return a.install(a.period, next, dropErr)
 }
 
 // SetHollow draws rising candle bodies as outlines when on is true.

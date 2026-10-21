@@ -88,10 +88,10 @@ func TestViewShowsLatestBar(t *testing.T) {
 	a := newApp()
 	tt := ui.NewTester(a.View, 960, 720)
 	last := a.panes[0].candles[len(a.panes[0].candles)-1]
-	if a.Bars() != 600 || !tt.HasText("ALPHA") || !tt.HasText("BETA") {
+	if a.Bars() != 600 || !tt.HasText("600519") || !tt.HasText("000001") {
 		t.Fatalf("bars %d texts %q", a.Bars(), tt.Texts())
 	}
-	if !tt.HasText(last.Time.UTC().Format("2006-01-02 15:04")) {
+	if !tt.HasText(last.Time.In(ashareLocation).Format("2006-01-02 15:04")) {
 		t.Fatalf("HUD missing last bar time, texts %q", tt.Texts())
 	}
 	if !strings.Contains(a.readout(0), "Last") || !strings.Contains(a.readout(1), "Last") {
@@ -108,8 +108,8 @@ func TestViewShowsLatestBar(t *testing.T) {
 func TestDragPansAndWheelZooms(t *testing.T) {
 	a := newApp()
 	tt := ui.NewTester(a.View, 960, 720)
-	top := mustBox(t, tt, "ALPHA chart")
-	bot := mustBox(t, tt, "BETA chart")
+	top := mustBox(t, tt, "600519 chart")
+	bot := mustBox(t, tt, "000001 chart")
 	x := top.X + top.W/2
 	y := top.Y + 24
 	start := a.vp.Offset
@@ -132,7 +132,7 @@ func TestDragPansAndWheelZooms(t *testing.T) {
 		t.Fatalf("drag on the lower pane should pan the same viewport: offset %v, before %v", a.vp.Offset, lowerStart)
 	}
 
-	tt.Scroll(bot.X+bot.W/2, bot.Y+30, 0, -100) // wheel on BETA zooms both
+	tt.Scroll(bot.X+bot.W/2, bot.Y+30, 0, -100) // wheel on 000001 zooms both
 	if a.vp.BarWidth <= width {
 		t.Fatalf("wheel on the lower pane should widen the shared bars: %v, was %v", a.vp.BarWidth, width)
 	}
@@ -153,8 +153,8 @@ func TestDragPansAndWheelZooms(t *testing.T) {
 func TestPanesShareCrosshair(t *testing.T) {
 	a := newApp()
 	tt := ui.NewTester(a.View, 960, 720)
-	top := mustBox(t, tt, "ALPHA chart")
-	bot := mustBox(t, tt, "BETA chart")
+	top := mustBox(t, tt, "600519 chart")
+	bot := mustBox(t, tt, "000001 chart")
 	if math.Abs(float64(top.X-bot.X)) > 1 || math.Abs(float64(top.W-bot.W)) > 1 {
 		t.Fatalf("panes should share a horizontal frame: top %+v bot %+v", top, bot)
 	}
@@ -163,14 +163,14 @@ func TestPanesShareCrosshair(t *testing.T) {
 	tt.Move(x, top.Y+20)
 	idx := a.crossIndex
 	if idx < 0 || a.crossPane != 0 {
-		t.Fatalf("hover on ALPHA index %d pane %d", idx, a.crossPane)
+		t.Fatalf("hover on 600519 index %d pane %d", idx, a.crossPane)
 	}
 	assertSameBar(t, tt, a, idx)
 
-	// The same local x on BETA is the same bar, because the viewport is shared.
+	// The same local x on 000001 is the same bar, because the viewport is shared.
 	tt.Move(x, bot.Y+20)
 	if a.crossIndex != idx || a.crossPane != 1 {
-		t.Fatalf("hover on BETA index %d pane %d, want index %d", a.crossIndex, a.crossPane, idx)
+		t.Fatalf("hover on 000001 index %d pane %d, want index %d", a.crossIndex, a.crossPane, idx)
 	}
 	assertSameBar(t, tt, a, idx)
 
@@ -189,7 +189,7 @@ func assertSameBar(t *testing.T, tt *ui.Tester, a *Chart, idx int) {
 		t.Fatalf("bar %d times differ: %s vs %s", idx, a.panes[0].candles[idx].Time, a.panes[1].candles[idx].Time)
 	}
 	r0, r1 := a.readout(0), a.readout(1)
-	when := a.panes[0].candles[idx].Time.UTC().Format("2006-01-02 15:04")
+	when := a.panes[0].candles[idx].Time.In(ashareLocation).Format("2006-01-02 15:04")
 	if !strings.Contains(r0, "Hover") || !strings.Contains(r1, "Hover") || !strings.Contains(r0, when) || !strings.Contains(r1, when) {
 		t.Fatalf("linked readouts:\n%s\n%s", r0, r1)
 	}
@@ -213,13 +213,13 @@ func TestPeriodSwitchReloadsBothPanes(t *testing.T) {
 		t.Fatalf("period %s", a.Period())
 	}
 	press(t, tt, a, "4h")
-	assertStep(t, a, 4*time.Hour)
+	assertAshareSessionBars(t, a, "09:30")
 	if a.Period().String() != "4h" {
 		t.Fatalf("period %s", a.Period())
 	}
 	assertFitRight(t, a)
 	press(t, tt, a, "1d")
-	assertStep(t, a, 24*time.Hour)
+	assertAshareSessionBars(t, a, "09:30")
 	assertFitRight(t, a)
 	if a.panes[0].candles[0].Time != a.panes[1].candles[0].Time {
 		t.Fatal("panes drifted apart after the period switch")
@@ -292,7 +292,7 @@ func TestFrameTriggersForward(t *testing.T) {
 	if math.Abs(float64(idx)-a.vp.Offset-screen) > 1e-9 {
 		t.Fatalf("screen %v, want %v", float64(idx)-a.vp.Offset, screen)
 	}
-	if !tt.HasText("ALPHA") {
+	if !tt.HasText("600519") {
 		t.Fatalf("texts %q", tt.Texts())
 	}
 }
@@ -876,20 +876,20 @@ func countNear(img *image.RGBA, r ui.Rect, target ui.Color) int {
 func TestOverlayLayoutShowsBothSymbolsOnOnePlot(t *testing.T) {
 	a := newApp()
 	tt := ui.NewTester(a.View, 1100, 1000)
-	if _, ok := tt.Find("ALPHA chart"); !ok {
-		t.Fatal("stack mode should keep the ALPHA pane")
+	if _, ok := tt.Find("600519 chart"); !ok {
+		t.Fatal("stack mode should keep the 600519 pane")
 	}
-	if _, ok := tt.Find("BETA chart"); !ok {
-		t.Fatal("stack mode should keep the BETA pane")
+	if _, ok := tt.Find("000001 chart"); !ok {
+		t.Fatal("stack mode should keep the 000001 pane")
 	}
 	press(t, tt, a, "Overlay")
 	if a.layout != layoutOverlay {
 		t.Fatalf("layout %d", a.layout)
 	}
-	if _, ok := tt.Find("ALPHA chart"); ok {
+	if _, ok := tt.Find("600519 chart"); ok {
 		t.Fatal("overlay mode should replace the two panes with one plot")
 	}
-	if _, ok := tt.Find("BETA chart"); ok {
+	if _, ok := tt.Find("000001 chart"); ok {
 		t.Fatal("overlay mode should not keep a second pane")
 	}
 	box := mustBox(t, tt, "Compare chart")
@@ -924,7 +924,7 @@ func TestOverlayLayoutShowsBothSymbolsOnOnePlot(t *testing.T) {
 	img := tt.Image()
 	line := countNear(img, a.painted[0].Price, StyleFrom(nil).Compare)
 	if line < 40 {
-		t.Fatalf("BETA close line pixels %d in %+v", line, a.painted[0].Price)
+		t.Fatalf("000001 close line pixels %d in %+v", line, a.painted[0].Price)
 	}
 	candles := countNear(img, a.painted[0].Price, StyleFrom(nil).Up) +
 		countNear(img, a.painted[0].Price, StyleFrom(nil).Down)
@@ -933,11 +933,11 @@ func TestOverlayLayoutShowsBothSymbolsOnOnePlot(t *testing.T) {
 	}
 
 	press(t, tt, a, "Stack")
-	if _, ok := tt.Find("ALPHA chart"); !ok {
-		t.Fatal("stack should restore ALPHA")
+	if _, ok := tt.Find("600519 chart"); !ok {
+		t.Fatal("stack should restore 600519")
 	}
-	if _, ok := tt.Find("BETA chart"); !ok {
-		t.Fatal("stack should restore BETA")
+	if _, ok := tt.Find("000001 chart"); !ok {
+		t.Fatal("stack should restore 000001")
 	}
 }
 
@@ -971,7 +971,7 @@ func TestOverlayReadoutAndSharedViewport(t *testing.T) {
 		t.Fatalf("cross index %d, want %d", a.crossIndex, later)
 	}
 	r0, r1 := a.readout(0), a.readout(1)
-	when := a.panes[0].candles[later].Time.UTC().Format("2006-01-02 15:04")
+	when := a.panes[0].candles[later].Time.In(ashareLocation).Format("2006-01-02 15:04")
 	if !strings.Contains(r0, "Hover") || !strings.Contains(r1, "Hover") || !strings.Contains(r0, when) || !strings.Contains(r1, when) {
 		t.Fatalf("both readouts should follow the same bar:\n%s\n%s", r0, r1)
 	}
@@ -1061,8 +1061,8 @@ func TestHollowToggleThinsRisingBodies(t *testing.T) {
 	if a.Hollow() {
 		t.Fatal("hollow rising candles start off")
 	}
-	up := ui.RGB(38, 166, 154)
-	down := ui.RGB(239, 83, 80)
+	up := ui.RGB(239, 83, 80)
+	down := ui.RGB(38, 166, 154)
 	price := a.painted[0].Price
 	solidUp := countNear(tt.Image(), price, up)
 	solidDown := countNear(tt.Image(), price, down)
@@ -1078,7 +1078,7 @@ func TestHollowToggleThinsRisingBodies(t *testing.T) {
 	if hollowUp*2 >= solidUp {
 		t.Fatalf("hollow rising pixels %d, solid %d", hollowUp, solidUp)
 	}
-	// Falling bodies stay filled, so the red count stays in the same range.
+	// Falling bodies stay filled, so the green count stays in the same range.
 	if hollowDown*2 < solidDown || solidDown*2 < hollowDown {
 		t.Fatalf("falling pixels changed hollow %d solid %d", hollowDown, solidDown)
 	}
@@ -1228,6 +1228,30 @@ func assertStep(t *testing.T, a *Chart, step time.Duration) {
 	}
 }
 
+func assertAshareSessionBars(t *testing.T, a *Chart, clock string) {
+	t.Helper()
+	if len(a.panes) != 2 {
+		t.Fatalf("panes %d", len(a.panes))
+	}
+	for _, s := range a.panes {
+		if len(s.candles) < 2 {
+			t.Fatalf("%s len %d", s.name, len(s.candles))
+		}
+		for i, c := range s.candles {
+			got := c.Time.In(ashareLocation)
+			if got.Format("15:04") != clock {
+				t.Fatalf("%s bar %d opens at %s, want %s", s.name, i, got, clock)
+			}
+			if got.Weekday() == time.Saturday || got.Weekday() == time.Sunday {
+				t.Fatalf("%s bar %d is a weekend: %s", s.name, i, got)
+			}
+			if i > 0 && !c.Time.After(s.candles[i-1].Time) {
+				t.Fatalf("%s bar %d is not ascending", s.name, i)
+			}
+		}
+	}
+}
+
 func assertFitRight(t *testing.T, a *Chart) {
 	t.Helper()
 	if !a.fitted || a.plotW <= 0 {
@@ -1257,21 +1281,21 @@ func TestLiveBarAppendsRevisesAndRecalculates(t *testing.T) {
 	next := last
 	next.Time = last.Time.Add(time.Hour)
 	next.Close = last.Close + 5
-	stub.Push("ALPHA", a.period, next)
-	// BETA has no bar at that open time yet, so ALPHA's bar waits.
+	stub.Push("600519", a.period, next)
+	// 000001 has no bar at that open time yet, so 600519's bar waits.
 	if len(a.panes[0].candles) != n || len(a.panes[0].held) != 1 || a.Bars() != n || maLineLen(&a.panes[0]) != n {
 		t.Fatalf("one-sided push: candles %d held %d bars %d", len(a.panes[0].candles), len(a.panes[0].held), a.Bars())
 	}
 	revised := next
 	revised.Close = next.Close + 1
-	stub.Push("ALPHA", a.period, revised)
+	stub.Push("600519", a.period, revised)
 	if len(a.panes[0].held) != 1 || a.panes[0].held[0].Close != revised.Close {
 		t.Fatal("revise did not replace the held bar")
 	}
 	beta := a.panes[1].candles[n-1]
 	beta.Time = next.Time
 	beta.Close += 2
-	stub.Push("BETA", a.period, beta)
+	stub.Push("000001", a.period, beta)
 	if a.Bars() != n+1 || a.panes[0].candles[n] != revised || a.panes[1].candles[n] != beta {
 		t.Fatalf("matched open time: bars %d", a.Bars())
 	}
@@ -1283,13 +1307,13 @@ func TestLiveBarAppendsRevisesAndRecalculates(t *testing.T) {
 	}
 	shown := revised
 	shown.Close = revised.Close + 1
-	stub.Push("ALPHA", a.period, shown)
+	stub.Push("600519", a.period, shown)
 	if a.Bars() != n+1 || a.panes[0].candles[n].Close != shown.Close {
 		t.Fatal("revise did not replace the last bar")
 	}
 	stale := last
 	stale.Close = 0
-	stub.Push("ALPHA", a.period, stale)
+	stub.Push("600519", a.period, stale)
 	if a.Bars() != n+1 || a.panes[0].candles[n].Close != shown.Close || len(a.panes[0].held) != 0 {
 		t.Fatal("a bar older than the last open time was applied")
 	}
@@ -1323,12 +1347,12 @@ func TestLiveSubscriptionFollowsPeriodAndSource(t *testing.T) {
 	}
 	before := len(a.panes[0].candles)
 	last := a.panes[0].candles[before-1]
-	stub.Push("ALPHA", hour, Candle{Time: last.Time.Add(time.Hour), Close: 1})
+	stub.Push("600519", hour, Candle{Time: last.Time.Add(time.Hour), Close: 1})
 	if len(a.panes[0].candles) != before {
 		t.Fatalf("1h push after a 4h switch len %d", len(a.panes[0].candles))
 	}
-	stub.Push("ALPHA", four, Candle{Time: last.Time.Add(4 * time.Hour), Close: 2})
-	stub.Push("BETA", four, Candle{Time: last.Time.Add(4 * time.Hour), Close: 2})
+	stub.Push("600519", four, Candle{Time: last.Time.Add(4 * time.Hour), Close: 2})
+	stub.Push("000001", four, Candle{Time: last.Time.Add(4 * time.Hour), Close: 2})
 	if len(a.panes[0].candles) != before+1 || a.panes[0].candles[before].Close != 2 {
 		t.Fatalf("4h push len %d", len(a.panes[0].candles))
 	}
@@ -1339,7 +1363,7 @@ func TestLiveSubscriptionFollowsPeriodAndSource(t *testing.T) {
 	}
 	before = len(a.panes[0].candles)
 	last = a.panes[0].candles[before-1]
-	stub.Push("ALPHA", hour, Candle{Time: last.Time.Add(time.Hour), Close: 3})
+	stub.Push("600519", hour, Candle{Time: last.Time.Add(time.Hour), Close: 3})
 	if len(a.panes[0].candles) != before {
 		t.Fatal("the stub still delivered after the chart left it")
 	}
@@ -1372,7 +1396,7 @@ func TestLiveBarFollowsRightEdgeOnly(t *testing.T) {
 		t.Fatalf("panned offset moved to %v", a.vp.Offset)
 	}
 	tt.Frame()
-	if !tt.HasText("ALPHA") || !tt.HasText("BETA") {
+	if !tt.HasText("600519") || !tt.HasText("000001") {
 		t.Fatalf("texts %q", tt.Texts())
 	}
 }

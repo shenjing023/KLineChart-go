@@ -30,6 +30,14 @@ var ErrInvalidPeriod = errors.New("kline: invalid period")
 // ErrUnsupportedKind is returned for a request kind the source does not serve.
 var ErrUnsupportedKind = errors.New("kline: unsupported bar request kind")
 
+// ErrBarOrder is returned when a source returns bars that are not in
+// strictly ascending open-time order, which DataSource requires. A
+// duplicate open time counts as out of order. The chart refuses the load
+// and keeps the bars it already has, because an unsorted series would
+// aggregate into the wrong higher-period bars, and both the marker lookup
+// and the overlay point lookup binary-search the series.
+var ErrBarOrder = errors.New("kline: bars are not in ascending open-time order")
+
 // Period is a bar size. Span is the count of Unit.
 type Period struct {
 	Span int
@@ -90,17 +98,18 @@ type BarRequest struct {
 	Symbol string
 	Period Period
 	// Kind is KindInit or KindForward. KindBackward is never sent.
-	Kind string
+	Kind   string
 	Anchor time.Time
 	Limit  int
 }
 
-// DataSource loads chart bars. Bars are in ascending open-time order.
-// more is true when bars may still exist beyond the returned window, in
-// the direction of Kind. The chart copies the returned slice before it
-// calls GetBars again, so a source may reuse one buffer across calls and
-// symbols. A chart with several symbols needs the same open times from
-// each of them; see ErrMisaligned.
+// DataSource loads chart bars. Bars are in strictly ascending open-time
+// order; a duplicate or swapped open time is ErrBarOrder and the load is
+// refused. more is true when bars may still exist beyond the returned
+// window, in the direction of Kind. The chart copies the returned slice
+// before it calls GetBars again, so a source may reuse one buffer across
+// calls and symbols. A chart with several symbols needs the same open
+// times from each of them; see ErrMisaligned.
 type DataSource interface {
 	GetBars(req BarRequest) (bars []Candle, more bool, err error)
 }

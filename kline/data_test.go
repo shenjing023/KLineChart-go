@@ -6,34 +6,79 @@ import (
 	"time"
 )
 
-func TestSyntheticHourlyInitMatchesGenerate(t *testing.T) {
+func TestSyntheticHourlyInitUsesAshareSessions(t *testing.T) {
 	src := &SyntheticSource{}
 	period := Period{Span: 1, Unit: UnitHour}
-	bars, more, err := src.GetBars(BarRequest{Symbol: "ALPHA", Period: period, Kind: KindInit, Limit: 600})
+	bars, more, err := src.GetBars(BarRequest{Symbol: "600519", Period: period, Kind: KindInit, Limit: 600})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !more {
 		t.Fatal("hourly init should leave older bars")
 	}
-	want := Generate(600, 42)
-	if len(bars) != len(want) || bars[0] != want[0] || bars[len(bars)-1] != want[len(bars)-1] {
-		t.Fatalf("ALPHA init drifted from Generate(600, 42)")
+	if len(bars) != 600 {
+		t.Fatalf("600519 init len %d", len(bars))
 	}
-	beta, _, err := src.GetBars(BarRequest{Symbol: "BETA", Period: period, Kind: KindInit, Limit: 600})
+	beta, _, err := src.GetBars(BarRequest{Symbol: "000001", Period: period, Kind: KindInit, Limit: 600})
 	if err != nil {
 		t.Fatal(err)
 	}
-	other := Generate(600, 99)
-	if beta[0] != other[0] || beta[599] != other[599] {
-		t.Fatal("BETA init drifted from Generate(600, 99)")
-	}
 	if bars[10].Close == beta[10].Close {
-		t.Fatal("ALPHA and BETA produced the same close")
+		t.Fatal("600519 and 000001 produced the same close")
+	}
+	if first := bars[0].Time.In(ashareLocation); first.Location() != ashareLocation {
+		t.Fatalf("hourly time zone %v", first.Location())
 	}
 	for i := 1; i < len(bars); i++ {
-		if bars[i].Time.Sub(bars[i-1].Time) != time.Hour {
-			t.Fatalf("step %s", bars[i].Time.Sub(bars[i-1].Time))
+		if !bars[i].Time.After(bars[i-1].Time) {
+			t.Fatalf("bar %d is not after %d", i, i-1)
+		}
+		got := bars[i].Time.In(ashareLocation)
+		if got.Weekday() == time.Saturday || got.Weekday() == time.Sunday {
+			t.Fatalf("weekend bar %s", got)
+		}
+		clock := got.Format("15:04")
+		switch clock {
+		case "09:30", "10:30", "13:00", "14:00":
+		default:
+			t.Fatalf("bar %d opens at %s, want an A-share session bucket", i, clock)
+		}
+		prev := bars[i-1].Time.In(ashareLocation)
+		if prev.Format("15:04") == "10:30" && got.Format("15:04") != "13:00" {
+			t.Fatalf("lunch break joined without a session gap: %s -> %s", prev, got)
+		}
+	}
+}
+
+func TestSyntheticSourceUsesAshareDayAndCoarseBuckets(t *testing.T) {
+	src := &SyntheticSource{}
+	for _, tc := range []struct {
+		period Period
+		n      int
+		want   string
+	}{
+		{Period{Span: 15, Unit: UnitMinute}, 600, "14:45"},
+		{Period{Span: 1, Unit: UnitHour}, 600, "14:00"},
+		{Period{Span: 4, Unit: UnitHour}, 600, "09:30"},
+		{Period{Span: 1, Unit: UnitDay}, 600, "09:30"},
+	} {
+		bars, _, err := src.GetBars(BarRequest{Symbol: "600519", Period: tc.period, Kind: KindInit, Limit: tc.n})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(bars) == 0 {
+			t.Fatalf("%s returned no bars", tc.period)
+		}
+		if got := bars[len(bars)-1].Time.In(ashareLocation).Format("15:04"); got != tc.want {
+			t.Fatalf("%s newest open %s, want %s", tc.period, got, tc.want)
+		}
+		for i := 1; i < len(bars); i++ {
+			if !bars[i].Time.After(bars[i-1].Time) {
+				t.Fatalf("%s bar %d is not after %d", tc.period, i, i-1)
+			}
+			if bars[i].Time.Sub(bars[i-1].Time) < time.Minute {
+				t.Fatalf("%s duplicate/near-zero step at %d", tc.period, i)
+			}
 		}
 	}
 }
@@ -41,13 +86,13 @@ func TestSyntheticHourlyInitMatchesGenerate(t *testing.T) {
 func TestSyntheticForwardBeforeAnchorNoOverlap(t *testing.T) {
 	src := &SyntheticSource{}
 	period := Period{Span: 4, Unit: UnitHour}
-	init, _, err := src.GetBars(BarRequest{Symbol: "BETA", Period: period, Kind: KindInit, Limit: 50})
+	init, _, err := src.GetBars(BarRequest{Symbol: "000001", Period: period, Kind: KindInit, Limit: 50})
 	if err != nil {
 		t.Fatal(err)
 	}
 	anchor := init[0].Time
 	fwd, more, err := src.GetBars(BarRequest{
-		Symbol: "BETA", Period: period, Kind: KindForward, Anchor: anchor, Limit: 20,
+		Symbol: "000001", Period: period, Kind: KindForward, Anchor: anchor, Limit: 20,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -55,12 +100,8 @@ func TestSyntheticForwardBeforeAnchorNoOverlap(t *testing.T) {
 	if len(fwd) != 20 || !more {
 		t.Fatalf("forward len %d more %v", len(fwd), more)
 	}
-	step := 4 * time.Hour
 	if !fwd[len(fwd)-1].Time.Before(anchor) {
 		t.Fatalf("last forward %s is not before %s", fwd[len(fwd)-1].Time, anchor)
-	}
-	if !fwd[len(fwd)-1].Time.Add(step).Equal(anchor) {
-		t.Fatalf("forward does not meet anchor: last %s anchor %s", fwd[len(fwd)-1].Time, anchor)
 	}
 	seen := map[time.Time]bool{}
 	for _, b := range init {
@@ -70,8 +111,12 @@ func TestSyntheticForwardBeforeAnchorNoOverlap(t *testing.T) {
 		if seen[b.Time] {
 			t.Fatalf("overlap at %s", b.Time)
 		}
-		if i > 0 && b.Time.Sub(fwd[i-1].Time) != step {
-			t.Fatalf("forward step %s", b.Time.Sub(fwd[i-1].Time))
+		if i > 0 {
+			prev := fwd[i-1].Time.In(ashareLocation)
+			cur := b.Time.In(ashareLocation)
+			if cur.Before(prev) || (cur.Day() == prev.Day() && cur.Sub(prev) < 4*time.Hour && cur.Format("15:04") == "09:30") {
+				t.Fatalf("forward order %s -> %s", prev, cur)
+			}
 		}
 	}
 }
@@ -85,13 +130,13 @@ func TestSyntheticInvalidPeriod(t *testing.T) {
 		{Span: 1, Unit: ""},
 	}
 	for _, p := range cases {
-		_, _, err := src.GetBars(BarRequest{Symbol: "ALPHA", Period: p, Kind: KindInit, Limit: 10})
+		_, _, err := src.GetBars(BarRequest{Symbol: "600519", Period: p, Kind: KindInit, Limit: 10})
 		if !errors.Is(err, ErrInvalidPeriod) {
 			t.Fatalf("period %+v err %v", p, err)
 		}
 	}
 	_, _, err := src.GetBars(BarRequest{
-		Symbol: "ALPHA", Period: Period{Span: 1, Unit: UnitHour}, Kind: KindBackward, Limit: 10,
+		Symbol: "600519", Period: Period{Span: 1, Unit: UnitHour}, Kind: KindBackward, Limit: 10,
 	})
 	if !errors.Is(err, ErrUnsupportedKind) {
 		t.Fatalf("backward err %v", err)
@@ -101,7 +146,7 @@ func TestSyntheticInvalidPeriod(t *testing.T) {
 func TestSyntheticForwardExhaustsHistory(t *testing.T) {
 	src := &SyntheticSource{Extra: 30}
 	period := Period{Span: 1, Unit: UnitHour}
-	bars, more, err := src.GetBars(BarRequest{Symbol: "ALPHA", Period: period, Kind: KindInit, Limit: 20})
+	bars, more, err := src.GetBars(BarRequest{Symbol: "600519", Period: period, Kind: KindInit, Limit: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +156,7 @@ func TestSyntheticForwardExhaustsHistory(t *testing.T) {
 	total := len(bars)
 	for more {
 		older, next, err := src.GetBars(BarRequest{
-			Symbol: "ALPHA", Period: period, Kind: KindForward, Anchor: bars[0].Time, Limit: 20,
+			Symbol: "600519", Period: period, Kind: KindForward, Anchor: bars[0].Time, Limit: 20,
 		})
 		if err != nil {
 			t.Fatal(err)

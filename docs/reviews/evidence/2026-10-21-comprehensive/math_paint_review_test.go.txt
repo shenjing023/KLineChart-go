@@ -1,0 +1,176 @@
+package kline
+
+import (
+	"math"
+	"testing"
+	"time"
+
+	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/chart"
+)
+
+func TestReviewCompareFallbackNeedsBothSeries(t *testing.T) {
+	primary := Generate(40, 1)
+	compare := append([]Candle(nil), primary...)
+	for i := range primary {
+		primary[i].Open /= 10
+		primary[i].High /= 10
+		primary[i].Low /= 10
+		primary[i].Close /= 10
+		compare[i].Open, compare[i].High, compare[i].Low, compare[i].Close = 0, 0, 0, 0
+	}
+	vp := Viewport{BarWidth: 8}
+	panes := Split(ui.Rect{W: 400, H: 300})
+	var indexed bool
+	tt := ui.NewTester(func(c *ui.Context) {
+		ui.Box(c).Fill().Draw(func(p *ui.Painter, r ui.Rect) {
+			_, indexed = drawCompare(p, panes, primary, compare, nil, vp, Pointer{}, -1, DarkDefault(), defaultLabels())
+		})
+	}, 400, 300)
+	tt.Frame()
+	index, raw, base := CompareScales(primary, compare, nil, vp, float64(panes.Price.W))
+	want := MainScale(primary, nil, vp, float64(panes.Price.W))
+	t.Logf("no common positive close; indexed=%v base=%d primaryClose=%g compareClose=%g axis=[%g,%g] raw=[%g,%g] MainScale=[%g,%g]", indexed, base, primary[base].Close, compare[base].Close, index.Lo, index.Hi, raw.Lo, raw.Hi, want.Lo, want.Hi)
+	if indexed || index.Lo != want.Lo || index.Hi != want.Hi {
+		t.Error("overlay should fall back to the primary's raw price scale when no common positive close exists")
+	}
+}
+
+type reviewNilLineIndicator struct{ drawn int }
+
+func (*reviewNilLineIndicator) Name() string     { return "REVIEW_NIL_LINES" }
+func (*reviewNilLineIndicator) PaneKind() string { return PaneMain }
+func (*reviewNilLineIndicator) Calc([]Candle)    {}
+func (m *reviewNilLineIndicator) DrawMain(p *ui.Painter, r ui.Rect, _ Viewport, _ chart.Linear) {
+	m.drawn++
+	p.Fill(ui.Rect{X: r.X + 20, Y: r.Y + 20, W: 20, H: 20}, ui.RGB(255, 0, 255), 0)
+}
+func (*reviewNilLineIndicator) DrawSub(*ui.Painter, ui.Rect, Viewport) {}
+func (*reviewNilLineIndicator) ValueAt(int) string                     { return "" }
+func (*reviewNilLineIndicator) Series() [][]float64                    { return nil }
+func (*reviewNilLineIndicator) LineColors() []ui.Color                 { return nil }
+
+func TestReviewNilLinePlotCallsDrawMain(t *testing.T) {
+	ind := &reviewNilLineIndicator{}
+	panes := Split(ui.Rect{W: 400, H: 300})
+	tt := ui.NewTester(func(c *ui.Context) {
+		ui.Box(c).Fill().Draw(func(p *ui.Painter, r ui.Rect) {
+			Paint(p, panes, Generate(30, 1), []Indicator{ind}, Viewport{BarWidth: 8}, Pointer{}, -1, DarkDefault())
+		})
+	}, 400, 300)
+	tt.Frame()
+	t.Logf("LinePlot.Series()==nil, DrawMain calls=%d", ind.drawn)
+	if ind.drawn == 0 {
+		t.Error("documented nil-Series fallback to DrawMain is not called")
+	}
+}
+
+func TestReviewSessionGapMisplacesTimeTick(t *testing.T) {
+	start := time.Date(2024, 1, 5, 0, 0, 0, 0, time.UTC) // Friday.
+	var cs []Candle
+	for _, day := range []int{0, 3, 4, 5, 6, 7} {
+		cs = append(cs, Candle{Time: start.AddDate(0, 0, day), Open: 10, High: 11, Low: 9, Close: 10})
+	}
+	vp := Viewport{BarWidth: 100}
+	const plotW = 600.0
+	left := TimeAt(cs, vp.Offset)
+	right := TimeAt(cs, vp.Offset+plotW/vp.BarWidth)
+	for _, tick := range chart.NewTime(left, right).Ticks(6) {
+		when := time.UnixMilli(int64(tick.Value))
+		if when.Equal(cs[1].Time) { // Monday tick.
+			x := float64(tick.At) * plotW
+			i, _ := vp.IndexAt(x, len(cs))
+			t.Logf("Monday tick %s at x=%.2f falls in bar %d (%s); Monday candle spans x=[100,200]", when.Format("2006-01-02"), x, i, cs[i].Time.Format("2006-01-02"))
+			if i != 1 {
+				t.Error("time tick labels the wrong trading session")
+			}
+			return
+		}
+	}
+	t.Fatal("fixture did not generate Monday tick")
+}
+
+func TestReviewMarkersMustStayInsidePricePlot(t *testing.T) {
+	st := DarkDefault()
+	st.Buy = ui.RGB(255, 0, 255)
+	c := NewChart(ChartOptions{Symbols: []string{"ALPHA"}, Indicators: []string{}, HideHeader: true, Style: st})
+	tt := ui.NewTester(c.View, 800, 600)
+	tt.Frame()
+	first, last := c.Visible()
+	bar := c.panes[0].candles[first]
+	for i := first; i <= last; i++ {
+		if c.panes[0].candles[i].Low < bar.Low {
+			bar = c.panes[0].candles[i]
+		}
+	}
+	marks := make([]Marker, 12)
+	for i := range marks {
+		marks[i] = Marker{Time: bar.Time, Side: SideBuy, Label: "B"}
+	}
+	if err := c.SetMarkers("ALPHA", marks); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	price := c.painted[0].Price
+	volume := c.painted[0].Volume
+	inside := countNear(tt.Image(), price, st.Buy)
+	outside := countNear(tt.Image(), volume, st.Buy)
+	t.Logf("marker pixels price=%d volume=%d; price=%+v volume=%+v", inside, outside, price, volume)
+	writePNG(t, t.TempDir()+"/marker-spill.png", tt.Image())
+	if outside > 0 {
+		t.Error("stacked trade arrows paint over the volume strip")
+	}
+}
+
+func TestReviewFiniteIndicatorTails(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		make func() Indicator
+	}{
+		{"MA 1,2,5,20", func() Indicator { return NewMA(1, 2, 5, 20) }},
+		{"BOLL 1", func() Indicator { return NewBOLL(1, 2) }},
+		{"BOLL 2", func() Indicator { return NewBOLL(2, 2) }},
+		{"BOLL 20", func() Indicator { return NewBOLL(20, 2) }},
+		{"MACD 2,5,2", func() Indicator { return NewMACD(2, 5, 2) }},
+		{"MACD 5,2,3", func() Indicator { return NewMACD(5, 2, 3) }},
+		{"MACD 12,26,9", func() Indicator { return NewMACD(12, 26, 9) }},
+		{"KDJ 1,1,1", func() Indicator { return NewKDJ(1, 1, 1) }},
+		{"KDJ 3,2,4", func() Indicator { return NewKDJ(3, 2, 4) }},
+		{"KDJ 9,3,3", func() Indicator { return NewKDJ(9, 3, 3) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cs := Generate(250, 42)
+			inc := tc.make()
+			inc.Calc(nil)
+			check := func(n int) {
+				full := tc.make()
+				full.Calc(cs[:n])
+				got, want := indicatorLines(inc), indicatorLines(full)
+				for j := range want {
+					for i := range want[j] {
+						g, w := got[j][i], want[j][i]
+						if math.IsNaN(g) && math.IsNaN(w) {
+							continue
+						}
+						if math.IsNaN(g) || math.IsNaN(w) || math.Abs(g-w) > 1e-8*math.Max(1, math.Abs(w)) {
+							t.Fatalf("n=%d line=%d i=%d got=%g want=%g", n, j, i, g, w)
+						}
+					}
+				}
+			}
+			for i := range cs {
+				inc.(BarTail).Append(cs[:i+1])
+				check(i + 1)
+				if i%5 == 0 {
+					for step := 0; step < 3; step++ {
+						prev := cs[i]
+						cs[i].Close += float64(step+1) * 0.05
+						cs[i].High = math.Max(cs[i].High, cs[i].Close)
+						inc.(BarTail).Revise(cs[:i+1], prev)
+						check(i + 1)
+					}
+				}
+			}
+		})
+	}
+}

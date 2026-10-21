@@ -16,6 +16,13 @@ var ErrReplayPeriod = errors.New("kline: replay period is finer than the loaded 
 // Close, or after the chart has dropped the replay.
 var ErrReplayClosed = errors.New("kline: replay is closed")
 
+// ErrReplayActive is returned by AppendBar and UpdateLast while a replay
+// owns the chart's series. The replay reveals one base bar at a time, so
+// a host that appended directly would put a bar on screen that the
+// cursor has not reached. StartReplay, Step, Seek, and Tick append
+// through an internal path and are not affected.
+var ErrReplayActive = errors.New("kline: a replay owns the series")
+
 // ReplayBar is one base bar that just became visible. Bars aligns with
 // Chart.Symbols and is the base series, not the higher-period aggregate
 // on screen. The chart never receives a bar past this one.
@@ -47,6 +54,13 @@ type Replay struct {
 	now        func() time.Time
 	hook       func(ReplayBar)
 	closed     bool
+	// opGen identifies the current top-level replay operation. A
+	// callback can pause, close, replace, or otherwise advance the
+	// replay; the caller that is still unwinding must stop its batch.
+	opGen uint64
+	// hadMore is each pane's more flag when the replay started. Close
+	// puts it back, so paging left still works on the revealed prefix.
+	hadMore []bool
 }
 
 // StartReplay copies bars and shows none of them until Step or Seek.
@@ -71,6 +85,9 @@ func StartReplay(chart *Chart, bars map[string][]Candle) (*Replay, error) {
 		if !ok {
 			return nil, fmt.Errorf("%w: %s", ErrUnknownSymbol, s.name)
 		}
+		if err := checkBarOrder(series); err != nil {
+			return nil, fmt.Errorf("%w: %s", err, s.name)
+		}
 		base[i] = cloneCandles(series)
 	}
 	if err := alignedSeries(base); err != nil {
@@ -85,6 +102,10 @@ func StartReplay(chart *Chart, bars map[string][]Candle) (*Replay, error) {
 		base:       base,
 		basePeriod: chart.period,
 		now:        time.Now,
+		hadMore:    make([]bool, len(chart.panes)),
+	}
+	for i := range chart.panes {
+		r.hadMore[i] = chart.panes[i].more
 	}
 	chart.replay = r
 	for i := range chart.panes {
@@ -92,7 +113,7 @@ func StartReplay(chart *Chart, bars map[string][]Candle) (*Replay, error) {
 		chart.panes[i].held = nil
 		chart.panes[i].more = false
 		chart.recalc(&chart.panes[i])
-		chart.reindexMarks(&chart.panes[i])
+		chart.reindexMarks(&chart.panes[i], r.markerView())
 	}
 	chart.crossIndex = -1
 	chart.crossPane = -1
@@ -154,7 +175,11 @@ func (r *Replay) SetClock(now func() time.Time) {
 // Step reveals n more base bars. n <= 0 does nothing. The cursor stops
 // at the last bar. Each new bar is reported to OnBar.
 func (r *Replay) Step(n int) error {
-	return r.advance(n, true)
+	if err := r.ready(); err != nil {
+		return err
+	}
+	gen := r.nextOp()
+	return r.advance(n, true, gen)
 }
 
 // StepBack hides n base bars and rebuilds the prefix. It does not report
@@ -163,6 +188,7 @@ func (r *Replay) StepBack(n int) error {
 	if err := r.ready(); err != nil {
 		return err
 	}
+	gen := r.nextOp()
 	if n <= 0 {
 		return nil
 	}
@@ -170,7 +196,7 @@ func (r *Replay) StepBack(n int) error {
 	if i < 0 {
 		i = 0
 	}
-	return r.SeekIndex(i)
+	return r.seekIndex(i, gen)
 }
 
 // SeekIndex reveals the first i base bars. A forward seek reports each
@@ -180,6 +206,13 @@ func (r *Replay) SeekIndex(i int) error {
 	if err := r.ready(); err != nil {
 		return err
 	}
+	return r.seekIndex(i, r.nextOp())
+}
+
+func (r *Replay) seekIndex(i int, gen uint64) error {
+	if err := r.opReady(gen); err != nil {
+		return err
+	}
 	if i < 0 {
 		i = 0
 	}
@@ -187,7 +220,7 @@ func (r *Replay) SeekIndex(i int) error {
 		i = n
 	}
 	if i >= r.cursor {
-		return r.Step(i - r.cursor)
+		return r.advance(i-r.cursor, true, gen)
 	}
 	r.cursor = i
 	r.rebuild()
@@ -201,12 +234,13 @@ func (r *Replay) SeekTo(t time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
 	}
+	gen := r.nextOp()
 	if len(r.base) == 0 || len(r.base[0]) == 0 || t.IsZero() {
-		return r.SeekIndex(0)
+		return r.seekIndex(0, gen)
 	}
 	cs := r.base[0]
 	i := sort.Search(len(cs), func(i int) bool { return cs[i].Time.After(t) })
-	return r.SeekIndex(i)
+	return r.seekIndex(i, gen)
 }
 
 // Play reveals bars at barsPerSec from the current cursor. Tick applies
@@ -215,6 +249,7 @@ func (r *Replay) Play(barsPerSec float64) {
 	if r == nil || r.closed || len(r.base) == 0 {
 		return
 	}
+	r.nextOp()
 	if barsPerSec < 0 {
 		barsPerSec = 0
 	}
@@ -229,6 +264,7 @@ func (r *Replay) Pause() {
 	if r == nil {
 		return
 	}
+	r.nextOp()
 	r.playing = false
 }
 
@@ -254,6 +290,7 @@ func (r *Replay) Tick() {
 	if r == nil || r.closed || !r.playing || r.speed <= 0 || len(r.base) == 0 {
 		return
 	}
+	gen := r.nextOp()
 	if r.cursor >= len(r.base[0]) {
 		r.playing = false
 		return
@@ -269,7 +306,18 @@ func (r *Replay) Tick() {
 	if want > len(r.base[0]) {
 		want = len(r.base[0])
 	}
-	_ = r.advance(want-r.cursor, false)
+	if err := r.advance(want-r.cursor, false, gen); err != nil {
+		// The chart refused the bar, so the cursor cannot move. Stop
+		// asking for frames: View invalidates while Playing, and the
+		// same reveal would fail on every later frame.
+		r.playing = false
+		return
+	}
+	if gen != r.opGen || !r.playing {
+		// Pause or another operation ran from OnBar. That operation
+		// owns the playback state from this point.
+		return
+	}
 	if r.cursor >= len(r.base[0]) {
 		r.playing = false
 	}
@@ -277,7 +325,10 @@ func (r *Replay) Tick() {
 
 // Close stops playback and detaches the replay from the chart. The bars
 // already revealed stay. Further Step and Seek return ErrReplayClosed.
-// Close does not restore the hidden suffix.
+// Close does not restore the hidden suffix, but each pane gets back the
+// more flag it had when the replay started, so a visible bar that still
+// has older history can be paged in from the source. Use SetPeriod or
+// SetSource to load the suffix.
 func (r *Replay) Close() {
 	if r == nil {
 		return
@@ -286,12 +337,35 @@ func (r *Replay) Close() {
 	r.closed = true
 	if r.chart != nil && r.chart.replay == r {
 		r.chart.replay = nil
+		for i := range r.chart.panes {
+			if i < len(r.hadMore) {
+				r.chart.panes[i].more = r.hadMore[i]
+			}
+		}
 	}
 }
 
 func (r *Replay) ready() error {
 	if r == nil || r.closed || r.chart == nil || r.chart.replay != r || len(r.base) == 0 {
 		return ErrReplayClosed
+	}
+	return nil
+}
+
+// nextOp starts a top-level operation. Nested public calls are not used
+// internally, so exactly one generation belongs to each Step, Seek,
+// Tick, playback-state change, or period change.
+func (r *Replay) nextOp() uint64 {
+	r.opGen++
+	return r.opGen
+}
+
+func (r *Replay) opReady(gen uint64) error {
+	if err := r.ready(); err != nil {
+		return err
+	}
+	if gen != r.opGen {
+		return nil
 	}
 	return nil
 }
@@ -310,20 +384,32 @@ func (r *Replay) retarget() {
 	}
 }
 
-func (r *Replay) advance(n int, retarget bool) error {
-	if err := r.ready(); err != nil {
+func (r *Replay) advance(n int, retarget bool, gen uint64) error {
+	if err := r.opReady(gen); err != nil {
 		return err
 	}
 	if n <= 0 {
 		return nil
 	}
 	for n > 0 && r.cursor < len(r.base[0]) {
+		if err := r.ready(); err != nil {
+			return err
+		}
+		if gen != r.opGen {
+			return nil
+		}
 		if err := r.revealOne(); err != nil {
 			return err
 		}
 		n--
+		if err := r.ready(); err != nil {
+			return err
+		}
+		if gen != r.opGen {
+			return nil
+		}
 	}
-	if retarget {
+	if retarget && gen == r.opGen && r.chart.replay == r && !r.closed {
 		r.retarget()
 	}
 	return nil
@@ -337,12 +423,15 @@ func (r *Replay) revealOne() error {
 		}
 	} else {
 		for i := range r.base {
-			if err := r.chart.AppendBar(r.chart.panes[i].name, r.base[i][idx]); err != nil {
+			if err := r.chart.appendBar(r.chart.panes[i].name, r.base[i][idx]); err != nil {
 				return err
 			}
 		}
 	}
 	r.cursor++
+	for i := range r.chart.panes {
+		r.chart.reindexMarks(&r.chart.panes[i], r.markerView())
+	}
 	r.fire(idx)
 	return nil
 }
@@ -362,9 +451,9 @@ func (r *Replay) revealAggregate(idx int) error {
 		name := r.chart.panes[i].name
 		var err error
 		if same {
-			err = r.chart.UpdateLast(name, c)
+			err = r.chart.updateLast(name, c)
 		} else {
-			err = r.chart.AppendBar(name, c)
+			err = r.chart.appendBar(name, c)
 		}
 		if err != nil {
 			return err
@@ -396,6 +485,29 @@ func (r *Replay) aggregated() bool {
 	return cur > base
 }
 
+// markerView returns the currently displayed period and the exclusive
+// end of the revealed base interval. The next hidden base open is the
+// boundary while a suffix exists; a gap in the source therefore cannot
+// make a hidden marker visible through the preceding bar's nominal
+// period.
+func (r *Replay) markerView() markerView {
+	view := markerView{period: r.chart.period, bounded: true}
+	if r == nil || r.chart == nil || len(r.base) == 0 {
+		return view
+	}
+	switch {
+	case r.cursor <= 0:
+		return view
+	case r.cursor < len(r.base[0]):
+		view.until = r.base[0][r.cursor].Time
+		return view
+	}
+	if step, err := r.basePeriod.Duration(); err == nil && step > 0 {
+		view.until = r.base[0][r.cursor-1].Time.Add(step)
+	}
+	return view
+}
+
 // setPeriod aggregates the revealed prefix at p. It does not call the
 // data source. A period finer than the base series is ErrReplayPeriod.
 // Drawings are dropped, as they are on a normal period change, because
@@ -403,6 +515,10 @@ func (r *Replay) aggregated() bool {
 // mapped onto the new bars.
 func (r *Replay) setPeriod(p Period) error {
 	if err := r.ready(); err != nil {
+		return err
+	}
+	gen := r.nextOp()
+	if err := r.opReady(gen); err != nil {
 		return err
 	}
 	if !p.Valid() {
@@ -430,6 +546,9 @@ func (r *Replay) setPeriod(p Period) error {
 	r.chart.crossIndex = -1
 	r.chart.crossPane = -1
 	r.rebuild()
+	if gen != r.opGen {
+		return nil
+	}
 	return nil
 }
 
@@ -446,7 +565,7 @@ func (r *Replay) rebuild() {
 		s.held = nil
 		s.more = false
 		a.recalc(s)
-		a.reindexMarks(s)
+		a.reindexMarks(s, r.markerView())
 	}
 	if a.crossIndex >= a.bars() {
 		a.crossIndex = -1

@@ -1,0 +1,65 @@
+package kline
+
+import (
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestReviewPeriodSwitchReindexesLastBarWithNewPeriod(t *testing.T) {
+	hour := Period{Span: 1, Unit: UnitHour}
+	four := Period{Span: 4, Unit: UnitHour}
+	start := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+	bar := Candle{Time: start, Open: 100, High: 101, Low: 99, Close: 100, Volume: 10}
+	for _, tc := range []struct {
+		name          string
+		before, after Period
+		wantVisible   bool
+	}{
+		{"coarsen", hour, four, true},
+		{"refine", four, hour, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			feed := &StubLiveSource{}
+			for _, p := range []Period{hour, four} {
+				if err := feed.SetBars("A", p, []Candle{bar}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			c := NewChart(ChartOptions{Source: feed, Symbols: []string{"A"}, Period: tc.before, Indicators: []string{}})
+			defer c.Close()
+			if err := c.SetMarkers("A", []Marker{{Time: start.Add(3 * time.Hour), Side: SideBuy, Label: "late_trade"}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.SetPeriod(tc.after); err != nil {
+				t.Fatal(err)
+			}
+			got := strings.Contains(c.Readout("A"), "late_trade")
+			t.Logf("period=%s markerBar=%d visible=%t readout=%q", c.Period(), c.panes[0].marks[0].bar, got, c.Readout("A"))
+			if got != tc.wantVisible {
+				t.Errorf("marker visibility=%t, want %t after switching %s -> %s", got, tc.wantVisible, tc.before, tc.after)
+			}
+		})
+	}
+}
+
+func TestReviewInitHeldCap(t *testing.T) {
+	hour := Period{Span: 1, Unit: UnitHour}
+	bars := Generate(600, 42)
+	feed := &StubLiveSource{}
+	if err := feed.SetBars("A", hour, bars); err != nil {
+		t.Fatal(err)
+	}
+	if err := feed.SetBars("B", hour, bars[:1]); err != nil {
+		t.Fatal(err)
+	}
+	c := NewChart(ChartOptions{Source: feed, Symbols: []string{"A", "B"}, Period: hour, Indicators: []string{}})
+	defer c.Close()
+	if err := c.LoadError(); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("bars=%d held=%d cap=%d alignmentError=%v", c.Bars(), len(c.panes[0].held), maxHeldBars, c.AlignError())
+	if len(c.panes[0].held) > maxHeldBars {
+		t.Errorf("init held=%d exceeds documented cap=%d", len(c.panes[0].held), maxHeldBars)
+	}
+}

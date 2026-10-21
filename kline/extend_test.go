@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/chart"
 )
 
 func TestLayoutPanesMatchBuiltinSplit(t *testing.T) {
@@ -19,7 +20,7 @@ func TestLayoutPanesMatchBuiltinSplit(t *testing.T) {
 		{[]string{"MA", "MACD", "BOLL", "KDJ"}, true, true},
 	}
 	for _, tc := range cases {
-		c := NewChart(ChartOptions{Indicators: tc.inds, Symbols: []string{"ALPHA"}})
+		c := NewChart(ChartOptions{Indicators: tc.inds, Symbols: []string{"600519"}})
 		got := c.layoutPanes(r, true)
 		want := SplitStack(r, true, tc.macd, tc.kdj)
 		if got.Price != want.Price || got.Volume != want.Volume || got.MACD != want.MACD || got.KDJ != want.KDJ || got.Time != want.Time || got.PriceAxis != want.PriceAxis || got.VolumeAxis != want.VolumeAxis || got.MACDAxis != want.MACDAxis || got.KDJAxis != want.KDJAxis {
@@ -52,5 +53,157 @@ func TestSplitManyStacksSubPanes(t *testing.T) {
 	}
 	if panes.Time.Y < prev.Y+prev.H-0.5 {
 		t.Fatalf("time %+v last %+v", panes.Time, prev)
+	}
+}
+
+type countedSub struct {
+	name string
+	draw int
+}
+
+func (s *countedSub) Name() string                                        { return s.name }
+func (*countedSub) PaneKind() string                                      { return PaneSub }
+func (s *countedSub) Calc([]Candle)                                       {}
+func (*countedSub) DrawMain(*ui.Painter, ui.Rect, Viewport, chart.Linear) {}
+func (s *countedSub) DrawSub(*ui.Painter, ui.Rect, Viewport)              { s.draw++ }
+func (*countedSub) ValueAt(int) string                                    { return "" }
+
+func TestSecondSameKindSubPaneGetsOwnBand(t *testing.T) {
+	const name = "TEST_FASTMACD"
+	if err := Register(Spec{
+		Name: name,
+		Kind: PaneSub,
+		New:  func() Indicator { return NewMACD(3, 6, 2) },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer Unregister(name)
+	c := NewChart(ChartOptions{
+		Symbols:    []string{"A"},
+		Indicators: []string{"MACD", name},
+	})
+	panes := c.layoutPanes(ui.Rect{W: 900, H: 600}, true)
+	inds := c.active(&c.panes[0])
+	layers := subLayers(panes, inds, 0, c.Bars()-1)
+	if len(layers) != 2 {
+		t.Fatalf("two enabled sub-pane indicators yielded %d layers", len(layers))
+	}
+	if layers[0].plot != panes.MACD {
+		t.Fatalf("built-in MACD band %+v, want %+v", layers[0].plot, panes.MACD)
+	}
+	if len(panes.Extra) != 1 || layers[1].plot != panes.Extra[0] {
+		t.Fatalf("second MACD extra bands %+v, layers %+v", panes.Extra, layers)
+	}
+	if layers[0].plot == layers[1].plot || layers[0].plot.Y+layers[0].plot.H > layers[1].plot.Y {
+		t.Fatalf("sub-pane bands overlap: %+v and %+v", layers[0].plot, layers[1].plot)
+	}
+}
+
+func TestSameKindSubPanePaintsEveryDrawSub(t *testing.T) {
+	const name = "TEST_SECOND_MACD"
+	if err := Register(Spec{
+		Name: name,
+		Kind: PaneSub,
+		New:  func() Indicator { return NewMACD(3, 6, 2) },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer Unregister(name)
+	c := NewChart(ChartOptions{
+		Symbols:    []string{"A"},
+		Indicators: []string{"MACD", name},
+	})
+	tt := ui.NewTester(c.View, 900, 700)
+	tt.Frame()
+	active := c.active(&c.panes[0])
+	if len(active) != 2 {
+		t.Fatalf("active indicators %d", len(active))
+	}
+	panes := c.painted[0]
+	layers := subLayers(panes, active, 0, c.Bars()-1)
+	if len(layers) != 2 || layers[1].ind != active[1] {
+		t.Fatalf("painted layers %+v, active %+v", layers, active)
+	}
+	style := Style{MACDDIF: ui.RGB(1, 2, 3), MACDDEA: ui.RGB(4, 5, 6)}
+	applyIndicatorStyle(active, panes, style)
+	for i, ind := range active {
+		macd, ok := ind.(*MACD)
+		if !ok {
+			t.Fatalf("active %d is %T", i, ind)
+		}
+		if macd.DIFColor != style.MACDDIF || macd.DEAColor != style.MACDDEA {
+			t.Fatalf("MACD %d kept colors %+v/%+v, want the theme", i, macd.DIFColor, macd.DEAColor)
+		}
+	}
+}
+
+type nilSeriesIndicator struct {
+	draw int
+}
+
+func (*nilSeriesIndicator) Name() string     { return "TEST_NIL_SERIES" }
+func (*nilSeriesIndicator) PaneKind() string { return PaneMain }
+func (*nilSeriesIndicator) Calc([]Candle)    {}
+func (s *nilSeriesIndicator) DrawMain(p *ui.Painter, r ui.Rect, _ Viewport, _ chart.Linear) {
+	s.draw++
+	p.Fill(ui.Rect{X: r.X + 10, Y: r.Y + 10, W: 10, H: 10}, ui.RGB(255, 0, 255), 0)
+}
+func (*nilSeriesIndicator) DrawSub(*ui.Painter, ui.Rect, Viewport) {}
+func (*nilSeriesIndicator) ValueAt(int) string                     { return "" }
+func (*nilSeriesIndicator) Series() [][]float64                    { return nil }
+func (*nilSeriesIndicator) LineColors() []ui.Color                 { return nil }
+
+type emptySeriesIndicator struct {
+	nilSeriesIndicator
+}
+
+func (*emptySeriesIndicator) Name() string           { return "TEST_EMPTY_SERIES" }
+func (*emptySeriesIndicator) Series() [][]float64    { return [][]float64{} }
+func (*emptySeriesIndicator) LineColors() []ui.Color { return nil }
+
+func TestNilSeriesLinePlotFallsBackToDrawMain(t *testing.T) {
+	nilLines := &nilSeriesIndicator{}
+	emptyLines := &emptySeriesIndicator{}
+	panes := Split(ui.Rect{W: 400, H: 300})
+	tt := ui.NewTester(func(c *ui.Context) {
+		ui.Box(c).Fill().Draw(func(p *ui.Painter, _ ui.Rect) {
+			Paint(p, panes, Generate(30, 1), []Indicator{nilLines}, Viewport{BarWidth: 8}, Pointer{}, -1, DarkDefault())
+			Paint(p, panes, Generate(30, 1), []Indicator{emptyLines}, Viewport{BarWidth: 8}, Pointer{}, -1, DarkDefault())
+		})
+	}, 400, 300)
+	tt.Frame()
+	if nilLines.draw < 1 {
+		t.Fatal("nil Series did not call DrawMain")
+	}
+	if emptyLines.draw != 0 {
+		t.Fatalf("non-nil empty Series called DrawMain %d times", emptyLines.draw)
+	}
+}
+
+func TestBuiltInIndicatorNamesStayReserved(t *testing.T) {
+	for _, name := range []string{"MA", "MACD", "BOLL", "KDJ"} {
+		Unregister(name)
+		found := false
+		for _, spec := range Registry() {
+			if spec.Name == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("Unregister removed built-in %s", name)
+		}
+		err := Register(Spec{
+			Name: name,
+			Kind: PaneSub,
+			New:  func() Indicator { return NewMACD(12, 26, 9) },
+		})
+		if err == nil {
+			t.Fatalf("Register replaced built-in %s", name)
+		}
+	}
+	c := NewChart(ChartOptions{Indicators: []string{"MA"}})
+	if !c.IndicatorOn("MA") || c.IndicatorEnabled("MA") == nil {
+		t.Fatal("new chart lost the built-in MA after Unregister")
 	}
 }

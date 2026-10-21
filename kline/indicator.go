@@ -85,8 +85,11 @@ type Spec struct {
 }
 
 var (
-	registryMu sync.RWMutex
-	registry   []Spec
+	registryMu         sync.RWMutex
+	registry           []Spec
+	reservedIndicators = map[string]bool{
+		"MA": true, "MACD": true, "BOLL": true, "KDJ": true,
+	}
 )
 
 // Register appends an indicator. Name, Kind, and New are required.
@@ -97,6 +100,10 @@ var (
 // A chart that already exists picks the spec up from SyncIndicators.
 // Register, Unregister, and Registry can be called from any goroutine.
 func Register(spec Spec) error {
+	return register(spec, false)
+}
+
+func register(spec Spec, builtin bool) error {
 	if spec.Name == "" || spec.New == nil {
 		return fmt.Errorf("kline: indicator %q needs a name and constructor", spec.Name)
 	}
@@ -110,10 +117,13 @@ func Register(spec Spec) error {
 	if got := ind.PaneKind(); got != spec.Kind {
 		return fmt.Errorf("%w: %s registered %s, constructor returned %s", ErrIndicatorKind, spec.Name, spec.Kind, got)
 	}
+	if !builtin && reservedIndicators[spec.Name] {
+		return fmt.Errorf("%w: %s is reserved", ErrDuplicateIndicator, spec.Name)
+	}
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	for _, have := range registry {
-		if have.Name == spec.Name {
+		if have.Name == spec.Name && (builtin || !reservedIndicators[spec.Name]) {
 			return fmt.Errorf("%w: %s", ErrDuplicateIndicator, spec.Name)
 		}
 	}
@@ -121,10 +131,12 @@ func Register(spec Spec) error {
 	return nil
 }
 
-// Unregister removes name from the indicator list. An unknown name is
-// a no-op. A chart that already copied the spec keeps it until
-// SyncIndicators.
+// Unregister removes a host indicator. An unknown or built-in name is a
+// no-op. A chart that already copied the spec keeps it until SyncIndicators.
 func Unregister(name string) {
+	if reservedIndicators[name] {
+		return
+	}
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	next := make([]Spec, 0, len(registry))
@@ -137,7 +149,8 @@ func Unregister(name string) {
 }
 
 func mustRegister(spec Spec) {
-	if err := Register(spec); err != nil {
+	// Package init creates the built-ins that define the reserved set.
+	if err := register(spec, true); err != nil {
 		panic(err)
 	}
 }

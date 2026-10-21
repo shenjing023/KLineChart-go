@@ -97,6 +97,42 @@ func (a *Chart) paneOf(symbol string) int {
 	return -1
 }
 
+// maxHeldBars caps how many bars one symbol may hold while it waits for
+// the others to reach the same open time. A feed that stops, or one that
+// runs far ahead, would otherwise grow the pending list for the life of
+// the chart. The newest bars are kept, because those are the ones the
+// other symbols can still match; the oldest are dropped and reported
+// through AlignError.
+const maxHeldBars = 512
+
+// hold appends bar to s's pending list and enforces maxHeldBars. It
+// reports whether any older pending bar had to be dropped.
+func (a *Chart) hold(s *series, bar Candle) bool {
+	s.held = append(s.held, bar)
+	return trimHeld(a, s)
+}
+
+// trimHeld keeps the newest pending window by moving the retained
+// tail to the front of the reusable slice. Initial loads and live
+// appends share the cap arithmetic.
+func trimHeld(a *Chart, s *series) bool {
+	if len(s.held) <= maxHeldBars {
+		return false
+	}
+	drop := len(s.held) - maxHeldBars
+	oldest := s.held[drop-1]
+	s.held = append(s.held[:0], s.held[drop:]...)
+	if a != nil {
+		a.alignErr = heldDropError(s.name, drop, oldest)
+	}
+	return true
+}
+
+func heldDropError(name string, drop int, oldest Candle) error {
+	return fmt.Errorf("%w: %s dropped %d held bar(s) up to %s, the pending window is %d",
+		ErrMisaligned, name, drop, oldest.Time.UTC().Format("2006-01-02 15:04"), maxHeldBars)
+}
+
 // applyLiveBar takes one bar for symbol. The symbol's newest open time,
 // held or shown, is revised in place. A newer open time is held until
 // every symbol has a bar at that open time, then those bars are appended
@@ -131,7 +167,7 @@ func (a *Chart) applyLiveBar(symbol string, bar Candle) {
 	}
 	before := a.bars()
 	pinned := a.pinnedRight()
-	s.held = append(s.held, bar)
+	a.hold(s, bar)
 	if !a.promote() {
 		return
 	}

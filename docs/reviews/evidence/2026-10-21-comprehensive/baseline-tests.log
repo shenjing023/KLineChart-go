@@ -1,0 +1,5 @@
+ok  	github.com/shenjing023/KLineChart-go	19.313s
+ok  	github.com/shenjing023/KLineChart-go/examples/extend	20.607s
+ok  	github.com/shenjing023/KLineChart-go/examples/live	19.182s
+ok  	github.com/shenjing023/KLineChart-go/examples/replay	20.437s
+ok  	github.com/shenjing023/KLineChart-go/kline	27.441s

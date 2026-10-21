@@ -18,7 +18,7 @@ func TestDarkAndLightDefaultsFollowTheme(t *testing.T) {
 	if StyleFrom(nil) != dark {
 		t.Fatal("a nil theme uses the dark default")
 	}
-	if dark.Up != ui.RGB(38, 166, 154) || dark.Down != ui.RGB(239, 83, 80) {
+	if dark.Up != ui.RGB(239, 83, 80) || dark.Down != ui.RGB(38, 166, 154) {
 		t.Fatalf("candle colors %+v %+v", dark.Up, dark.Down)
 	}
 	if dark.LimitUp == (ui.Color{}) || dark.LimitDown == (ui.Color{}) || dark.LimitUp == dark.Up || dark.LimitDown == dark.Down {
@@ -28,7 +28,7 @@ func TestDarkAndLightDefaultsFollowTheme(t *testing.T) {
 		t.Fatal("limit paint starts off")
 	}
 	if dark.Up != light.Up || dark.Down != light.Down {
-		t.Fatal("rising stays green and falling stays red on both themes")
+		t.Fatal("rising stays red and falling stays green on both themes")
 	}
 	if dark.Plot == light.Plot || dark.Grid == light.Grid || dark.Cross == light.Cross {
 		t.Fatalf("plot, grid, and crosshair should follow the theme: dark %+v light %+v", dark, light)
@@ -66,6 +66,96 @@ func TestPartialStyleKeepsExplicitTransparent(t *testing.T) {
 	got := completeStyle(full)
 	if got.Grid.A != 0 {
 		t.Fatal("a fully specified transparent grid was replaced")
+	}
+}
+
+// clearCase names one Clear bit and the field it empties.
+type clearCase struct {
+	name string
+	bit  ColorClear
+	get  func(Style) ui.Color
+}
+
+func clearCases() []clearCase {
+	return []clearCase{
+		{"Up", ClearUp, func(s Style) ui.Color { return s.Up }},
+		{"Down", ClearDown, func(s Style) ui.Color { return s.Down }},
+		{"LimitUp", ClearLimitUp, func(s Style) ui.Color { return s.LimitUp }},
+		{"LimitDown", ClearLimitDown, func(s Style) ui.Color { return s.LimitDown }},
+		{"MA5", ClearMA5, func(s Style) ui.Color { return s.MA5 }},
+		{"MA20", ClearMA20, func(s Style) ui.Color { return s.MA20 }},
+		{"MACDDIF", ClearMACDDIF, func(s Style) ui.Color { return s.MACDDIF }},
+		{"MACDDEA", ClearMACDDEA, func(s Style) ui.Color { return s.MACDDEA }},
+		{"MACDZero", ClearMACDZero, func(s Style) ui.Color { return s.MACDZero }},
+		{"BOLLMid", ClearBOLLMid, func(s Style) ui.Color { return s.BOLLMid }},
+		{"BOLLUp", ClearBOLLUp, func(s Style) ui.Color { return s.BOLLUp }},
+		{"BOLLLow", ClearBOLLLow, func(s Style) ui.Color { return s.BOLLLow }},
+		{"KDJK", ClearKDJK, func(s Style) ui.Color { return s.KDJK }},
+		{"KDJD", ClearKDJD, func(s Style) ui.Color { return s.KDJD }},
+		{"KDJJ", ClearKDJJ, func(s Style) ui.Color { return s.KDJJ }},
+		{"Grid", ClearGrid, func(s Style) ui.Color { return s.Grid }},
+		{"Cross", ClearCross, func(s Style) ui.Color { return s.Cross }},
+		{"Text", ClearText, func(s Style) ui.Color { return s.Text }},
+		{"Muted", ClearMuted, func(s Style) ui.Color { return s.Muted }},
+		{"Plot", ClearPlot, func(s Style) ui.Color { return s.Plot }},
+		{"VolumeBg", ClearVolumeBg, func(s Style) ui.Color { return s.VolumeBg }},
+		{"LabelFill", ClearLabelFill, func(s Style) ui.Color { return s.LabelFill }},
+		{"LabelText", ClearLabelText, func(s Style) ui.Color { return s.LabelText }},
+		{"Overlay", ClearOverlay, func(s Style) ui.Color { return s.Overlay }},
+		{"OverlayHot", ClearOverlayHot, func(s Style) ui.Color { return s.OverlayHot }},
+		{"Compare", ClearCompare, func(s Style) ui.Color { return s.Compare }},
+		{"Buy", ClearBuy, func(s Style) ui.Color { return s.Buy }},
+		{"Sell", ClearSell, func(s Style) ui.Color { return s.Sell }},
+	}
+}
+
+// Every Clear bit empties its field, and no bit empties a neighbour.
+func TestClearBitsClearTheirFields(t *testing.T) {
+	cases := clearCases()
+	seen := make(map[ColorClear]string, len(cases))
+	for _, tc := range cases {
+		if prev, dup := seen[tc.bit]; dup {
+			t.Fatalf("%s and %s share a bit", prev, tc.name)
+		}
+		seen[tc.bit] = tc.name
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// A fully specified palette keeps its fields as given, so
+			// only the Clear bit can empty one.
+			s := DarkDefault()
+			s.Clear = tc.bit
+			got := completeStyle(s)
+			if c := tc.get(got); c != (ui.Color{}) {
+				t.Fatalf("%s stayed %+v", tc.name, c)
+			}
+			for _, other := range cases {
+				if other.name == tc.name {
+					continue
+				}
+				if other.get(got) == (ui.Color{}) {
+					t.Fatalf("clearing %s also emptied %s", tc.name, other.name)
+				}
+			}
+		})
+	}
+
+	// A partial palette takes the same bits after the merge.
+	partial := completeStyle(Style{Up: ui.RGB(9, 9, 9), Clear: ClearGrid | ClearOverlay | ClearBuy})
+	if partial.Grid != (ui.Color{}) || partial.Overlay != (ui.Color{}) || partial.Buy != (ui.Color{}) {
+		t.Fatalf("partial clear: grid %+v overlay %+v buy %+v", partial.Grid, partial.Overlay, partial.Buy)
+	}
+	if partial.Plot.A == 0 || partial.Sell == (ui.Color{}) {
+		t.Fatalf("partial clear emptied an unset neighbour: %+v", partial)
+	}
+
+	// Every bit value is covered by the table.
+	var all ColorClear
+	for _, tc := range cases {
+		all |= tc.bit
+	}
+	if all != ColorClear(1<<len(cases))-1 {
+		t.Fatalf("bits cover %b, want %b", all, ColorClear(1<<len(cases))-1)
 	}
 }
 
