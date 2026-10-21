@@ -6,15 +6,20 @@ import (
 )
 
 // setPeriod reloads every pane with Kind=init from the current source.
-// An invalid p is rejected before the source is asked. A failed GetBars,
-// or windows that cannot share one bar index, leave the bars, the period,
-// and the subscription as they were.
+// An invalid p is rejected before the source is asked, and so is a
+// period no source serves, such as a week: that one is only reachable by
+// aggregating bars the chart already holds. A failed GetBars, or windows
+// that cannot share one bar index, leave the bars, the period, and the
+// subscription as they were.
 func (a *Chart) setPeriod(p Period) error {
 	if a.symbolErr != nil {
 		return a.symbolErr
 	}
 	if !p.Valid() {
 		return ErrInvalidPeriod
+	}
+	if !p.Loadable() {
+		return fmt.Errorf("%w: %s is an aggregate, not a source period", ErrInvalidPeriod, p)
 	}
 	next, dropErr, err := a.fetchInit(a.src, p)
 	if err != nil {

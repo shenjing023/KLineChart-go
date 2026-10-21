@@ -349,17 +349,19 @@ func ExamplePeriod() {
 		{Span: 15, Unit: kline.UnitMinute},
 		{Span: 4, Unit: kline.UnitHour},
 		{Span: 1, Unit: kline.UnitDay},
+		{Span: 1, Unit: kline.UnitWeek},
 	} {
 		d, err := p.Duration()
-		fmt.Printf("%s valid=%v duration=%v err=%v\n", p, p.Valid(), d, err)
+		fmt.Printf("%s valid=%v loadable=%v duration=%v err=%v\n", p, p.Valid(), p.Loadable(), d, err)
 	}
-	bad := kline.Period{Span: 0, Unit: "week"}
+	bad := kline.Period{Span: 0, Unit: "day"}
 	fmt.Printf("%s valid=%v\n", bad, bad.Valid())
 	// Output:
-	// 15m valid=true duration=15m0s err=<nil>
-	// 4h valid=true duration=4h0m0s err=<nil>
-	// 1d valid=true duration=24h0m0s err=<nil>
-	// 0 week valid=false
+	// 15m valid=true loadable=true duration=15m0s err=<nil>
+	// 4h valid=true loadable=true duration=4h0m0s err=<nil>
+	// 1d valid=true loadable=true duration=24h0m0s err=<nil>
+	// 1w valid=true loadable=false duration=168h0m0s err=<nil>
+	// 0d valid=false
 }
 
 // ExampleFormatPrice shows the price formatting the chart uses, and the

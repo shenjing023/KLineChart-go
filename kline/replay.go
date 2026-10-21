@@ -447,18 +447,18 @@ func (r *Replay) revealOne() error {
 }
 
 func (r *Replay) revealAggregate(idx int) error {
-	d, err := r.chart.period.Duration()
-	if err != nil {
+	p := r.chart.period
+	if _, err := p.Duration(); err != nil {
 		return err
 	}
 	loc := r.chart.bucketZone()
-	bt := bucketOpen(r.base[0], idx, d, loc)
+	bt := bucketOpen(r.base[0], idx, p, loc)
 	same := false
 	if n := len(r.chart.panes[0].candles); n > 0 {
 		same = r.chart.panes[0].candles[n-1].Time.Equal(bt)
 	}
 	for i := range r.base {
-		c := aggregateOne(r.base[i], idx, d, loc)
+		c := aggregateOne(r.base[i], idx, p, loc)
 		name := r.chart.panes[i].name
 		var err error
 		if same {
@@ -602,22 +602,25 @@ func (r *Replay) displayed(sym int) []Candle {
 	if !r.aggregated() {
 		return cloneCandles(prefix)
 	}
-	d, err := r.chart.period.Duration()
-	if err != nil {
+	p := r.chart.period
+	if _, err := p.Duration(); err != nil {
 		return cloneCandles(prefix)
 	}
-	return aggregate(prefix, d, r.chart.bucketZone())
+	return aggregate(prefix, p, r.chart.bucketZone())
 }
 
-func aggregate(cs []Candle, d time.Duration, loc *time.Location) []Candle {
-	if len(cs) == 0 || d <= 0 {
+func aggregate(cs []Candle, p Period, loc *time.Location) []Candle {
+	if len(cs) == 0 {
+		return nil
+	}
+	if _, err := p.Duration(); err != nil {
 		return nil
 	}
 	out := make([]Candle, 0, len(cs)/4+1)
 	var cur Candle
 	have := false
 	for i, b := range cs {
-		bt := bucketOpen(cs, i, d, loc)
+		bt := bucketOpen(cs, i, p, loc)
 		if !have || !bt.Equal(cur.Time) {
 			if have {
 				out = append(out, cur)
@@ -641,10 +644,10 @@ func aggregate(cs []Candle, d time.Duration, loc *time.Location) []Candle {
 	return out
 }
 
-func aggregateOne(cs []Candle, idx int, d time.Duration, loc *time.Location) Candle {
-	bt := bucketOpen(cs, idx, d, loc)
+func aggregateOne(cs []Candle, idx int, p Period, loc *time.Location) Candle {
+	bt := bucketOpen(cs, idx, p, loc)
 	start := idx
-	for start > 0 && bucketOpen(cs, start-1, d, loc).Equal(bt) {
+	for start > 0 && bucketOpen(cs, start-1, p, loc).Equal(bt) {
 		start--
 	}
 	b0 := cs[start]
@@ -670,21 +673,35 @@ func aggregateOne(cs []Candle, idx int, d time.Duration, loc *time.Location) Can
 // start, such as 09:30 for an A-share day, so the aggregate has to name
 // that same instant; otherwise a marker, a drawing, and the readout would
 // not line up between a replay and a plain load of the same period.
-func bucketOpen(cs []Candle, i int, d time.Duration, loc *time.Location) time.Time {
-	if d%(24*time.Hour) != 0 {
-		return bucketFloor(cs[i].Time, d, loc)
+//
+// A week follows the day: it names the first base bar of the local
+// calendar week, which starts on Monday. Two bars are in one bucket when
+// bucketFloor puts them on the same calendar unit, so the walking loop
+// below is shared.
+func bucketOpen(cs []Candle, i int, p Period, loc *time.Location) time.Time {
+	d, err := p.Duration()
+	if err != nil {
+		return cs[i].Time
 	}
-	floor := bucketFloor(cs[i].Time, d, loc)
+	if d%(24*time.Hour) != 0 {
+		return bucketFloor(cs[i].Time, p, loc)
+	}
+	floor := bucketFloor(cs[i].Time, p, loc)
 	start := i
-	for start > 0 && bucketFloor(cs[start-1].Time, d, loc).Equal(floor) {
+	for start > 0 && bucketFloor(cs[start-1].Time, p, loc).Equal(floor) {
 		start--
 	}
 	return cs[start].Time
 }
 
-// bucketFloor is the nominal open of the bucket that contains t.
-func bucketFloor(t time.Time, d time.Duration, loc *time.Location) time.Time {
-	if d <= 0 {
+// bucketFloor is the nominal open of the bucket that contains t. Days
+// and weeks floor on the local calendar; anything else floors on the
+// epoch. A week starts on Monday, following the local trading calendar
+// rather than an ISO week number, so a week that spans New Year belongs
+// to whichever Monday started it.
+func bucketFloor(t time.Time, p Period, loc *time.Location) time.Time {
+	d, err := p.Duration()
+	if err != nil || d <= 0 {
 		return t.UTC()
 	}
 	step := d.Nanoseconds()
@@ -694,6 +711,12 @@ func bucketFloor(t time.Time, d time.Duration, loc *time.Location) time.Time {
 	if d%(24*time.Hour) == 0 {
 		local := t.In(bucketLocation(loc))
 		y, m, day := local.Date()
+		if p.Unit == UnitWeek {
+			// Go counts Sunday as 0 and Monday as 1, so this shifts a
+			// Monday back to itself and a Sunday back six days.
+			monday := day - int(local.Weekday()+6)%7
+			return time.Date(y, m, monday, 0, 0, 0, 0, local.Location())
+		}
 		return time.Date(y, m, day, 0, 0, 0, 0, local.Location())
 	}
 	unix := t.UTC().UnixNano()

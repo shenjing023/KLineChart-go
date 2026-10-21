@@ -136,7 +136,10 @@ func NewChart(opts ChartOptions) *Chart {
 		symbols = nil
 	}
 	period := opts.Period
-	if !period.Valid() {
+	// A week is valid but no source serves it, so a chart cannot open on
+	// one. It falls back to the demo default like any other unusable
+	// period; SetPeriod reports the reason for a host that asks later.
+	if !period.Valid() || !period.Loadable() {
 		period = Period{Span: 1, Unit: UnitHour}
 	}
 	zone := opts.Location
@@ -636,6 +639,70 @@ func (a *Chart) ResetView() {
 // same open time on each symbol. Live bars still waiting for another
 // symbol to reach their open time are not counted.
 func (a *Chart) Bars() int { return a.bars() }
+
+// LastBarForming reports whether the newest bar is a bucket that can
+// still change. It is true only for a coarser period during a replay:
+// the revealed prefix has not reached the end of that day or week, so
+// the next reveal revises this bar instead of appending one. A host
+// draws its "in progress" marker from it, for example a dashed frame on
+// the last weekly candle.
+//
+// A plain load, a live feed, and AppendBar always produce a finished bar,
+// so this is false there. A replay on the base period is false too: each
+// reveal is a whole bar.
+func (a *Chart) LastBarForming() bool {
+	if a == nil || a.replay == nil {
+		return false
+	}
+	return a.replay.LastBarForming()
+}
+
+// LastBarForming is the replay's answer for the attached chart.
+func (r *Replay) LastBarForming() bool {
+	if r == nil || r.chart == nil || r.cursor <= 0 || len(r.base) == 0 {
+		return false
+	}
+	if !r.aggregated() {
+		return false
+	}
+	idx := r.cursor - 1
+	if idx >= len(r.base[0]) {
+		return false
+	}
+	return !r.bucketEndsAt(idx)
+}
+
+// bucketEndsAt reports whether the base bar at idx is the last one in
+// its aggregate bucket. It answers from the revealed prefix alone: the
+// bar after idx may be hidden, and reading it would let the future move
+// what the chart paints.
+//
+// A bucket is finished when no later bar could still join it. For an
+// epoch-aligned period that is one step after the bar. For a week it is
+// the last local weekday: a Monday-to-Thursday bar can still be joined
+// by a later weekday in the same Monday week, and a Friday bar cannot.
+// A week whose last trading day is a holiday still reports forming
+// until it is revealed, which is the honest answer without a trading
+// calendar: the chart cannot prove the bucket is closed.
+func (r *Replay) bucketEndsAt(idx int) bool {
+	if idx < 0 || idx >= len(r.base[0]) {
+		return true
+	}
+	p := r.chart.period
+	if p.Unit == UnitWeek {
+		local := r.base[0][idx].Time.In(bucketLocation(r.chart.bucketZone()))
+		return local.Weekday() == time.Friday ||
+			local.Weekday() == time.Saturday ||
+			local.Weekday() == time.Sunday
+	}
+	d, err := r.basePeriod.Duration()
+	if err != nil || d <= 0 {
+		return true
+	}
+	loc := r.chart.bucketZone()
+	next := r.base[0][idx].Time.Add(d)
+	return !bucketFloor(next, p, loc).Equal(bucketFloor(r.base[0][idx].Time, p, loc))
+}
 
 // Symbols is the symbol list, in pane order.
 func (a *Chart) Symbols() []string {

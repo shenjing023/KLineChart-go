@@ -127,14 +127,20 @@ func TestSyntheticInvalidPeriod(t *testing.T) {
 	cases := []Period{
 		{Span: 0, Unit: UnitHour},
 		{Span: -1, Unit: UnitDay},
-		{Span: 1, Unit: "week"},
 		{Span: 1, Unit: ""},
+		// A week is a valid period but no source serves it: the chart
+		// builds a week by aggregating daily bars, so GetBars refuses it.
+		// The two halves are different answers and this test pins both.
+		{Span: 1, Unit: UnitWeek},
 	}
 	for _, p := range cases {
 		_, _, err := src.GetBars(BarRequest{Symbol: "600519", Period: p, Kind: KindInit, Limit: 10})
 		if !errors.Is(err, ErrInvalidPeriod) {
 			t.Fatalf("period %+v err %v", p, err)
 		}
+	}
+	if p := (Period{Span: 1, Unit: UnitWeek}); !p.Valid() || p.Loadable() {
+		t.Fatalf("1w Valid=%v Loadable=%v, want true and false", p.Valid(), p.Loadable())
 	}
 	_, _, err := src.GetBars(BarRequest{
 		Symbol: "600519", Period: Period{Span: 1, Unit: UnitHour}, Kind: KindBackward, Limit: 10,

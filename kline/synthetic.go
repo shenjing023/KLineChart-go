@@ -57,6 +57,12 @@ func (s *SyntheticSource) GetBars(req BarRequest) ([]Candle, bool, error) {
 	if !req.Period.Valid() {
 		return nil, false, ErrInvalidPeriod
 	}
+	if !req.Period.Loadable() {
+		// A week has no session calendar here: the chart builds it by
+		// aggregating daily bars, so asking this source for one is a
+		// request it cannot serve rather than a walk it should invent.
+		return nil, false, fmt.Errorf("%w: %s has no synthetic calendar", ErrInvalidPeriod, req.Period)
+	}
 	limit := req.Limit
 	if limit <= 0 {
 		limit = DefaultLimit

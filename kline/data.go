@@ -8,10 +8,17 @@ import (
 )
 
 const (
-	// UnitMinute, UnitHour, and UnitDay are the period units a source accepts.
+	// UnitMinute, UnitHour, UnitDay, and UnitWeek are the period units.
+	// A DataSource serves the first three; UnitWeek is an aggregate the
+	// chart builds from daily bars, so GetBars refuses it.
 	UnitMinute = "minute"
 	UnitHour   = "hour"
 	UnitDay    = "day"
+	// UnitWeek is a calendar week. It is only reachable as a replay or
+	// aggregate period: a week cannot be requested from a source, and
+	// SyntheticSource has no week calendar, so a plain load of 1w
+	// returns ErrInvalidPeriod.
+	UnitWeek = "week"
 
 	// KindInit loads the latest window. KindForward loads bars strictly
 	// before Anchor. KindBackward is reserved: the chart never sends it,
@@ -51,11 +58,23 @@ func (p Period) Valid() bool {
 		return false
 	}
 	switch p.Unit {
-	case UnitMinute, UnitHour, UnitDay:
+	case UnitMinute, UnitHour, UnitDay, UnitWeek:
 		return true
 	default:
 		return false
 	}
+}
+
+// Loadable reports whether a DataSource serves p directly. A week is an
+// aggregate the chart builds from daily bars, so GetBars refuses it and
+// Loadable is false even though Valid is true. A period that is not
+// loadable can still be reached during a replay, where the chart
+// aggregates the revealed prefix.
+func (p Period) Loadable() bool {
+	if !p.Valid() {
+		return false
+	}
+	return p.Unit != UnitWeek
 }
 
 // Duration returns the bar width. Invalid periods return ErrInvalidPeriod.
@@ -74,6 +93,8 @@ func (p Period) Duration() (time.Duration, error) {
 		unit = time.Hour
 	case UnitDay:
 		unit = 24 * time.Hour
+	case UnitWeek:
+		unit = 7 * 24 * time.Hour
 	default:
 		return 0, ErrInvalidPeriod
 	}
@@ -92,6 +113,8 @@ func (p Period) String() string {
 		return fmt.Sprintf("%dh", p.Span)
 	case UnitDay:
 		return fmt.Sprintf("%dd", p.Span)
+	case UnitWeek:
+		return fmt.Sprintf("%dw", p.Span)
 	default:
 		return fmt.Sprintf("%d %s", p.Span, p.Unit)
 	}
