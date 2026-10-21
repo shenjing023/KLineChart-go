@@ -6,7 +6,7 @@
 
 **Architecture:** 以现有 `kline.Viewport` + 多 pane 共享十字线为核；新增可替换的 `DataSource`（先本地合成，接口对齐 KLineChart DataLoader 语义）；指标与画线作为独立层挂到 pane，不塞进 `Paint` 巨石函数；每一阶段合入 `main` 后可独立演示与测试。
 
-**Tech Stack:** Go 1.27+、MyGo v0.5.5 Native UI、现有 `kline/` 包；对照参考 [KLineChart](https://klinecharts.com) API 语义（不移植 JS）。
+**Tech Stack:** Go 1.27+、MyGo v0.6.2 Native UI、现有 `kline/` 包；对照参考 [KLineChart](https://klinecharts.com) API 语义（不移植 JS）。
 
 ## Global Constraints
 

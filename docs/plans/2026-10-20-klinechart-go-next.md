@@ -6,7 +6,7 @@
 
 **Architecture:** 继续以 `kline.DataSource` + `Indicator` + `Layer` 为扩展点；实时流用可选接口挂在源上，本仓不接 HTTP；指标与画线按现有注册/绘制路径增量扩展；最后把窗体逻辑收成可被 dapu 导入的 `Chart` 组件，`main` 退成薄 demo。
 
-**Tech Stack:** Go 1.27+、MyGo v0.5.5 Native UI、现有 `kline/`；语义对齐 [KLineChart](https://klinecharts.com)（不移植 JS）。
+**Tech Stack:** Go 1.27+、MyGo v0.6.2 Native UI、现有 `kline/`；语义对齐 [KLineChart](https://klinecharts.com)（不移植 JS）。
 
 ## Global Constraints
 

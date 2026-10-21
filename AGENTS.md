@@ -4,12 +4,13 @@ Overview, embed API, demo, and the full command list are in [README.md](README.m
 
 ## Commands
 
-From the repo root (Go 1.27.1, module pin `github.com/egoist/mygo` v0.5.5):
+From the repo root (Go 1.27.1, module pin `github.com/egoist/mygo` v0.6.2):
 
 - `go build -o k-line .` (`-o kline` writes inside the `kline/` package directory)
 - `go test ./... -count=1`
 - `go test ./... -race -count=1`
-- `go run ./examples/live` (also `extend` and `replay`; each opens a window or prints, and each has a headless test)
+- `go run ./examples/live` (also `host`, `history`, `extend`, `indicator`, `trades`, `paint`, `updates`, and `replay`; each has a headless test; only `extend` and `replay` take `-headless`)
+- The final desktop acceptance matrix lives in `docs/reviews/evidence/2026-10-21-final-window-acceptance.md`; a launch, `Responding` check, or headless tester is not an interaction PASS.
 - `go test ./kline -run Example -v` runs the API examples and compares their output
 - Bench check, without replacing the baseline: `go test ./kline -run '^$' -bench . -benchmem -count=6 > bench/new.txt` then `go tool benchstat bench/baseline.txt bench/new.txt`
 
