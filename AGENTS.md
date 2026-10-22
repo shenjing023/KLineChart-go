@@ -36,4 +36,5 @@ From the repo root (Go 1.27.1, module pin `github.com/egoist/mygo` v0.6.2):
 - A behavior change needs a test that fails on the old code.
 - Replace `bench/baseline.txt` only when `benchstat` on the same OS, arch, and Go is neutral or better. Time can move 7–20% between runs; bytes/op should stay flat.
 - Keep the exported API stable. Describe a behavior change in the README.
+- Never move a tag that has been pushed. A force-updated tag breaks `go.sum` for every downstream module and reads as "same version, different code". A fix or an addition after a tag gets a new patch tag (`v0.1.0` → `v0.1.1`); that is one `go.mod` line for a host, versus a checksum mismatch it has to debug. An unpublished local tag may be moved while it is still local only.
 - Do not add a feature that was not asked for. Perf and host DX are the standing work. `docs/plans/` is a record, not a queue.
