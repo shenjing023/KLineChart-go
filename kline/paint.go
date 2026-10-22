@@ -191,7 +191,7 @@ func drawLastPrice(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, scale c
 			color = style.Muted
 		}
 	}
-	drawDashedLine(p, price.X, price.X+price.W, y, color)
+	drawDashedLine(p, price, y, color)
 	drawTagColored(p, panes.PriceAxis.X+4, y, labels.price(last.Close), color, style)
 }
 
@@ -248,17 +248,22 @@ func drawExtremeTag(p *ui.Painter, x, y float32, text string, color ui.Color, ab
 	p.RichText(tx, ty, 0, span)
 }
 
-// drawDashedLine draws a horizontal dashed line by stepping short
-// segments. Painter has no dash pattern for a line, only for a rect.
-func drawDashedLine(p *ui.Painter, x0, y, x1 float32, color ui.Color) {
-	const dash, gap = 4, 3
-	for x := x0; x < x1; x += dash + gap {
-		end := x + dash
-		if end > x1 {
-			end = x1
-		}
-		p.Line(x, y, end, y, 1, color)
+// drawDashedLine draws a horizontal dashed line.
+//
+// It is one dashed stroke, not a run of short Lines. A Line is a Fill of
+// a 1-DIP-high rect, and Painter.snap rounds the rect's two edges to
+// device pixels independently; at a display scale above 1 the two edges
+// can round to the same device row and the whole segment disappears.
+// With a scale of 1.48 every segment vanished and the line was invisible,
+// while the axis tag (16 DIP tall) still drew. StrokeDashed keeps the
+// dash pattern in device space, so it survives the scaling.
+func drawDashedLine(p *ui.Painter, r ui.Rect, y float32, color ui.Color) {
+	if r.W <= 0 {
+		return
 	}
+	// Half a DIP above the target row so the 1-DIP stroke straddles it,
+	// which is the same pixel a solid Line would have covered.
+	p.StrokeDashed(ui.Rect{X: r.X, Y: y - 0.5, W: r.W, H: 1}, color, 0, 1)
 }
 
 // drawTagColored is drawTag with an explicit fill color, used by the last

@@ -400,3 +400,66 @@ func TestLastPriceTagHidesTheTickUnderIt(t *testing.T) {
 		t.Fatal("no last-price tag was drawn; the collision case was not set up")
 	}
 }
+
+// TestLastPriceLineSurvivesDisplayScaling is the bug a host found in a
+// real window: the dashed line did not reach the plot at all while the
+// axis tag drew normally. The cause was not the high DPI, it was the call
+// passing the row where the right edge belonged, so the stroke ran
+// vertically outside the plot. The test samples at the display scale, as
+// a real window does, and requires the dashes to span the plot.
+func TestLastPriceLineSurvivesDisplayScaling(t *testing.T) {
+	hot := ui.RGB(255, 0, 255)
+	style := DarkDefault()
+	style.LastPrice = hot
+	style.HighLow = ui.RGB(1, 1, 1)
+	c := NewChart(ChartOptions{
+		Symbols:    []string{"A"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{},
+		Source:     fixedSource{bars: hostBars(120)},
+		Location:   ashareLocation,
+		Style:      style,
+	})
+	for _, sc := range []float32{1, 1.48, 1.5, 2} {
+		tt := ui.NewTester(c.View, 1280, 800)
+		tt.SetScale(sc)
+		img := tt.Image()
+		panes := c.painted[0]
+		scale := MainScale(c.panes[0].candles, nil, c.vp, c.plotW)
+		last, _ := c.Bar("A", c.Bars()-1)
+		yDip := panes.Price.Y + (1-scale.At(last.Close))*panes.Price.H
+		row := int(yDip * sc)
+		b := img.Bounds()
+		// Count on the row the mark should be on, and one either side for
+		// rounding.
+		best := 0
+		for _, dr := range []int{-1, 0, 1} {
+			r := row + dr
+			if r < b.Min.Y || r >= b.Max.Y {
+				continue
+			}
+			n := 0
+			x0 := int(panes.Price.X * sc)
+			x1 := int((panes.Price.X + panes.Price.W) * sc)
+			if x1 > b.Max.X {
+				x1 = b.Max.X
+			}
+			for x := x0; x < x1; x++ {
+				p := img.RGBAAt(x, r)
+				if p.R == hot.R && p.G == hot.G && p.B == hot.B {
+					n++
+				}
+			}
+			if n > best {
+				best = n
+			}
+		}
+		// A dashed line covers roughly half the width. The tag alone is
+		// only its own width, so a missing line shows up far below this.
+		want := int(panes.Price.W * sc * 0.2)
+		if best < want {
+			t.Fatalf("scale %.2f: %d mark pixels across the plot, want at least %d of %.0f DIP",
+				sc, best, want, panes.Price.W)
+		}
+	}
+}
