@@ -222,3 +222,31 @@ func nearAnyPriceTick(scale chart.Linear, price ui.Rect, y float32) bool {
 	}
 	return false
 }
+
+// TestMinTimeAxisHeightIsHonest keeps the exported constant usable: at
+// that height every band a host expects is present and worth looking at.
+// The constant is a floor for hosts, not the layout's internal cutoff, so
+// it must be at or above what the split needs and must leave a readable
+// chart, not just a mathematically present strip.
+func TestMinTimeAxisHeightIsHonest(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		macd bool
+		kdj  bool
+	}{
+		{"price and volume", false, false},
+		{"one sub-pane", true, false},
+		{"two sub-panes", true, true},
+	} {
+		p := SplitStack(ui.Rect{W: 600, H: MinTimeAxisHeight}, true, tc.macd, tc.kdj)
+		if p.Time.H <= 0 {
+			t.Fatalf("%s: the time axis is gone at MinTimeAxisHeight", tc.name)
+		}
+		if p.Price.H < 30 {
+			t.Fatalf("%s: price plot is only %v DIP at MinTimeAxisHeight", tc.name, p.Price.H)
+		}
+		if p.Volume.H < 8 {
+			t.Fatalf("%s: volume strip is only %v DIP at MinTimeAxisHeight", tc.name, p.Volume.H)
+		}
+	}
+}

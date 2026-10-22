@@ -1078,6 +1078,18 @@ func (a *Chart) ResetView() {
 // symbol to reach their open time are not counted.
 func (a *Chart) Bars() int { return a.bars() }
 
+// MinTimeAxisHeight is the shortest box that keeps a usable chart with a
+// time axis: the strip itself, the pane gaps, a volume strip that can
+// still show a bar, and a price plot worth reading. Below this the
+// layout keeps the candles and gives the axis up, which is the right
+// trade for a chart that must render something but is not enough for a
+// host that needs the axis.
+//
+// In stack layout only the bottom pane draws the time axis, so the
+// bottom pane needs this much. The number is checked against the real
+// split by TestMinTimeAxisHeightIsHonest, so it cannot drift.
+const MinTimeAxisHeight = timeHeight + 3*paneGap + 20 /* volume */ + 60 /* price plot */
+
 // LastBarForming reports whether the newest bar is a bucket that can
 // still change. It is true only for a coarser period during a replay:
 // the revealed prefix has not reached the end of that day or week, so
