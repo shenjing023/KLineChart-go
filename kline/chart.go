@@ -330,7 +330,7 @@ func (a *Chart) layoutPanes(r ui.Rect, showTime bool) Panes {
 		panes = assignSubRects(splitMany(r, showTime, n), subs, n)
 	}
 	if a.paneHeights.Sub > 0 || a.paneHeights.Volume > 0 {
-		panes = applyPaneHeights(r, panes, showTime, a.paneHeights, n)
+		panes = applyPaneHeights(r, panes, showTime, a.paneHeights, subs)
 	}
 	return panes
 }
@@ -341,10 +341,12 @@ func (a *Chart) layoutPanes(r ui.Rect, showTime bool) Panes {
 // body, so a host that asks for too much still gets a usable chart
 // rather than an error it cannot act on.
 //
-// Band placement follows the fallback split: the same rects are open and
-// in the same order, so the host only changes heights, never which
-// indicator paints where.
-func applyPaneHeights(r ui.Rect, fallback Panes, showTime bool, h PaneHeights, subs int) Panes {
+// Band placement follows subBands, the same order layoutPanes used, so
+// the host only changes heights and never which indicator paints where.
+// The fallback's rects are used only for their built-in heights.
+func applyPaneHeights(r ui.Rect, fallback Panes, showTime bool, h PaneHeights, inds []Indicator) Panes {
+	order := subBands(inds)
+	subs := len(inds)
 	// One gap between price and volume, then one per sub-pane, then one
 	// before the time strip. The strip and that last gap both come out
 	// of the box before the bands are sized, so the bands fill exactly
@@ -367,12 +369,28 @@ func applyPaneHeights(r ui.Rect, fallback Panes, showTime bool, h PaneHeights, s
 	if h.Volume > 0 {
 		volH = float32(h.Volume)
 	}
-	// Heights in the fallback's own band order, so a single open sub-pane
-	// keeps the band it already had.
+	// Heights follow subBands, the same order layoutPanes used, not the
+	// fallback's MACD/KDJ fields. A single open sub-pane borrows the
+	// MACD geometry before assignSubRects moves it onto KDJ, so the
+	// fallback's KDJ rect is empty even though the KDJ band is the one
+	// being drawn. Reading the fallback fields directly dropped that
+	// band into Extra and left the sub-pane blank.
 	var heights []float32
-	for _, band := range []ui.Rect{fallback.MACD, fallback.KDJ} {
-		if band.H > 0 && len(heights) < subs {
-			heights = append(heights, band.H)
+	for i := range order {
+		switch order[i] {
+		case bandMACD:
+			heights = append(heights, fallback.MACD.H)
+		case bandKDJ:
+			// A single open sub-pane borrows the MACD geometry, so the
+			// fallback's KDJ rect is empty even when KDJ is the band
+			// being drawn. Fall back to the MACD height there.
+			kdj := fallback.KDJ.H
+			if kdj <= 0 {
+				kdj = fallback.MACD.H
+			}
+			heights = append(heights, kdj)
+		default:
+			heights = append(heights, extraSubH(fallback, len(heights)))
 		}
 	}
 	for len(heights) < subs {
@@ -408,15 +426,18 @@ func applyPaneHeights(r ui.Rect, fallback Panes, showTime bool, h PaneHeights, s
 	out.VolumeAxis = ui.Rect{X: fallback.VolumeAxis.X, Y: y, W: fallback.VolumeAxis.W, H: volH}
 	y += volH + paneGap
 	axisX := r.X + fallback.Price.W
-	targets := []*ui.Rect{&out.MACD, &out.KDJ}
-	axisTargets := []*ui.Rect{&out.MACDAxis, &out.KDJAxis}
-	open := []ui.Rect{fallback.MACD, fallback.KDJ}
+	// Placement follows the same band order as the heights above, so the
+	// KDJ band lands on KDJ even when the built-in split moved it there
+	// from the MACD slot.
 	for i, height := range heights {
 		rect := ui.Rect{X: r.X, Y: y, W: fallback.Price.W, H: height}
 		ax := ui.Rect{X: axisX, Y: y, W: fallback.PriceAxis.W, H: height}
-		if i < 2 && open[i].H > 0 {
-			*targets[i], *axisTargets[i] = rect, ax
-		} else {
+		switch {
+		case i < len(order) && order[i] == bandMACD:
+			out.MACD, out.MACDAxis = rect, ax
+		case i < len(order) && order[i] == bandKDJ:
+			out.KDJ, out.KDJAxis = rect, ax
+		default:
 			out.Extra = append(out.Extra, rect)
 			out.ExtraAxis = append(out.ExtraAxis, ax)
 		}
@@ -435,6 +456,15 @@ func applyPaneHeights(r ui.Rect, fallback Panes, showTime bool, h PaneHeights, s
 		}
 	}
 	return fitPanes(r, out)
+}
+
+// extraSubH is the built-in height of extra band i, for the case where
+// the host set no Sub and the fallback split still has a rect for it.
+func extraSubH(fallback Panes, i int) float32 {
+	if i >= 0 && i < len(fallback.Extra) {
+		return fallback.Extra[i].H
+	}
+	return fallback.MACD.H
 }
 
 // subBand is the band one open sub-pane indicator paints into.

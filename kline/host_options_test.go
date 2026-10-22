@@ -407,3 +407,84 @@ func TestPaneHeightsVolumeOnlyWithNoSubPanes(t *testing.T) {
 		t.Fatalf("bands plus gaps cover %v, want %v", got, panes.Time.Y+panes.Time.H-panes.Price.Y)
 	}
 }
+
+// TestPaneHeightsDrawsEverySubPaneCombination is the bug a host hit: a
+// single open sub-pane borrows the MACD geometry before assignSubRects
+// moves it onto KDJ, so applyPaneHeights saw an empty KDJ rect and put
+// the band in Extra. The sub-pane then had a height but no indicator in
+// it. Every combination must place its bands on the right fields.
+func TestPaneHeightsDrawsEverySubPaneCombination(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		inds []string
+		macd bool
+		kdj  bool
+	}{
+		{"KDJ alone", []string{"KDJ"}, false, true},
+		{"MACD alone", []string{"MACD"}, true, false},
+		{"MACD and KDJ", []string{"MACD", "KDJ"}, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := hostChart(t, ChartOptions{
+				Symbols:     []string{"A"},
+				Period:      Period{Span: 1, Unit: UnitDay},
+				Indicators:  tc.inds,
+				Source:      fixedSource{bars: hostBars(90)},
+				Location:    ashareLocation,
+				PaneHeights: PaneHeights{Sub: 65, Volume: 40},
+			})
+			panes := c.painted[0]
+			if tc.macd && !near(panes.MACD.H, 65, 1) {
+				t.Fatalf("MACD height %v, want 65", panes.MACD.H)
+			}
+			if tc.kdj && !near(panes.KDJ.H, 65, 1) {
+				t.Fatalf("KDJ height %v, want 65 (was dropped into Extra %v)", panes.KDJ.H, panes.Extra)
+			}
+			if !tc.macd && panes.MACD.H != 0 {
+				t.Fatalf("a closed MACD band has height %v", panes.MACD.H)
+			}
+			if !tc.kdj && panes.KDJ.H != 0 {
+				t.Fatalf("a closed KDJ band has height %v", panes.KDJ.H)
+			}
+			if len(panes.Extra) != 0 {
+				t.Fatalf("a built-in band landed in Extra: %v", panes.Extra)
+			}
+			// The band must actually paint: subLayers skips a rect at or
+			// below 1 DIP, which is how the blank sub-pane presented.
+			subs := c.enabledSubs()
+			layers := subLayers(panes, subs, 0, c.Bars()-1)
+			if len(layers) != len(subs) {
+				t.Fatalf("%d of %d sub-panes would paint", len(layers), len(subs))
+			}
+			for _, layer := range layers {
+				if layer.plot.H <= 1 {
+					t.Fatalf("sub-pane %q would be skipped with height %v", layer.ind.Name(), layer.plot.H)
+				}
+			}
+		})
+	}
+}
+
+// TestPaneHeightsVolumeOnlyStillPlacesKDJ is the second report: setting
+// only Volume also runs applyPaneHeights, so the KDJ band must survive a
+// host that just wanted a shorter volume strip.
+func TestPaneHeightsVolumeOnlyStillPlacesKDJ(t *testing.T) {
+	c := hostChart(t, ChartOptions{
+		Symbols:     []string{"A"},
+		Period:      Period{Span: 1, Unit: UnitDay},
+		Indicators:  []string{"KDJ"},
+		Source:      fixedSource{bars: hostBars(90)},
+		Location:    ashareLocation,
+		PaneHeights: PaneHeights{Volume: 40},
+	})
+	panes := c.painted[0]
+	if !near(panes.Volume.H, 40, 1) {
+		t.Fatalf("volume height %v, want 40", panes.Volume.H)
+	}
+	if panes.KDJ.H <= 1 {
+		t.Fatalf("KDJ height %v with only Volume set; the band was dropped", panes.KDJ.H)
+	}
+	if len(panes.Extra) != 0 {
+		t.Fatalf("the KDJ band landed in Extra: %v", panes.Extra)
+	}
+}
