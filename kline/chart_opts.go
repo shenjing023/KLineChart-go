@@ -94,6 +94,12 @@ type ChartOptions struct {
 	// synchronously on the caller and does not request a frame, which is
 	// what tests use. The func passed to Marshal must not call SetPeriod,
 	// SetSource, or View.
+	//
+	// (*mygo.Window).Update does not wait: it posts the func and returns,
+	// and the frame is built later. A host that captures the screen right
+	// after calling it captures the previous frame. Wait for the redraw
+	// (a frame, or a short sleep) before treating a screenshot as proof
+	// of a change.
 	Marshal func(func())
 	// PriceDecimals is the number of digits after the decimal in prices
 	// the chart formats: Readout (FormatBar) and the crosshair price tags.
