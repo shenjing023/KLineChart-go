@@ -150,3 +150,75 @@ func unregisterOverlayForTest(t *testing.T, kind string) {
 	UnregisterOverlay(kind)
 	t.Cleanup(func() { UnregisterOverlay(kind) })
 }
+
+// TestUpsertOverlaysKeepsOtherDrawings is the reason the incremental API
+// exists: a host with two independent sources, a forming-week frame and a
+// set of fill markers, must be able to update one without dropping the
+// other. SetOverlays replaces the layer, so using it for both means every
+// call has to rebuild the union.
+func TestUpsertOverlaysKeepsOtherDrawings(t *testing.T) {
+	c := hostChart(t, ChartOptions{
+		Symbols:    []string{"A"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{},
+		Source:     fixedSource{bars: hostBars(60)},
+		Location:   ashareLocation,
+	})
+	bar, _ := c.Bar("A", 10)
+	week := Overlay{ID: "forming", Kind: OverlayHLine, Points: []Point{{Time: bar.Time, Price: bar.Close}}}
+	fill := Overlay{ID: "fill-1", Kind: OverlayHLine, Points: []Point{{Time: bar.Time, Price: bar.Low}}}
+	if err := c.UpsertOverlays("A", []Overlay{week}); err != nil {
+		t.Fatalf("week: %v", err)
+	}
+	if err := c.UpsertOverlays("A", []Overlay{fill}); err != nil {
+		t.Fatalf("fill: %v", err)
+	}
+	got, _ := c.Overlays("A")
+	if len(got) != 2 {
+		t.Fatalf("after two sources the layer holds %d, want 2: %+v", len(got), got)
+	}
+	// Updating the week must not touch the fill.
+	moved := Overlay{ID: "forming", Kind: OverlayHLine, Points: []Point{{Price: bar.Close + 1}}}
+	if err := c.UpsertOverlays("A", []Overlay{moved}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	got, _ = c.Overlays("A")
+	if len(got) != 2 {
+		t.Fatalf("update changed the count to %d", len(got))
+	}
+	if got[0].ID != "forming" || got[0].Points[0].Price != bar.Close+1 {
+		t.Fatalf("the week drawing was not replaced in place: %+v", got[0])
+	}
+	if got[1].ID != "fill-1" {
+		t.Fatalf("the fill drawing moved or vanished: %+v", got[1])
+	}
+	// Removing one leaves the other.
+	if err := c.RemoveOverlays("A", "forming"); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	got, _ = c.Overlays("A")
+	if len(got) != 1 || got[0].ID != "fill-1" {
+		t.Fatalf("after remove: %+v", got)
+	}
+	// A missing ID is not an error, so an optional drawing needs no check.
+	if err := c.RemoveOverlays("A", "nope"); err != nil {
+		t.Fatalf("removing an unknown id: %v", err)
+	}
+}
+
+// TestUpsertAndRemoveRejectUnknownSymbol records the error contract.
+func TestUpsertAndRemoveRejectUnknownSymbol(t *testing.T) {
+	c := hostChart(t, ChartOptions{
+		Symbols:    []string{"A"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{},
+		Source:     fixedSource{bars: hostBars(30)},
+		Location:   ashareLocation,
+	})
+	if err := c.UpsertOverlays("NOPE", nil); !errors.Is(err, ErrUnknownSymbol) {
+		t.Fatalf("upsert err %v", err)
+	}
+	if err := c.RemoveOverlays("NOPE", "x"); !errors.Is(err, ErrUnknownSymbol) {
+		t.Fatalf("remove err %v", err)
+	}
+}

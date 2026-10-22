@@ -1021,6 +1021,65 @@ func (a *Chart) Overlays(symbol string) ([]Overlay, error) {
 	return nil, fmt.Errorf("%w: %s", ErrUnknownSymbol, symbol)
 }
 
+// UpsertOverlays adds or replaces drawings by ID and leaves the rest of
+// the layer alone. SetOverlays replaces the whole list, which is right
+// when one piece of host state owns every drawing; a host with two
+// independent sources, such as a forming-week frame and a set of fill
+// markers, uses this so updating one cannot quietly drop the other.
+//
+// An item whose ID matches an existing drawing replaces its kind, points,
+// and data in place, keeping its position in the list. A new ID is
+// appended. An empty ID is assigned one and appended. Points are copied.
+// An unknown symbol returns ErrUnknownSymbol and changes nothing.
+func (a *Chart) UpsertOverlays(symbol string, items []Overlay) error {
+	for i := range a.panes {
+		if a.panes[i].name != symbol {
+			continue
+		}
+		layer := &a.panes[i].overlays
+		for _, item := range items {
+			if item.ID != "" {
+				if o := layer.ByID(item.ID); o != nil {
+					o.Kind = item.Kind
+					o.Points = append(o.Points[:0], item.Points...)
+					o.Data = item.Data
+					continue
+				}
+			}
+			layer.seq++
+			o := Overlay{
+				ID:     item.ID,
+				Kind:   item.Kind,
+				Points: append([]Point(nil), item.Points...),
+				Data:   item.Data,
+			}
+			if o.ID == "" {
+				o.ID = fmt.Sprintf("ov-%d", layer.seq)
+			}
+			layer.items = append(layer.items, o)
+		}
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrUnknownSymbol, symbol)
+}
+
+// RemoveOverlays deletes drawings by ID and leaves the rest of the layer
+// alone. An unknown ID is ignored, so a host can remove an optional
+// drawing without checking first. An unknown symbol returns
+// ErrUnknownSymbol.
+func (a *Chart) RemoveOverlays(symbol string, ids ...string) error {
+	for i := range a.panes {
+		if a.panes[i].name != symbol {
+			continue
+		}
+		for _, id := range ids {
+			a.panes[i].overlays.Delete(id)
+		}
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrUnknownSymbol, symbol)
+}
+
 // SetTool selects pan, hline, segment, fibonacci, or a kind passed to
 // RegisterOverlay. "fib" is the older name of the Fibonacci tool and
 // selects the same tool. A change clears an in-progress drawing.
