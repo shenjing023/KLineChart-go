@@ -66,6 +66,18 @@ type SubPlot interface {
 	Scale(first, last int) chart.Linear
 }
 
+// PriceScale is optional. An indicator whose values are prices rather
+// than an index implements it, so ChartOptions.PriceDecimals reaches its
+// ValueAt text. MA and BOLL do; MACD, KDJ, and volume-style indicators
+// do not, because 90.91 in KDJ is not a price and must not lose its
+// decimals when a panel asks for whole-number prices.
+//
+// Chart calls SetPriceDigits from Readout and the exported Paint path,
+// before ValueAt, so a host never has to know which indicator is which.
+type PriceScale interface {
+	SetPriceDigits(digits int)
+}
+
 // NamedValues is optional. An indicator implements it to publish its
 // numbers by name to Chart.IndicatorValues, which is how a host draws a
 // header in its own language and precision instead of parsing ValueAt.

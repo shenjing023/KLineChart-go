@@ -25,8 +25,11 @@ func init() {
 // That is the KLineChart divisor. The three lines start together once
 // Period closes exist.
 type BOLL struct {
-	Period                      int
-	Mult                        float64
+	Period int
+	Mult   float64
+	// digits is the price precision ValueAt prints. Negative is two,
+	// which is what a chart that never set PriceDecimals leaves.
+	digits                      int
 	Mid, Up, Low                []float64
 	MidColor, UpColor, LowColor ui.Color
 	series                      [][]float64
@@ -39,6 +42,7 @@ type BOLL struct {
 func NewBOLL(period int, mult float64) *BOLL {
 	s := DarkDefault()
 	return &BOLL{
+		digits:   -1,
 		Period:   period,
 		Mult:     mult,
 		MidColor: s.BOLLMid,
@@ -198,6 +202,15 @@ func (b *BOLL) DrawMain(p *ui.Painter, priceRect ui.Rect, vp Viewport, y chart.L
 
 func (b *BOLL) DrawSub(*ui.Painter, ui.Rect, Viewport) {}
 
+// SetPriceDigits makes ValueAt print prices with digits decimals, which
+// is what ChartOptions.PriceDecimals asks a price-dimension indicator to
+// do. The zero value keeps two.
+func (b *BOLL) SetPriceDigits(digits int) {
+	if b != nil {
+		b.digits = digits
+	}
+}
+
 // Values publishes BOLL.MID, BOLL.UP, and BOLL.LOW. A warm-up gap is absent rather than
 // NaN, so a host can tell "not ready" from a real number.
 func (b *BOLL) Values(i int) map[string]float64 {
@@ -229,12 +242,12 @@ func (b *BOLL) ValueAt(i int) string {
 	if b == nil || i < 0 || i >= len(b.Mid) || math.IsNaN(b.Mid[i]) {
 		return ""
 	}
-	s := "MID " + FormatPrice(b.Mid[i])
+	s := "MID " + formatPrice(b.Mid[i], b.digits)
 	if i < len(b.Up) && !math.IsNaN(b.Up[i]) {
-		s += "  UP " + FormatPrice(b.Up[i])
+		s += "  UP " + formatPrice(b.Up[i], b.digits)
 	}
 	if i < len(b.Low) && !math.IsNaN(b.Low[i]) {
-		s += "  LOW " + FormatPrice(b.Low[i])
+		s += "  LOW " + formatPrice(b.Low[i], b.digits)
 	}
 	return s
 }

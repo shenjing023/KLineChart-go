@@ -732,6 +732,16 @@ func (a *Chart) View(c *ui.Context) {
 	})
 }
 
+// applyPriceDigits tells an indicator whose values are prices which
+// precision the chart prints at. An indicator that is not price
+// dimensioned has no such method and keeps its own formatting, so KDJ's
+// 90.91 does not become 91 when a panel asks for whole-number prices.
+func applyPriceDigits(ind Indicator, digits int) {
+	if ps, ok := ind.(PriceScale); ok {
+		ps.SetPriceDigits(digits)
+	}
+}
+
 // displayName is the name a host wants shown for pane i, or the symbol
 // when it gave none.
 func (a *Chart) displayName(i int) string {
@@ -895,6 +905,7 @@ func (a *Chart) readout(i int) string {
 		}
 	}
 	for _, ind := range a.active(&a.panes[i]) {
+		applyPriceDigits(ind, a.priceDigits)
 		if v := ind.ValueAt(idx); v != "" {
 			line += "  " + v
 		}

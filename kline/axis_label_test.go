@@ -250,3 +250,65 @@ func TestMinTimeAxisHeightIsHonest(t *testing.T) {
 		}
 	}
 }
+
+// TestPriceDecimalsReachesPriceDimensionIndicators closes an
+// inconsistency a host found in the readout: with PriceDecimals=0 the
+// OHLC prices printed as whole numbers while MA on the same line still
+// read "MA5 188.00".
+func TestPriceDecimalsReachesPriceDimensionIndicators(t *testing.T) {
+	for _, tc := range []struct {
+		digits int
+		want   string
+	}{
+		{0, "MA5 188"},    // whole numbers
+		{2, "MA5 188.00"}, // the default
+		{3, "MA5 188.000"},
+	} {
+		d := tc.digits
+		c := hostChart(t, ChartOptions{
+			Symbols:       []string{"A"},
+			Period:        Period{Span: 1, Unit: UnitDay},
+			Indicators:    []string{"MA"},
+			Source:        fixedSource{bars: hostBars(90)},
+			Location:      ashareLocation,
+			PriceDecimals: &d,
+		})
+		out := c.Readout("A")
+		if !strings.Contains(out, tc.want) {
+			t.Fatalf("digits %d: readout %q, want %q", tc.digits, out, tc.want)
+		}
+	}
+}
+
+// TestPriceDecimalsLeavesIndexIndicatorsAlone is the other half: KDJ is
+// not a price, so 90.91 must not become 91 when a panel asks for whole
+// number prices.
+func TestPriceDecimalsLeavesIndexIndicatorsAlone(t *testing.T) {
+	d := 0
+	c := hostChart(t, ChartOptions{
+		Symbols:       []string{"A"},
+		Period:        Period{Span: 1, Unit: UnitDay},
+		Indicators:    []string{"KDJ"},
+		Source:        fixedSource{bars: hostBars(90)},
+		Location:      ashareLocation,
+		PriceDecimals: &d,
+	})
+	out := c.Readout("A")
+	if !strings.Contains(out, "K 90.91") {
+		t.Fatalf("KDJ lost its precision under PriceDecimals=0: %q", out)
+	}
+}
+
+// TestPriceScaleIsOptional records that a host indicator without
+// SetPriceDigits keeps its own formatting and is never asked for one.
+func TestPriceScaleIsOptional(t *testing.T) {
+	var ma Indicator = NewMA(5)
+	if _, ok := ma.(PriceScale); !ok {
+		t.Fatal("MA should expose SetPriceDigits")
+	}
+	var k Indicator = NewKDJ(9, 3, 3)
+	if _, ok := k.(PriceScale); ok {
+		t.Fatal("KDJ must not expose SetPriceDigits: its values are not prices")
+	}
+	applyPriceDigits(k, 0) // must not panic or change anything
+}

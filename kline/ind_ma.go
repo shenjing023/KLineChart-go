@@ -20,8 +20,11 @@ func init() {
 // price plot. Periods are in bars. The usual pair is 5 and 20.
 type MA struct {
 	Periods []int
-	colors  []ui.Color
-	lines   [][]float64
+	// digits is the price precision ValueAt prints. Negative is two,
+	// which is what a chart that never set PriceDecimals leaves.
+	digits int
+	colors []ui.Color
+	lines  [][]float64
 	// sums is the rolling close sum of each line after the last bar.
 	sums []float64
 }
@@ -34,7 +37,7 @@ func NewMA(periods ...int) *MA {
 			keep = append(keep, p)
 		}
 	}
-	return &MA{Periods: keep}
+	return &MA{Periods: keep, digits: -1}
 }
 
 func (m *MA) Name() string     { return "MA" }
@@ -162,6 +165,15 @@ func (m *MA) DrawMain(p *ui.Painter, priceRect ui.Rect, vp Viewport, y chart.Lin
 
 func (m *MA) DrawSub(*ui.Painter, ui.Rect, Viewport) {}
 
+// SetPriceDigits makes ValueAt print prices with digits decimals, which
+// is what ChartOptions.PriceDecimals asks a price-dimension indicator to
+// do. The zero value keeps two.
+func (m *MA) SetPriceDigits(digits int) {
+	if m != nil {
+		m.digits = digits
+	}
+}
+
 // Values publishes each average as MA<period>. A warm-up gap is absent
 // rather than NaN, so a host can tell "not ready" from a real number.
 func (m *MA) Values(i int) map[string]float64 {
@@ -204,7 +216,7 @@ func (m *MA) ValueAt(i int) string {
 		b = append(b, "MA"...)
 		b = strconv.AppendInt(b, int64(period), 10)
 		b = append(b, ' ')
-		b = append(b, FormatPrice(v)...)
+		b = append(b, formatPrice(v, m.digits)...)
 	}
 	return string(b)
 }
