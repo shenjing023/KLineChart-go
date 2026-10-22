@@ -104,14 +104,14 @@ func TestSplitBothKeepsEveryBandPositive(t *testing.T) {
 // A narrow box shrinks the axis column instead of the plot.
 func TestSplitBothNarrowBoxShrinksAxis(t *testing.T) {
 	wide := SplitStack(ui.Rect{W: 800, H: 500}, true, true, true)
-	narrow := SplitStack(ui.Rect{W: 100, H: 500}, true, true, true)
+	narrow := SplitStack(ui.Rect{W: 80, H: 500}, true, true, true)
 	if narrow.PriceAxis.W >= wide.PriceAxis.W {
 		t.Fatalf("narrow axis %v, wide axis %v", narrow.PriceAxis.W, wide.PriceAxis.W)
 	}
 	if narrow.Price.W < 1 {
 		t.Fatalf("narrow plot %v", narrow.Price.W)
 	}
-	if narrow.Price.W+narrow.PriceAxis.W > 100 {
+	if narrow.Price.W+narrow.PriceAxis.W > 80 {
 		t.Fatalf("narrow box overflows: plot %v axis %v", narrow.Price.W, narrow.PriceAxis.W)
 	}
 }

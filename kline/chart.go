@@ -239,6 +239,12 @@ type Chart struct {
 	markPath ui.Path
 }
 
+// axisWidth is the axis column width. It is the built-in constant, not a
+// per-frame measurement: a width that changed after the first paint would
+// move the plot under a pointer already mapped to it, so a click would
+// land on the wrong bar.
+func (a *Chart) axisWidth() float32 { return axisWidth }
+
 // paneFrame is one chart box from the last paint.
 type paneFrame struct {
 	box      ui.Rect
@@ -323,13 +329,13 @@ func (a *Chart) layoutPanes(r ui.Rect, showTime bool) Panes {
 	case 0:
 		// SplitStack leaves a zero-height MACD rect. Keep it so this
 		// layout stays identical to the built-in no-sub-pane split.
-		panes = SplitStack(r, showTime, false, false)
+		panes = splitAxis(r, showTime, false, false, a.axisWidth())
 	case 1:
-		panes = assignSubRects(SplitStack(r, showTime, true, false), subs, n)
+		panes = assignSubRects(splitAxis(r, showTime, true, false, a.axisWidth()), subs, n)
 	case 2:
-		panes = assignSubRects(SplitStack(r, showTime, true, true), subs, n)
+		panes = assignSubRects(splitAxis(r, showTime, true, true, a.axisWidth()), subs, n)
 	default:
-		panes = assignSubRects(splitMany(r, showTime, n), subs, n)
+		panes = assignSubRects(splitManyAxis(r, showTime, n, a.axisWidth()), subs, n)
 	}
 	if a.paneHeights.Sub > 0 || a.paneHeights.Volume > 0 {
 		panes = applyPaneHeights(r, panes, showTime, a.paneHeights, subs)
@@ -813,7 +819,7 @@ func (a *Chart) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime
 	style := a.chartStyle(t)
 	active := a.active(s)
 	paint := barPaint{style: style, host: a.barColor}
-	scale := drawPriceHook(p, panes, s.candles, active, a.vp, ptr, a.crossIndex, paint, a.labels(), a.subDraw)
+	scale, _ := drawPriceHook(p, panes, s.candles, active, a.vp, ptr, a.crossIndex, paint, a.labels(), a.subDraw)
 	var rubber *Rubber
 	if a.draftOn && a.draftPane == i && a.crossPane == i {
 		rubber = &Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}

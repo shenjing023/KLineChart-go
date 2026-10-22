@@ -7,9 +7,17 @@ import (
 )
 
 const (
-	axisWidth  = 72
-	timeHeight = 22
-	paneGap    = 8
+	// axisWidth fits a six-digit tick ("300000" measures about 36 DIP at
+	// 11 px) plus the inset on each side, and no more. It is fixed rather
+	// than measured per frame: a width that changed after the first paint
+	// would move the plot under a pointer that had already been mapped,
+	// so a click would land on the wrong bar.
+	axisWidth = 56
+	// axisPadding is the space on each side of a tick label inside the
+	// axis column.
+	axisPadding = 4
+	timeHeight  = 22
+	paneGap     = 8
 	// volumeFrac is the volume band's share of the plot when both sub-panes
 	// are off.
 	volumeFrac = 0.22
@@ -74,10 +82,14 @@ func SplitStack(r ui.Rect, showTime, showMACD, showKDJ bool) Panes {
 }
 
 func split(r ui.Rect, showTime, showMACD, showKDJ bool) Panes {
+	return splitAxis(r, showTime, showMACD, showKDJ, axisWidth)
+}
+
+func splitAxis(r ui.Rect, showTime, showMACD, showKDJ bool, axis float32) Panes {
 	// One sub-pane, whichever it is, keeps the MACD-only geometry. The
 	// rect is moved onto KDJ when MACD itself is off.
 	if showKDJ && !showMACD {
-		panes := split(r, showTime, true, false)
+		panes := splitAxis(r, showTime, true, false, axis)
 		panes.KDJ = panes.MACD
 		panes.KDJAxis = panes.MACDAxis
 		panes.MACD = ui.Rect{}
@@ -85,13 +97,13 @@ func split(r ui.Rect, showTime, showMACD, showKDJ bool) Panes {
 		return panes
 	}
 	if showMACD && showKDJ {
-		return splitBoth(r, showTime)
+		return splitBoth(r, showTime, axis)
 	}
-	return splitOne(r, showTime, showMACD)
+	return splitOne(r, showTime, showMACD, axis)
 }
 
-func splitOne(r ui.Rect, showTime, showMACD bool) Panes {
-	axisW := float32(axisWidth)
+func splitOne(r ui.Rect, showTime, showMACD bool, axis float32) Panes {
+	axisW := axis
 	timeH := float32(0)
 	if showTime {
 		timeH = timeHeight
@@ -170,7 +182,7 @@ func splitOne(r ui.Rect, showTime, showMACD bool) Panes {
 
 // splitBoth is price, volume, MACD, then KDJ. Each sub-pane has its own
 // Y axis. The time axis, when shown, sits under KDJ.
-func splitBoth(r ui.Rect, showTime bool) Panes {
+func splitBoth(r ui.Rect, showTime bool, axis float32) Panes {
 	axisW := float32(axisWidth)
 	timeH := float32(0)
 	if showTime {
@@ -245,10 +257,14 @@ func splitBoth(r ui.Rect, showTime bool) Panes {
 // The built-in one- and two-band layouts stay on SplitStack so their
 // rects do not move.
 func splitMany(r ui.Rect, showTime bool, n int) Panes {
+	return splitManyAxis(r, showTime, n, axisWidth)
+}
+
+func splitManyAxis(r ui.Rect, showTime bool, n int, axis float32) Panes {
 	if n < 1 {
 		return SplitStack(r, showTime, false, false)
 	}
-	axisW := float32(axisWidth)
+	axisW := axis
 	timeH := float32(0)
 	if showTime {
 		timeH = timeHeight

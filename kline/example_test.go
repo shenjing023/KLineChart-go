@@ -513,8 +513,8 @@ func ExampleChart_ResetView() {
 	first, last = chart.Visible()
 	fmt.Printf("refitted: %d..%d\n", first, last)
 	// Output:
-	// visible: 498..599
-	// refitted: 498..599
+	// visible: 496..599
+	// refitted: 496..599
 }
 
 // ExampleChart_Symbols shows the host read-only series views. Bars is

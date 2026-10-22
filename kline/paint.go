@@ -58,16 +58,17 @@ func Paint(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewpor
 // drawPrice is Paint, and it returns the price scale it used. A plot
 // smaller than 2 DIPs draws nothing and returns a zero scale.
 func drawPrice(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, paint barPaint, labels labelFmt) chart.Linear {
-	return drawPriceHook(p, panes, cs, inds, vp, ptr, barIndex, paint, labels, nil)
+	scale, _ := drawPriceHook(p, panes, cs, inds, vp, ptr, barIndex, paint, labels, nil)
+	return scale
 }
 
 // drawPriceHook is drawPrice with a sub-pane painter. Chart passes its
 // host hook; the exported Paint leaves it nil.
-func drawPriceHook(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, paint barPaint, labels labelFmt, subDraw func(*ui.Painter, ui.Rect, Indicator, int)) chart.Linear {
+func drawPriceHook(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, paint barPaint, labels labelFmt, subDraw func(*ui.Painter, ui.Rect, Indicator, int)) (chart.Linear, float32) {
 	price := panes.Price
 	style := paint.style
 	if price.W < 2 || price.H < 2 {
-		return chart.Linear{}
+		return chart.Linear{}, 0
 	}
 	p.Fill(ui.Rect{X: price.X, Y: price.Y, W: price.W + panes.PriceAxis.W, H: panes.Time.Y + panes.Time.H - price.Y}, style.Plot, 0)
 	p.Fill(panes.Volume, style.VolumeBg, 0)
@@ -89,7 +90,7 @@ func drawPriceHook(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp
 	layers := subLayers(panes, inds, first, last)
 
 	lastY, hasLast := lastPriceRow(panes, cs, yScale, style)
-	drawGrid(p, panes, cs, vp, yScale, volScale, style, labels, lastY, hasLast)
+	labelW := drawGrid(p, panes, cs, vp, yScale, volScale, style, labels, lastY, hasLast)
 	p.Clip(price, 0, func() {
 		drawCandles(p, price, cs, vp, yScale, first, last, paint)
 		for _, ind := range inds {
@@ -127,7 +128,7 @@ func drawPriceHook(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp
 	drawHighLow(p, panes, cs, vp, yScale, first, last, style, labels)
 	drawLastPrice(p, panes, cs, vp, yScale, style, labels)
 	drawCrosshair(p, panes, cs, vp, yScale, layers, ptr, barIndex, style, labels)
-	return yScale
+	return yScale, labelW
 }
 
 // drawLastPrice marks the newest close with a dashed line across the
@@ -420,7 +421,7 @@ func volumeScale(cs []Candle, first, last int, labels labelFmt) chart.Linear {
 // right edge. The label is right-aligned so the numbers sit against the
 // card edge whatever their width, instead of floating at a fixed inset
 // from the plot with the rest of the column empty.
-const axisLabelInset = 6
+const axisLabelInset = 4
 
 // drawAxisLabel writes one tick label against the right edge of axis.
 func drawAxisLabel(p *ui.Painter, axis ui.Rect, y float32, text string, style Style) {
@@ -443,7 +444,7 @@ func labelNear(p *ui.Painter, y float32, price ui.Rect, scale chart.Linear) bool
 	return false
 }
 
-func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volScale chart.Linear, style Style, labels labelFmt, lastY float32, hasLast bool) {
+func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volScale chart.Linear, style Style, labels labelFmt, lastY float32, hasLast bool) (labelW float32) {
 	price := panes.Price
 	_, labelH := p.MeasureText(0, ui.Span{Text: "0", Size: 11})
 	for _, tick := range yScale.Ticks(5) {
@@ -462,6 +463,9 @@ func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volS
 			}
 		}
 		drawAxisLabel(p, panes.PriceAxis, y, tick.Label, style)
+		if w, _ := p.MeasureText(0, ui.Span{Text: tick.Label, Size: 11}); w > labelW {
+			labelW = w
+		}
 	}
 	if panes.Volume.H > 8 {
 		top := volScale.Ticks(2)
@@ -475,6 +479,9 @@ func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volS
 			// volume maximum is the smaller cost.
 			if !labelNear(p, y, price, yScale) {
 				drawAxisLabel(p, panes.VolumeAxis, y, tick.Label, style)
+				if w, _ := p.MeasureText(0, ui.Span{Text: tick.Label, Size: 11}); w > labelW {
+					labelW = w
+				}
 			}
 		}
 	}
@@ -512,6 +519,7 @@ func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volS
 		y := bands[i].Y - float32(paneGap)/2
 		p.Line(price.X, y, price.X+price.W, y, 1, style.Grid)
 	}
+	return labelW
 }
 
 // timeTicks builds the six round times the axis may label. The ticks are
@@ -882,8 +890,11 @@ func drawLabel(p *ui.Painter, x, y float32, text string, color ui.Color, align u
 	}
 	span := ui.Span{Text: text, Size: 11, Color: color}
 	w, h := p.MeasureText(0, span)
-	if align == ui.Center {
+	switch align {
+	case ui.Center:
 		x -= w / 2
+	case ui.End:
+		x -= w
 	}
 	p.RichText(x, y-h/2, 0, span)
 }
