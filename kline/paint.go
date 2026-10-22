@@ -273,7 +273,7 @@ func drawTagColored(p *ui.Painter, x, y float32, text string, fill ui.Color, sty
 	span := ui.Span{Text: text, Size: 11, Color: style.LabelText}
 	w, h := p.MeasureText(0, span)
 	padX, padY := float32(4), float32(2)
-	box := ui.Rect{X: x - w/2 - padX, Y: y - h/2 - padY, W: w + padX*2, H: h + padY*2}
+	box := ui.Rect{X: x - padX, Y: y - h/2 - padY, W: w + padX*2, H: h + padY*2}
 	p.Fill(box, fill, 3)
 	p.RichText(box.X+padX, box.Y+padY, 0, span)
 }
@@ -417,15 +417,15 @@ func volumeScale(cs []Candle, first, last int, labels labelFmt) chart.Linear {
 	return scale
 }
 
-// axisLabelInset is the gap between a tick label and the axis column's
-// right edge. The label is right-aligned so the numbers sit against the
-// card edge whatever their width, instead of floating at a fixed inset
-// from the plot with the rest of the column empty.
+// axisLabelInset is the gap between a tick label and the plot edge. Tick
+// labels hug the plot, not the card edge: a reference A-share chart puts
+// the scale numbers right beside the candles, and the filled tags (last
+// price, crosshair) are what sit against the card edge.
 const axisLabelInset = 4
 
-// drawAxisLabel writes one tick label against the right edge of axis.
+// drawAxisLabel writes one tick label just right of the plot.
 func drawAxisLabel(p *ui.Painter, axis ui.Rect, y float32, text string, style Style) {
-	drawLabel(p, axis.X+axis.W-axisLabelInset, y, text, style.Muted, ui.End)
+	drawLabel(p, axis.X+axisLabelInset, y, text, style.Muted, ui.Start)
 }
 
 // labelNear reports whether y is within a label's height of a tick the
@@ -903,7 +903,7 @@ func drawTag(p *ui.Painter, x, y float32, text string, style Style) {
 	span := ui.Span{Text: text, Size: 11, Color: style.LabelText}
 	w, h := p.MeasureText(0, span)
 	padX, padY := float32(4), float32(2)
-	box := ui.Rect{X: x - w/2 - padX, Y: y - h/2 - padY, W: w + padX*2, H: h + padY*2}
+	box := ui.Rect{X: x - padX, Y: y - h/2 - padY, W: w + padX*2, H: h + padY*2}
 	p.Fill(box, style.LabelFill, 3)
 	p.RichText(box.X+padX, box.Y+padY, 0, span)
 }

@@ -313,21 +313,22 @@ func TestPriceScaleIsOptional(t *testing.T) {
 	applyPriceDigits(k, 0) // must not panic or change anything
 }
 
-// TestAxisLabelsSitAgainstTheRightEdge is the placement a host asked for:
-// the tick numbers should hug the card's right edge, not float at a fixed
-// inset with the rest of the axis column empty. Right-aligning makes the
-// axis width a layout parameter only; a longer number claims more of the
-// column instead of overflowing it.
-func TestAxisLabelsSitAgainstTheRightEdge(t *testing.T) {
+// TestAxisLabelsHugThePlotNotTheCardEdge records the placement a
+// reference A-share chart uses: the scale numbers sit immediately right
+// of the plot, and the filled tags (last price, crosshair) are the ones
+// that reach the card edge. Right-aligning the ticks left a band of empty
+// column between the candles and their numbers.
+func TestAxisLabelsHugThePlotNotTheCardEdge(t *testing.T) {
 	muted := ui.RGB(99, 99, 99)
 	style := DarkDefault()
 	style.Muted = muted
 	style.LastPrice = ui.RGB(1, 2, 3)
+	style.HighLow = ui.RGB(4, 5, 6)
 	c, tt := axisChart(t, ChartOptions{Style: style, Indicators: []string{"MA"}})
 	img := tt.Image()
 	panes := c.painted[0]
 	b := img.Bounds()
-	rightmost := -1
+	leftmost := -1
 	for y := int(panes.PriceAxis.Y); y < int(panes.PriceAxis.Y+panes.PriceAxis.H); y++ {
 		limit := int(panes.PriceAxis.X + panes.PriceAxis.W)
 		if limit > b.Max.X {
@@ -336,22 +337,59 @@ func TestAxisLabelsSitAgainstTheRightEdge(t *testing.T) {
 		for x := int(panes.PriceAxis.X); x < limit; x++ {
 			p := img.RGBAAt(x, y)
 			if p.R == muted.R && p.G == muted.G && p.B == muted.B {
+				if leftmost < 0 || x < leftmost {
+					leftmost = x
+				}
+			}
+		}
+	}
+	if leftmost < 0 {
+		t.Fatal("no axis label was painted")
+	}
+	// The first glyph must start within an inset or two of the plot's
+	// right edge; a wider gap reads as a gutter.
+	if gap := leftmost - int(panes.PriceAxis.X); gap > 8 {
+		t.Fatalf("the first axis label starts %d DIP right of the plot; ticks hug the plot", gap)
+	}
+}
+
+// TestFilledTagsAnchorAtTheAxisStart records the other half: the filled
+// readouts (last price, crosshair) are what sit against the axis edge, so
+// their box starts at the axis column rather than being centred on it.
+func TestFilledTagsAnchorAtTheAxisStart(t *testing.T) {
+	fill := ui.RGB(7, 11, 13)
+	style := DarkDefault()
+	style.LastPrice = fill
+	style.HighLow = ui.RGB(4, 5, 6)
+	c, tt := axisChart(t, ChartOptions{Style: style, Indicators: []string{}})
+	img := tt.Image()
+	panes := c.painted[0]
+	b := img.Bounds()
+	// Find the filled tag: the leftmost pixel of the fill color inside
+	// the axis column.
+	leftmost, rightmost := -1, -1
+	for y := int(panes.PriceAxis.Y); y < int(panes.PriceAxis.Y+panes.PriceAxis.H) && y < b.Max.Y; y++ {
+		limit := int(panes.PriceAxis.X + panes.PriceAxis.W)
+		if limit > b.Max.X {
+			limit = b.Max.X
+		}
+		for x := int(panes.PriceAxis.X); x < limit; x++ {
+			p := img.RGBAAt(x, y)
+			if p.R == fill.R && p.G == fill.G && p.B == fill.B {
+				if leftmost < 0 || x < leftmost {
+					leftmost = x
+				}
 				if x > rightmost {
 					rightmost = x
 				}
 			}
 		}
 	}
-	if rightmost < 0 {
-		t.Fatal("no axis label was painted")
+	if leftmost < 0 {
+		t.Fatal("no filled tag was painted")
 	}
-	axisRight := int(panes.PriceAxis.X + panes.PriceAxis.W)
-	if gap := axisRight - rightmost; gap > 8 {
-		t.Fatalf("label ends %d DIP short of the axis edge; it should sit against it", gap)
-	}
-	// And it must not be flush: an inset keeps the glyph from touching
-	// the card border.
-	if gap := axisRight - rightmost; gap < 1 {
-		t.Fatalf("label is flush with the axis edge (gap %d)", gap)
+	// It starts at the axis column, i.e. right against the plot edge.
+	if gap := leftmost - int(panes.PriceAxis.X); gap > 2 {
+		t.Fatalf("the filled tag starts %d DIP into the axis; it should hug the axis", gap)
 	}
 }
