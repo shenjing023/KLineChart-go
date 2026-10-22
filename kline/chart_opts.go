@@ -157,6 +157,15 @@ type ChartOptions struct {
 	// built-in volume strip. The price plot takes what is left, and the
 	// layout still compresses the bands when the box is too short, so a
 	// host never has to compute a height that fits.
+	//
+	// A zero field is not "no override" for the other field: a host that
+	// sets only Sub still gets the built-in share for Volume, so the two
+	// are independent. Note that the built-in shares are fractions of
+	// the plot (volumeShare 0.16 with MACD on, volumeFrac 0.22 with it
+	// off), while a set field is a fixed DIP count. A host that stops
+	// passing PaneHeights therefore sees the bands change size with the
+	// window, not just become one constant. Set both fields if the
+	// layout must stay fixed.
 	PaneHeights PaneHeights
 	// BarColor decides the color of one candle and its volume bar. It is
 	// how a host applies a rule the library cannot know, such as a limit
