@@ -88,7 +88,8 @@ func drawPriceHook(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp
 	volScale := volumeScale(cs, first, last, labels)
 	layers := subLayers(panes, inds, first, last)
 
-	drawGrid(p, panes, cs, vp, yScale, volScale, style, labels)
+	lastY, hasLast := lastPriceRow(panes, cs, yScale, style)
+	drawGrid(p, panes, cs, vp, yScale, volScale, style, labels, lastY, hasLast)
 	p.Clip(price, 0, func() {
 		drawCandles(p, price, cs, vp, yScale, first, last, paint)
 		for _, ind := range inds {
@@ -133,6 +134,28 @@ func drawPriceHook(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp
 // price plot and a filled tag on the axis, so the current price is
 // readable without moving the pointer. The color follows that bar's own
 // body unless Style.LastPrice overrides it, and ClearLastPrice hides it.
+// lastPriceRow is the y of the last-price mark, or false when there is
+// nothing to mark: no bars, a hidden mark, a non-finite close, or a close
+// outside the visible price range.
+func lastPriceRow(panes Panes, cs []Candle, scale chart.Linear, style Style) (float32, bool) {
+	if len(cs) == 0 || clearSet(style, ClearLastPrice) {
+		return 0, false
+	}
+	price := panes.Price
+	if price.W < 2 || price.H < 2 {
+		return 0, false
+	}
+	last := cs[len(cs)-1]
+	if math.IsNaN(last.Close) || math.IsInf(last.Close, 0) {
+		return 0, false
+	}
+	y := chart.Y(price, scale.At(last.Close))
+	if y < price.Y-1 || y > price.Y+price.H+1 {
+		return 0, false
+	}
+	return y, true
+}
+
 func drawLastPrice(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, scale chart.Linear, style Style, labels labelFmt) {
 	if len(cs) == 0 {
 		return
@@ -145,15 +168,27 @@ func drawLastPrice(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, scale c
 	if math.IsNaN(last.Close) || math.IsInf(last.Close, 0) {
 		return
 	}
-	y := chart.Y(price, scale.At(last.Close))
-	if y < price.Y-1 || y > price.Y+price.H+1 {
+	y, ok := lastPriceRow(panes, cs, scale, style)
+	if !ok {
 		return
 	}
 	color := style.LastPrice
 	if color == (ui.Color{}) {
-		color = style.Up
-		if last.Close < last.Open {
+		// The mark follows the change from the previous close, the same
+		// rule the header's change and an A-share reader use, not the
+		// open-to-close move. A bar that gaps up and closes higher than
+		// its open but lower than yesterday is a down day, and a bar that
+		// opens high and closes below its open yet above yesterday is an
+		// up day. Flat keeps Muted rather than pretending to be up.
+		switch {
+		case len(cs) < 2:
+			color = style.Up
+		case last.Close > cs[len(cs)-2].Close:
+			color = style.Up
+		case last.Close < cs[len(cs)-2].Close:
 			color = style.Down
+		default:
+			color = style.Muted
 		}
 	}
 	drawDashedLine(p, price.X, price.X+price.W, y, color)
@@ -392,14 +427,24 @@ func labelNear(p *ui.Painter, y float32, price ui.Rect, scale chart.Linear) bool
 	return false
 }
 
-func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volScale chart.Linear, style Style, labels labelFmt) {
+func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volScale chart.Linear, style Style, labels labelFmt, lastY float32, hasLast bool) {
 	price := panes.Price
+	_, labelH := p.MeasureText(0, ui.Span{Text: "0", Size: 11})
 	for _, tick := range yScale.Ticks(5) {
 		if tick.At < -0.01 || tick.At > 1.01 {
 			continue
 		}
 		y := chart.Y(price, tick.At)
 		p.Line(price.X, y, price.X+price.W, y, 1, style.Grid)
+		// A filled tag drawn at the last price covers a tick label
+		// underneath it, and two numbers in one place read as one.
+		// The tag carries the same price, so dropping the tick loses
+		// nothing.
+		if hasLast {
+			if d := lastY - y; d < labelH && d > -labelH {
+				continue
+			}
+		}
 		drawLabel(p, panes.PriceAxis.X+6, y, tick.Label, style.Muted, ui.Start)
 	}
 	if panes.Volume.H > 8 {

@@ -4,6 +4,7 @@ import (
 	"image"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -257,4 +258,145 @@ func near64(a, b float64) bool {
 		d = -d
 	}
 	return d < 1e-9
+}
+
+// TestLastPriceFollowsPreviousClose is the rule a host reported: the mark
+// follows the change from the previous close, like the header's change,
+// not the open-to-close move. A bar that gaps up and still closes above
+// yesterday is an up day even though it fell from its own open.
+func TestLastPriceFollowsPreviousClose(t *testing.T) {
+	up := ui.RGB(220, 40, 40)
+	down := ui.RGB(40, 200, 200)
+	flat := ui.RGB(120, 120, 120)
+	// A gap up, then a close below the open but above the previous close.
+	bars := []Candle{
+		{Time: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), Open: 10, High: 11, Low: 9, Close: 10},
+		{Time: time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC), Open: 12, High: 13, Low: 10.5, Close: 11},
+	}
+	style := DarkDefault()
+	// Distinct from the candle colors: the candles themselves are drawn
+	// in Up/Down, so the mark needs its own palette to be counted alone.
+	style.Up, style.Down, style.Muted = up, down, flat
+	style.HighLow = ui.RGB(1, 1, 1)
+	c, img := markChart(t, ChartOptions{
+		Symbols:    []string{"A"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{},
+		Source:     fixedSource{bars: bars},
+		Location:   ashareLocation,
+		Style:      style,
+	})
+	scale := MainScale(c.panes[0].candles, nil, c.vp, c.plotW)
+	panes := c.painted[0]
+	last, _ := c.Bar("A", 1)
+	y := int(panes.Price.Y + (1-scale.At(last.Close))*panes.Price.H)
+	hasUp, hasDown := 0, 0
+	for _, dy := range []int{-1, 0, 1} {
+		hasUp += countRowColor(img, y+dy, up)
+		hasDown += countRowColor(img, y+dy, down)
+	}
+	// The candle bodies are drawn in the same colors, so a hit on the
+	// candle's own column is not evidence. The dashed line spans the
+	// plot, so require the color to appear across many columns.
+	if hasUp < 20 {
+		t.Fatalf("close %v is above the previous close but the mark is not up (up=%d down=%d)", last.Close, hasUp, hasDown)
+	}
+	if hasDown > 20 {
+		t.Fatalf("the mark used the open-to-close move: down=%d", hasDown)
+	}
+}
+
+// TestLastPriceFlatIsMuted records the third state: an unchanged close
+// must not read as a rise.
+func TestLastPriceFlatIsMuted(t *testing.T) {
+	up := ui.RGB(220, 40, 40)
+	down := ui.RGB(40, 200, 200)
+	flat := ui.RGB(120, 120, 120)
+	bars := []Candle{
+		{Time: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), Open: 10, High: 11, Low: 9, Close: 10},
+		{Time: time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC), Open: 9.5, High: 11, Low: 9, Close: 10},
+	}
+	style := DarkDefault()
+	style.Up, style.Down, style.Muted = up, down, flat
+	style.HighLow = ui.RGB(1, 1, 1)
+	c, img := markChart(t, ChartOptions{
+		Symbols:    []string{"A"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{},
+		Source:     fixedSource{bars: bars},
+		Location:   ashareLocation,
+		Style:      style,
+	})
+	scale := MainScale(c.panes[0].candles, nil, c.vp, c.plotW)
+	panes := c.painted[0]
+	last, _ := c.Bar("A", 1)
+	y := int(panes.Price.Y + (1-scale.At(last.Close))*panes.Price.H)
+	for _, dy := range []int{-1, 0, 1} {
+		if n := countRowColor(img, y+dy, up); n > 20 {
+			t.Fatalf("an unchanged close was drawn as up on row %d (%d px)", y+dy, n)
+		}
+	}
+}
+
+// TestLastPriceTagHidesTheTickUnderIt records that the axis does not print
+// two numbers where the filled tag already is. The fixture puts the last
+// close exactly on a price tick, which is when the collision happens.
+func TestLastPriceTagHidesTheTickUnderIt(t *testing.T) {
+	hot := ui.RGB(3, 7, 11)
+	muted := ui.RGB(99, 99, 99)
+	// Build a series whose last close sits on the scale's own tick.
+	bars := hostBars(40)
+	scale0 := MainScale(bars, nil, Viewport{BarWidth: 8}, 800)
+	ticks := scale0.Ticks(5)
+	if len(ticks) == 0 {
+		t.Skip("no ticks in this fixture")
+	}
+	target := ticks[len(ticks)/2].Value
+	for i := range bars {
+		bars[i].Close = target
+		bars[i].Open = target
+		bars[i].High = target + 1
+		bars[i].Low = target - 1
+	}
+	style := DarkDefault()
+	style.LastPrice = hot
+	style.Muted = muted
+	c, img := markChart(t, ChartOptions{
+		Symbols:    []string{"A"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{},
+		Source:     fixedSource{bars: bars},
+		Location:   ashareLocation,
+		Style:      style,
+	})
+	scale := MainScale(c.panes[0].candles, nil, c.vp, c.plotW)
+	panes := c.painted[0]
+	y := int(panes.Price.Y + (1-scale.At(target))*panes.Price.H)
+	// No muted label pixel may sit on the rows the tag covers, in the
+	// axis column.
+	covered := 0
+	b := img.Bounds()
+	for dy := -5; dy <= 5; dy++ {
+		row := y + dy
+		if row < b.Min.Y || row >= b.Max.Y {
+			continue
+		}
+		for x := int(panes.PriceAxis.X) + 4; x < b.Max.X && x < int(panes.PriceAxis.X+panes.PriceAxis.W); x++ {
+			p := img.RGBAAt(x, row)
+			if p.R == muted.R && p.G == muted.G && p.B == muted.B {
+				covered++
+			}
+		}
+	}
+	if covered != 0 {
+		t.Fatalf("%d axis label pixels sit under the last-price tag", covered)
+	}
+	// The tag itself must be there, or the test proves nothing.
+	tagPixels := 0
+	for dy := -5; dy <= 5; dy++ {
+		tagPixels += countRowColor(img, y+dy, hot)
+	}
+	if tagPixels == 0 {
+		t.Fatal("no last-price tag was drawn; the collision case was not set up")
+	}
 }

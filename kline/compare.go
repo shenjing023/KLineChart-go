@@ -298,7 +298,11 @@ func drawCompare(p *ui.Painter, panes Panes, primary, compare []Candle, inds []I
 
 	layers := subLayers(panes, inds, first, last)
 
-	drawGrid(p, panes, primary, vp, index, volScale, style, labels)
+	// Overlay indexes prices to 100, so the last-price mark and the axis
+	// tick it covers are both in indexed units. lastPriceRow reads the
+	// raw close, so the overlay path passes no mark and the grid keeps
+	// every tick.
+	drawGrid(p, panes, primary, vp, index, volScale, style, labels, 0, false)
 	p.Clip(price, 0, func() {
 		// The host callback still sees raw bars: barPaint.color is asked
 		// before any scaling, and only the built-in rule divides.
