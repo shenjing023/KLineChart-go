@@ -313,3 +313,86 @@ func TestLinkAPIsAreSafeWithoutLayout(t *testing.T) {
 	}
 	// A nil *Chart is not usable, by contract: only Close accepts nil.
 }
+
+// TestLinkedCrosshairDrawsNoPointerTag is the bug a host saw in a real
+// window: after SetCrosshairTime, the linked chart drew a horizontal
+// crosshair line and a price tag at its own stale hover position (0,0
+// when it had never been hovered), so the tag showed a price from the
+// top of the plot rather than from the series.
+//
+// The vertical line must still draw: it comes from the shared bar index.
+func TestLinkedCrosshairDrawsNoPointerTag(t *testing.T) {
+	hot := ui.RGB(255, 0, 255)
+	cross := ui.RGB(1, 2, 3)
+	// A partial Style would be completed from DarkDefault, which keeps
+	// the default Cross color; start from the full palette.
+	style := DarkDefault()
+	style.LastPrice = hot
+	style.HighLow = ui.RGB(4, 5, 6)
+	style.Cross = cross
+	bars := hostBars(80)
+	panel := make([]Candle, len(bars))
+	for i := range bars {
+		panel[i] = bars[i]
+		panel[i].Open *= 700
+		panel[i].High *= 700
+		panel[i].Low *= 700
+		panel[i].Close *= 700
+	}
+	c := NewChart(ChartOptions{
+		Symbols:    []string{"P"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{},
+		Source:     fixedSource{bars: panel},
+		Location:   ashareLocation,
+		Style:      style,
+	})
+	tt := ui.NewTester(c.View, 900, 500)
+	_ = tt.Image()
+	// Place a crosshair by time without ever hovering this chart.
+	if !c.SetCrosshairTime(bars[40].Time) {
+		t.Fatal("placement refused")
+	}
+	// Image returns the last built frame; Frame builds a new one.
+	tt.Frame()
+	img := tt.Image()
+	panes := c.painted[0]
+	b := img.Bounds()
+	// A horizontal crosshair line would span the plot on one row. Count
+	// the crosshair color per row and require the widest row to be a
+	// vertical line's own width, not a plot-wide run.
+	widest := 0
+	for y := int(panes.Price.Y * 1); y < int((panes.Price.Y+panes.Price.H)) && y < b.Max.Y; y++ {
+		n := 0
+		for x := int(panes.Price.X); x < int(panes.Price.X+panes.Price.W) && x < b.Max.X; x++ {
+			p := img.RGBAAt(x, y)
+			if p.R == cross.R && p.G == cross.G && p.B == cross.B {
+				n++
+			}
+		}
+		if n > widest {
+			widest = n
+		}
+	}
+	if widest > 12 {
+		t.Fatalf("a horizontal crosshair line spans %d px; a linked crosshair has no pointer", widest)
+	}
+	// The vertical line must be present: some column holds crosshair
+	// pixels across most of the plot height.
+	tallest := 0
+	for x := int(panes.Price.X); x < int(panes.Price.X+panes.Price.W) && x < b.Max.X; x++ {
+		n := 0
+		for y := int(panes.Price.Y); y < int(panes.Price.Y+panes.Price.H) && y < b.Max.Y; y++ {
+			p := img.RGBAAt(x, y)
+			if p.R == cross.R && p.G == cross.G && p.B == cross.B {
+				n++
+			}
+		}
+		if n > tallest {
+			tallest = n
+		}
+	}
+	if tallest < int(panes.Price.H)/2 {
+		t.Fatalf("the linked crosshair's vertical line is only %d px tall", tallest)
+	}
+}

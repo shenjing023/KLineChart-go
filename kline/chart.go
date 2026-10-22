@@ -797,8 +797,16 @@ func (a *Chart) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime
 		a.fitted = true
 	}
 	a.vp.Clamp(a.bars(), a.plotW)
+	// A crosshair the host placed by time has no pointer of its own: it
+	// mirrors another chart's pointer, and that pointer's coordinates
+	// belong to the other chart's layout. Building a Pointer from
+	// a.hoverX/hoverY here painted a horizontal line and a price tag at
+	// whatever this chart's stale hover position happened to be (0,0 on
+	// a linked chart), which put the tag at the top of the plot with a
+	// price that was not a price of this series. The vertical line still
+	// draws, because it comes from crossIndex.
 	ptr := Pointer{}
-	if a.crossPane == i {
+	if a.crossPane == i && !a.crossFixed {
 		ptr = Pointer{On: true, X: r.X + a.hoverX, Y: r.Y + a.hoverY}
 	}
 	s := &a.panes[i]
