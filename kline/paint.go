@@ -416,6 +416,17 @@ func volumeScale(cs []Candle, first, last int, labels labelFmt) chart.Linear {
 	return scale
 }
 
+// axisLabelInset is the gap between a tick label and the axis column's
+// right edge. The label is right-aligned so the numbers sit against the
+// card edge whatever their width, instead of floating at a fixed inset
+// from the plot with the rest of the column empty.
+const axisLabelInset = 6
+
+// drawAxisLabel writes one tick label against the right edge of axis.
+func drawAxisLabel(p *ui.Painter, axis ui.Rect, y float32, text string, style Style) {
+	drawLabel(p, axis.X+axis.W-axisLabelInset, y, text, style.Muted, ui.End)
+}
+
 // labelNear reports whether y is within a label's height of a tick the
 // price axis already prints in the same column. The axis is shared by
 // every band, so a label from one band can land on another's.
@@ -450,7 +461,7 @@ func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volS
 				continue
 			}
 		}
-		drawLabel(p, panes.PriceAxis.X+6, y, tick.Label, style.Muted, ui.Start)
+		drawAxisLabel(p, panes.PriceAxis, y, tick.Label, style)
 	}
 	if panes.Volume.H > 8 {
 		top := volScale.Ticks(2)
@@ -463,7 +474,7 @@ func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volS
 			// top, and two numbers printed there read as one. Losing the
 			// volume maximum is the smaller cost.
 			if !labelNear(p, y, price, yScale) {
-				drawLabel(p, panes.VolumeAxis.X+6, y, tick.Label, style.Muted, ui.Start)
+				drawAxisLabel(p, panes.VolumeAxis, y, tick.Label, style)
 			}
 		}
 	}
@@ -588,7 +599,7 @@ func drawSubAxis(p *ui.Painter, plot, axis ui.Rect, scale chart.Linear, style St
 		if have && y-last < h && y-last > -h {
 			continue
 		}
-		drawLabel(p, axis.X+6, y, tick.Label, style.Muted, ui.Start)
+		drawAxisLabel(p, axis, y, tick.Label, style)
 		last, have = y, true
 	}
 }
