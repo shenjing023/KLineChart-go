@@ -309,6 +309,23 @@ func TestPaneHeightsShrinksRatherThanBreaking(t *testing.T) {
 	if panes.KDJ.Y+panes.KDJ.H > panes.Time.Y+panes.Time.H+1 {
 		t.Fatal("the bands run past the chart box")
 	}
+	// The compression is proportional: every band asked for the same
+	// number, so every band must end up the same height. A fix that
+	// clamped each band separately would pass "nothing crashed" and fail
+	// here.
+	if !near(panes.MACD.H, panes.KDJ.H, 1) || !near(panes.Volume.H, panes.KDJ.H, 1) {
+		t.Fatalf("compression was not proportional: vol=%v macd=%v kdj=%v",
+			panes.Volume.H, panes.MACD.H, panes.KDJ.H)
+	}
+	// The price plot keeps the documented quarter of the body, and the
+	// whole layout still fills the box with only the gaps spare.
+	body := panes.Time.Y - panes.Price.Y
+	if panes.Price.H < body*0.2 {
+		t.Fatalf("price plot %v is under a fifth of the body %v", panes.Price.H, body)
+	}
+	if gap := panes.Time.Y - (panes.KDJ.Y + panes.KDJ.H); !near(gap, float32(paneGap), 0.5) {
+		t.Fatalf("gap before the time strip is %v, want %v", gap, paneGap)
+	}
 }
 
 // TestPaneHeightsZeroKeepsTheBuiltInSplit records that the option is
