@@ -246,6 +246,8 @@ func init() {
 
 ### Overlay
 
+`Chart.SetOverlays(symbol, items)` places drawings without a click, and `Chart.Overlays(symbol)` reads them back. It replaces that symbol's list, so a host rewrites the whole set to move one drawing: a frame around a forming weekly bar, a level computed from the data, or drawings restored from a saved session. `Overlay.Data` carries host state through to a registered tool's `Draw` and `Hit`, which is how a tool paints from something other than its points. The built-in kinds ignore `Data`. `SetOverlays` copies the points and leaves the selection empty; an unknown symbol returns `ErrUnknownSymbol`.
+
 `RegisterOverlay` adds a tool `SetTool` accepts. `Anchors` is 1 (click to place, drag to move) or 2 (two clicks, then drag an endpoint). `pan`, `hline`, `segment`, `fib`, and `fibonacci` are reserved. `ToolFib` and `OverlayFibonacci` are both `"fibonacci"`, and `SetTool("fib")` selects that same tool, so `Tool()` matches `Overlay.Kind` on a Fibonacci drawing. Delete and right-click use the same hit test as the built-ins. `Draw` must not change `o.Points`: the chart passes the layer's own slice.
 
 ```go

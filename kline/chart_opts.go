@@ -957,6 +957,55 @@ func (a *Chart) SetMagnet(mode MagnetMode) error {
 // Magnet is the current snap mode.
 func (a *Chart) Magnet() MagnetMode { return a.magnet }
 
+// SetOverlays replaces the drawings on one symbol's pane. It is how a
+// host adds a drawing programmatically instead of through a click: a
+// marker overlay on a forming bar, a level computed from the data, or a
+// restored drawing from a saved session. Points are copied. An empty or
+// nil list clears the pane. An unknown symbol returns ErrUnknownSymbol
+// and changes nothing.
+//
+// IDs may be reused; a host that wants to replace one drawing repeatedly
+// passes the same ID and the whole list each time. An overlay whose
+// Points a registered kind cannot place still paints nothing rather than
+// failing the call.
+func (a *Chart) SetOverlays(symbol string, items []Overlay) error {
+	for i := range a.panes {
+		if a.panes[i].name != symbol {
+			continue
+		}
+		layer := &a.panes[i].overlays
+		*layer = Layer{}
+		for _, item := range items {
+			layer.seq++
+			o := Overlay{
+				ID:       item.ID,
+				Kind:     item.Kind,
+				Points:   append([]Point(nil), item.Points...),
+				Selected: false,
+				Data:     item.Data,
+			}
+			if o.ID == "" {
+				o.ID = fmt.Sprintf("ov-%d", layer.seq)
+			}
+			layer.items = append(layer.items, o)
+		}
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrUnknownSymbol, symbol)
+}
+
+// Overlays returns a copy of one symbol's drawings, the same list a host
+// passed to SetOverlays plus anything the user placed with a tool. An
+// unknown symbol returns ErrUnknownSymbol.
+func (a *Chart) Overlays(symbol string) ([]Overlay, error) {
+	for i := range a.panes {
+		if a.panes[i].name == symbol {
+			return a.panes[i].overlays.Items(), nil
+		}
+	}
+	return nil, fmt.Errorf("%w: %s", ErrUnknownSymbol, symbol)
+}
+
 // SetTool selects pan, hline, segment, fibonacci, or a kind passed to
 // RegisterOverlay. "fib" is the older name of the Fibonacci tool and
 // selects the same tool. A change clears an in-progress drawing.

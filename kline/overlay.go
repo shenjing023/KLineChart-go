@@ -152,6 +152,11 @@ type Overlay struct {
 	Kind     string
 	Points   []Point
 	Selected bool
+	// Data is free-form state the host attached, passed back to a
+	// registered tool's Draw and Hit. The built-in kinds ignore it. A
+	// host that paints from something other than the points, such as a
+	// flag on the bar, keeps it here.
+	Data any
 }
 
 // Hit is an overlay under the pointer. Part is an endpoint index, or
