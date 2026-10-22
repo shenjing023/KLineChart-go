@@ -195,6 +195,12 @@ type Chart struct {
 	// keeps the built-in layouts. It is called with the instant already
 	// in zone, so it never converts a time itself.
 	timeFormat func(time.Time) string
+	// tickFormat is the host's per-role time formatter. It wins over
+	// timeFormat when both are set.
+	tickFormat func(time.Time, TickKind) string
+	// volFormat is the host's formatter for a volume-axis tick. Nil
+	// prints the plain number.
+	volFormat func(float64) string
 	// barColor is the host's per-bar color rule. Nil, or a zero color for
 	// a bar, falls back to Style.CandleBodyColor.
 	barColor func(i int, c, prev Candle) ui.Color
@@ -256,7 +262,7 @@ func (a *Chart) labels() labelFmt {
 	if a == nil || !a.digitsSet {
 		return defaultLabels()
 	}
-	return labelFmt{digits: a.priceDigits, loc: a.zone, format: a.timeFormat}
+	return labelFmt{digits: a.priceDigits, loc: a.zone, format: a.timeFormat, tick: a.tickFormat, volume: a.volFormat}
 }
 
 // bucketZone is the calendar a daily replay aggregate starts on. It is

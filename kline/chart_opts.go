@@ -115,6 +115,25 @@ type ChartOptions struct {
 	// real time, so a mask such as "xxxx-xx-02" cannot move a drawing or
 	// leak a date through the axis spacing.
 	FormatTime func(time.Time) string
+	// FormatTick is FormatTime plus the role of the label, so a host can
+	// use a different granularity in each place. A blind session needs
+	// exactly that: the axis wants the year and month, because month
+	// ticks all land on the first of a month and a day mask would print
+	// the same string seven times; the crosshair and the readout want
+	// the day.
+	//
+	// It takes precedence over FormatTime when both are set. Like
+	// FormatTime it changes only text: tick positions, marker
+	// placement, and the replay cursor stay on the real time.
+	FormatTick func(t time.Time, kind TickKind) string
+	// FormatVolume replaces the text of a volume-axis tick, the same way
+	// FormatTime replaces a time: a host that quotes volume in 万手 or
+	// 亿手 formats the number and the tick keeps its position. It gets
+	// the tick's value, already rounded to a whole number when it is
+	// finite. Nil prints the plain number. The crosshair readout keeps
+	// FormatVolume's own text, so a host that wants both to match uses
+	// this for its own header too.
+	FormatVolume func(float64) string
 	// MAPeriods overrides the periods of the built-in MA indicator. Nil
 	// keeps the default 5 and 20. A host that wants four lines, or a
 	// subset of them, sets them here; a period below 1 is dropped, the
@@ -233,6 +252,8 @@ func NewChart(opts ChartOptions) *Chart {
 		digitsSet:    true,
 		zone:         zone,
 		timeFormat:   opts.FormatTime,
+		tickFormat:   opts.FormatTick,
+		volFormat:    opts.FormatVolume,
 		barColor:     opts.BarColor,
 		maPeriods:    append([]int(nil), opts.MAPeriods...),
 		maColors:     append([]ui.Color(nil), opts.MAColors...),

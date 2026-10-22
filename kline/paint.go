@@ -74,14 +74,12 @@ func drawPrice(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Vie
 	// domain DrawOverlays uses, so a hit lands on the pixel that
 	// was painted.
 	yScale := MainScale(cs, inds, vp, float64(price.W))
+	// The axis labels follow the chart's price precision. Without this,
+	// a host that asks for whole numbers on a 0AMV panel still reads
+	// 4200.00 on the axis while its own header shows 4200.
+	yScale.Format = labels.price
 	first, last := vp.Visible(len(cs), float64(price.W))
-	volScale := chart.NewLinear(0, VolumeMax(cs, first, last)).Nice(3)
-	if volScale.Lo < 0 {
-		volScale.Lo = 0
-	}
-	if volScale.Hi <= volScale.Lo {
-		volScale.Hi = volScale.Lo + 1
-	}
+	volScale := volumeScale(cs, first, last, labels)
 	layers := subLayers(panes, inds, first, last)
 
 	drawGrid(p, panes, cs, vp, yScale, volScale, style, labels)
@@ -230,6 +228,40 @@ func applyIndicatorStyle(inds []Indicator, panes Panes, style Style) {
 	}
 }
 
+// volumeScale is the volume strip's Y domain over the visible bars,
+// rounded to ticks and carrying the host's volume formatter. It is one
+// function so the axis labels and the assertions about them read the
+// same scale.
+func volumeScale(cs []Candle, first, last int, labels labelFmt) chart.Linear {
+	scale := chart.NewLinear(0, VolumeMax(cs, first, last)).Nice(3)
+	if scale.Lo < 0 {
+		scale.Lo = 0
+	}
+	if scale.Hi <= scale.Lo {
+		scale.Hi = scale.Lo + 1
+	}
+	if labels.volume != nil {
+		scale.Format = labels.volume
+	}
+	return scale
+}
+
+// labelNear reports whether y is within a label's height of a tick the
+// price axis already prints in the same column. The axis is shared by
+// every band, so a label from one band can land on another's.
+func labelNear(p *ui.Painter, y float32, price ui.Rect, scale chart.Linear) bool {
+	_, h := p.MeasureText(0, ui.Span{Text: "0", Size: 11})
+	for _, tick := range scale.Ticks(5) {
+		if tick.At < -0.01 || tick.At > 1.01 {
+			continue
+		}
+		if d := chart.Y(price, tick.At) - y; d < h && d > -h {
+			return true
+		}
+	}
+	return false
+}
+
 func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volScale chart.Linear, style Style, labels labelFmt) {
 	price := panes.Price
 	for _, tick := range yScale.Ticks(5) {
@@ -245,7 +277,14 @@ func drawGrid(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale, volS
 		if len(top) > 0 {
 			tick := top[len(top)-1]
 			y := chart.Y(panes.Volume, tick.At)
-			drawLabel(p, panes.VolumeAxis.X+6, y, tick.Label, style.Muted, ui.Start)
+			// The volume axis label is dropped when it would land on a
+			// price tick: the price plot's lowest label sits at the very
+			// bottom of its band, a few DIPs above the volume strip's
+			// top, and two numbers printed there read as one. Losing the
+			// volume maximum is the smaller cost.
+			if !labelNear(p, y, price, yScale) {
+				drawLabel(p, panes.VolumeAxis.X+6, y, tick.Label, style.Muted, ui.Start)
+			}
 		}
 	}
 	for _, tick := range timeTicks(cs, vp, price.W, labels) {
@@ -300,13 +339,11 @@ func timeTicks(cs []Candle, vp Viewport, plotW float32, labels labelFmt) []chart
 	// Ticks are chosen and labeled in the display zone. Their Value stays
 	// the absolute instant, which is what timeBarPosition maps to X.
 	scale := chart.NewTime(left.In(loc), right.In(loc))
-	if labels.format != nil {
+	if labels.format != nil || labels.tick != nil {
 		// A host formatter changes only the text. The tick interval and
 		// therefore every x position stay the same, so a masked date
 		// cannot move the grid.
-		format := labels.format
-		zone := labels.inZone
-		scale.Format = func(t time.Time) string { return format(zone(t)) }
+		scale.Format = func(t time.Time) string { return labels.at(t, TickAxis, "") }
 	}
 	return scale.Ticks(6)
 }
@@ -352,16 +389,27 @@ func timeBarPosition(cs []Candle, t time.Time) (float64, bool) {
 	return float64(i) + float64(t.Sub(cs[i].Time))/float64(gap), true
 }
 
+// drawSubAxis labels a sub-pane's axis. Labels that would collide with a
+// neighbor are dropped: a 28-DIP band printed three ticks stacks them on
+// top of each other, which reads as one garbled number. The scale's own
+// extremes are kept, and the middle one is what gives way.
 func drawSubAxis(p *ui.Painter, plot, axis ui.Rect, scale chart.Linear, style Style) {
 	if plot.H < 8 {
 		return
 	}
+	_, h := p.MeasureText(0, ui.Span{Text: "0", Size: 11})
+	var last float32
+	have := false
 	for _, tick := range scale.Ticks(3) {
 		if tick.At < -0.01 || tick.At > 1.01 {
 			continue
 		}
 		y := chart.Y(plot, tick.At)
+		if have && y-last < h && y-last > -h {
+			continue
+		}
 		drawLabel(p, axis.X+6, y, tick.Label, style.Muted, ui.Start)
+		last, have = y, true
 	}
 }
 
@@ -618,7 +666,7 @@ func drawCrosshair(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, yScale 
 		drawTag(p, hitLayer.axis.X+4, ptr.Y, labels.price(hitLayer.scale.Invert(frac)), style)
 	}
 	if panes.Time.H > 0 {
-		drawTag(p, x, panes.Time.Y+panes.Time.H/2, labels.when(cs[i].Time, "01-02 15:04"), style)
+		drawTag(p, x, panes.Time.Y+panes.Time.H/2, labels.at(cs[i].Time, TickCrosshair, "01-02 15:04"), style)
 	}
 }
 

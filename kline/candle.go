@@ -118,7 +118,30 @@ type labelFmt struct {
 	digits int
 	loc    *time.Location
 	format func(time.Time) string
+	// tick formats a time per label role. Nil uses format for every
+	// role.
+	tick func(time.Time, TickKind) string
+	// volume formats an axis tick in the volume strip. Nil keeps the
+	// plain whole number a scale prints.
+	volume func(float64) string
 }
+
+// TickKind is where a formatted time appears. A host that supplies
+// ChartOptions.FormatTick uses it to pick a granularity: the axis can
+// carry a coarser label than the crosshair without the library knowing
+// why.
+type TickKind string
+
+const (
+	// TickAxis is a time-axis tick under the plot. Month ticks land on
+	// the first of the month, so a day mask would print the same string
+	// for every one of them.
+	TickAxis TickKind = "axis"
+	// TickCrosshair is the time tag on the crosshair.
+	TickCrosshair TickKind = "crosshair"
+	// TickReadout is the time inside Readout and the header.
+	TickReadout TickKind = "readout"
+)
 
 func defaultLabels() labelFmt { return labelFmt{digits: 2} }
 
@@ -134,6 +157,15 @@ func (f labelFmt) when(t time.Time, layout string) string {
 		return f.format(f.inZone(t))
 	}
 	return formatWhen(t, layout, f.loc)
+}
+
+// at is when for one role. A host that set FormatTick answers per role;
+// otherwise every role uses the one formatter.
+func (f labelFmt) at(t time.Time, kind TickKind, layout string) string {
+	if f.tick != nil {
+		return f.tick(f.inZone(t), kind)
+	}
+	return f.when(t, layout)
 }
 
 // inZone is t in the display zone. All formatting paths go through it,
@@ -178,7 +210,7 @@ func FormatBarIn(c Candle, ma5, ma20 float64, digits int, loc *time.Location) st
 
 func formatBar(c Candle, ma5, ma20 float64, labels labelFmt) string {
 	s := fmt.Sprintf("%s  O %s  H %s  L %s  C %s  V %s",
-		labels.when(c.Time, "2006-01-02 15:04"),
+		labels.at(c.Time, TickReadout, "2006-01-02 15:04"),
 		labels.price(c.Open), labels.price(c.High), labels.price(c.Low), labels.price(c.Close),
 		FormatVolume(c.Volume))
 	if !math.IsNaN(ma5) {
