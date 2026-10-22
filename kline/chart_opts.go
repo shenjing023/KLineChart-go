@@ -163,8 +163,14 @@ type ChartOptions struct {
 	// price computed from the previous close and rounded to cents. i is
 	// the index in the full series, not in the visible window. c and prev
 	// are the original bars: an overlay scales prices to an index, and
-	// the callback always sees the raw OHLCV. prev is the zero Candle for
-	// i == 0.
+	// the callback always sees the raw OHLCV.
+	//
+	// prev is the bar before i in the series, so it is a real candle even
+	// when i is the first visible bar and the window starts mid-series.
+	// It is the zero Candle only for i == 0, which has no predecessor.
+	// The callback is asked for visible bars only: a host that needs to
+	// color a bar outside the window must ask the source, not wait for a
+	// callback.
 	//
 	// A zero ui.Color falls back to the built-in rule (Style.Up, Down,
 	// LimitUp, LimitDown from Style.LimitPct), so a host only answers for

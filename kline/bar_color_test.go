@@ -256,3 +256,53 @@ func bytesEqual(a, b *image.RGBA) bool {
 	}
 	return string(a.Pix) == string(b.Pix)
 }
+
+// TestBarColorPrevIsTheRealPredecessorAtTheWindowEdge is the case a host
+// asked about: the first visible bar is usually not bar 0, and its prev
+// must be the bar before it in the series, not the zero Candle. Getting
+// this wrong would silently drop one limit-up color at the left edge.
+func TestBarColorPrevIsTheRealPredecessorAtTheWindowEdge(t *testing.T) {
+	bars := hostBars(120)
+	c := NewChart(ChartOptions{
+		Symbols:    []string{"TEST"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{},
+		Source:     fixedSource{bars: bars},
+		Location:   ashareLocation,
+		BarColor:   func(int, Candle, Candle) ui.Color { return ui.Color{} },
+	})
+	// Pan so the visible window starts somewhere in the middle.
+	tt := ui.NewTester(c.View, 640, 480)
+	_ = tt.Image()
+	c.vp.Offset = 40
+	first, _ := c.Visible()
+	if first <= 0 {
+		t.Fatalf("window starts at %d; the test needs a mid-series edge", first)
+	}
+	var seen []struct {
+		i          int
+		prev       Candle
+		prevIsZero bool
+	}
+	c.barColor = func(i int, _ Candle, prev Candle) ui.Color {
+		seen = append(seen, struct {
+			i          int
+			prev       Candle
+			prevIsZero bool
+		}{i, prev, prev == (Candle{})})
+		return ui.Color{}
+	}
+	_ = ui.NewTester(c.View, 640, 480).Image()
+	if len(seen) == 0 {
+		t.Fatal("no bars were reported")
+	}
+	if seen[0].i == 0 {
+		t.Fatalf("the first reported bar is 0; the window did not start mid-series")
+	}
+	if seen[0].prevIsZero {
+		t.Fatalf("bar %d got a zero prev; it must be the bar before it in the series", seen[0].i)
+	}
+	if seen[0].prev.Close != bars[seen[0].i-1].Close {
+		t.Fatalf("bar %d prev close %v, want %v", seen[0].i, seen[0].prev.Close, bars[seen[0].i-1].Close)
+	}
+}
