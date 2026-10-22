@@ -197,6 +197,8 @@ type Chart struct {
 	timeFormat func(time.Time) string
 	// subDraw is the host's sub-pane painter. Nil draws nothing.
 	subDraw func(p *ui.Painter, rect ui.Rect, ind Indicator, index int)
+	// markerDraw replaces the default marker shape. Nil keeps the arrow.
+	markerDraw func(p *ui.Painter, spot MarkerSpot, m Marker, style Style)
 	// tickFormat is the host's per-role time formatter. It wins over
 	// timeFormat when both are set.
 	tickFormat func(time.Time, TickKind) string

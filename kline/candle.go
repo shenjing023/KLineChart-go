@@ -10,6 +10,8 @@ import (
 	"math"
 	"math/rand/v2"
 	"strconv"
+
+	"github.com/egoist/mygo/ui"
 	"time"
 )
 
@@ -182,6 +184,34 @@ func formatWhen(t time.Time, layout string, loc *time.Location) string {
 		return t.UTC().Format(layout)
 	}
 	return t.In(loc).Format(layout)
+}
+
+// TextBaseline is the distance from the y a text line is drawn at to its
+// baseline. MeasureText returns the line box, which is the same height at
+// every size (the font's line height), while the glyphs scale with the
+// requested size and end on the baseline. So centring a short label by
+// subtracting MeasureText's height leaves it low, and by a different
+// amount at each size.
+const TextBaseline float32 = 14
+
+// CenterText draws span with its glyphs centred in box. Use it for a
+// label inside a pill or tag instead of subtracting MeasureText's height:
+// that height is the line box, not the ink, so the usual
+// "(box.H-h)/2" sits low and the error changes with the size.
+//
+// It paints; it does not reserve layout. Call it from a Draw callback.
+func CenterText(p *ui.Painter, box ui.Rect, span ui.Span) {
+	if p == nil || span.Text == "" {
+		return
+	}
+	w, _ := p.MeasureText(0, span)
+	x := box.X + (box.W-w)/2
+	// Put the baseline at the box's middle plus half the cap height, so
+	// the visible glyphs straddle the centre. Cap height is roughly 0.72
+	// of the point size for the font MyGo ships.
+	capH := span.Size * 0.72
+	y := box.Y + box.H/2 + capH/2 - TextBaseline
+	p.RichText(x, y, 0, span)
 }
 
 // FormatVolume renders a volume as a whole number.

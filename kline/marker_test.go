@@ -492,3 +492,94 @@ func (s *remapSource) GetBars(req BarRequest) ([]Candle, bool, error) {
 	}
 	return append([]Candle(nil), s.hour...), false, nil
 }
+
+// TestMarkerDrawReplacesOnlyTheShape records the split: the library keeps
+// resolving times, stacking, clipping, and replay, and the hook answers
+// only what one marker looks like. Without the hook the arrow still draws.
+func TestMarkerDrawReplacesOnlyTheShape(t *testing.T) {
+	bars := hostBars(40)
+	hot := ui.RGB(255, 0, 255)
+	c := hostChart(t, ChartOptions{
+		Symbols:    []string{"A"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{},
+		Source:     fixedSource{bars: bars},
+		Location:   ashareLocation,
+	})
+	marks := []Marker{
+		{Time: bars[10].Time, Side: SideBuy, Qty: 1},
+		{Time: bars[10].Time, Side: SideBuy, Qty: 2}, // same bar: must stack
+		{Time: bars[25].Time, Side: SideSell, Qty: 1},
+	}
+	if err := c.SetMarkers("A", marks); err != nil {
+		t.Fatalf("SetMarkers: %v", err)
+	}
+	// Default: no hook, the arrow draws and nothing calls out.
+	tt := ui.NewTester(c.View, 900, 500)
+	if img := tt.Image(); img == nil {
+		t.Fatal("no default frame")
+	}
+
+	var seen []MarkerSpot
+	c.MarkerDraw(func(p *ui.Painter, spot MarkerSpot, m Marker, style Style) {
+		seen = append(seen, spot)
+		p.Fill(ui.Rect{X: spot.X - 3, Y: spot.TipY - 3, W: 6, H: 6}, hot, 0)
+	})
+	tt = ui.NewTester(c.View, 900, 500)
+	img := tt.Image()
+	if len(seen) != len(marks) {
+		t.Fatalf("hook ran %d times for %d markers", len(seen), len(marks))
+	}
+	// The two buys on one bar must report different stack slots, which is
+	// the part the library still owns.
+	if seen[0].Stack == seen[1].Stack {
+		t.Fatalf("two markers on one bar share stack slot %d", seen[0].Stack)
+	}
+	if seen[0].TipY == seen[1].TipY {
+		t.Fatal("two markers on one bar have the same tip; stacking did not apply")
+	}
+	// The hook's paint reached the frame.
+	if countColor(img, hot) == 0 {
+		t.Fatal("the host shape never reached the frame")
+	}
+	// Every spot carries the bar and candle it resolved to.
+	for _, spot := range seen {
+		if spot.Bar < 0 || spot.Bar >= len(bars) {
+			t.Fatalf("spot bar %d outside the series", spot.Bar)
+		}
+		if spot.Candle.Time != bars[spot.Bar].Time {
+			t.Fatalf("spot bar %d carries the wrong candle", spot.Bar)
+		}
+	}
+}
+
+// TestMarkerDrawNilRestoresTheArrow records that the hook is optional.
+func TestMarkerDrawNilRestoresTheArrow(t *testing.T) {
+	bars := hostBars(30)
+	c := hostChart(t, ChartOptions{
+		Symbols:    []string{"A"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{},
+		Source:     fixedSource{bars: bars},
+		Location:   ashareLocation,
+	})
+	if err := c.SetMarkers("A", []Marker{{Time: bars[10].Time, Side: SideBuy}}); err != nil {
+		t.Fatalf("SetMarkers: %v", err)
+	}
+	calls := 0
+	c.MarkerDraw(func(*ui.Painter, MarkerSpot, Marker, Style) { calls++ })
+	tt := ui.NewTester(c.View, 900, 500)
+	_ = tt.Image()
+	if calls == 0 {
+		t.Fatal("the hook never ran")
+	}
+	calls = 0
+	c.MarkerDraw(nil)
+	tt = ui.NewTester(c.View, 900, 500)
+	if img := tt.Image(); img == nil {
+		t.Fatal("nil hook produced no frame")
+	}
+	if calls != 0 {
+		t.Fatalf("a cleared hook still ran %d times", calls)
+	}
+}

@@ -781,6 +781,20 @@ func (a *Chart) DrawSubPane(fn func(p *ui.Painter, rect ui.Rect, ind Indicator, 
 	a.subDraw = fn
 }
 
+// MarkerDraw replaces the default marker drawing. The library still does
+// the parts that depend on the data: resolving a trade's Time to a bar,
+// stacking several trades on one bar, clipping to the plot, remapping
+// across a period change, and keeping a replay's hidden trades off the
+// chart. The hook answers only "what does one marker look like".
+//
+// It runs inside View with the plot already clipped, once per visible
+// marker, and must only paint. spot carries the pixel position the
+// default shape would use; a host may ignore it and compute its own from
+// the candle and scale. nil restores the arrow.
+func (a *Chart) MarkerDraw(fn func(p *ui.Painter, spot MarkerSpot, m Marker, style Style)) {
+	a.markerDraw = fn
+}
+
 // VisibleTime is the open time of the first and last visible bar. ok is
 // false when the plot has no bars on screen yet.
 func (a *Chart) VisibleTime() (from, to time.Time, ok bool) {

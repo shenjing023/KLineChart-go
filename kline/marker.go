@@ -298,6 +298,17 @@ func (a *Chart) drawMarkers(p *ui.Painter, plot ui.Rect, pane int, cs []Candle, 
 				color = style.Sell
 			}
 			tipY := markerTipY(mk.m.Side, yLow, yHigh, mk.stack)
+			if a.markerDraw != nil {
+				edge := yLow
+				if mk.m.Side == SideSell {
+					edge = yHigh
+				}
+				a.markerDraw(p, MarkerSpot{
+					X: cx, TipY: tipY, EdgeY: edge,
+					Bar: mk.bar, Candle: c, Stack: mk.stack,
+				}, mk.m, style)
+				continue
+			}
 			baseY := tipY + markerH
 			if mk.m.Side == SideSell {
 				baseY = tipY - markerH
@@ -348,4 +359,18 @@ func markerReadout(marks []tradeMark, idx int, c Candle, labels labelFmt) string
 		return ""
 	}
 	return b.String()
+}
+
+// MarkerSpot is where a marker lands in the plot, in window DIPs, with the
+// facts a host needs to draw its own shape. X is the bar's centre. TipY is
+// where the default arrow's point would sit, already stepped away from the
+// bar for the marker's stack slot; EdgeY is the bar's low for a buy and
+// high for a sell, which is where a leader line starts.
+type MarkerSpot struct {
+	X      float32
+	TipY   float32
+	EdgeY  float32
+	Bar    int
+	Candle Candle
+	Stack  int
 }
