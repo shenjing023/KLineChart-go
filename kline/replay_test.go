@@ -938,3 +938,101 @@ func TestReplayDailyBucketRespectsLocation(t *testing.T) {
 		t.Fatalf("UTC daily bucket %s, want the first base open %s", first.Time, utc)
 	}
 }
+
+// TestStepFollowBringsTheNewestBarIntoView is the gesture a training host
+// binds to a "next bar" button. A plain Step must leave a panned viewport
+// alone, because playback must not drag a reader away from history; the
+// Follow variant exists so the same click can mean "show me that bar".
+func TestStepFollowBringsTheNewestBarIntoView(t *testing.T) {
+	bars := hostBars(200)
+	c := NewChart(ChartOptions{
+		Symbols:    []string{"A"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{},
+		Source:     fixedSource{bars: bars},
+		Location:   ashareLocation,
+	})
+	rp, err := StartReplay(c, map[string][]Candle{"A": bars})
+	if err != nil {
+		t.Fatalf("StartReplay: %v", err)
+	}
+	if err := rp.SeekIndex(150); err != nil {
+		t.Fatalf("seek: %v", err)
+	}
+	// Give the chart a plot width and pan into history.
+	c.plotW = 600
+	c.fitted = true
+	if !c.SetVisibleTime(bars[60].Time, bars[90].Time) {
+		t.Fatal("SetVisibleTime refused the range")
+	}
+	if c.vp.Offset <= 0 {
+		t.Fatalf("the fixture did not pan into history: %+v", c.vp)
+	}
+
+	// A plain Step keeps the reader's position.
+	offset := c.vp.Offset
+	if err := rp.Step(1); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if c.vp.Offset != offset {
+		t.Fatalf("Step moved a panned viewport: %.2f -> %.2f", offset, c.vp.Offset)
+	}
+
+	// StepFollow shows the newest bar, without changing the bar width.
+	width := c.vp.BarWidth
+	if err := rp.StepFollow(1); err != nil {
+		t.Fatalf("StepFollow: %v", err)
+	}
+	if c.vp.BarWidth != width {
+		t.Fatalf("StepFollow changed the bar width: %.2f -> %.2f", width, c.vp.BarWidth)
+	}
+	_, last := c.Visible()
+	if last < c.Bars()-1-OverscrollBars {
+		t.Fatalf("StepFollow left the newest bar off screen: last=%d bars=%d", last, c.Bars())
+	}
+}
+
+// TestSeekIndexFollowFollowsOnlyForward records the second half of the
+// rule: a backward seek has no new bar to show, so it keeps the reader's
+// position even through the Follow variant.
+func TestSeekIndexFollowFollowsOnlyForward(t *testing.T) {
+	bars := hostBars(200)
+	c := NewChart(ChartOptions{
+		Symbols:    []string{"A"},
+		Period:     Period{Span: 1, Unit: UnitDay},
+		Indicators: []string{},
+		Source:     fixedSource{bars: bars},
+		Location:   ashareLocation,
+	})
+	rp, err := StartReplay(c, map[string][]Candle{"A": bars})
+	if err != nil {
+		t.Fatalf("StartReplay: %v", err)
+	}
+	if err := rp.SeekIndex(150); err != nil {
+		t.Fatalf("seek: %v", err)
+	}
+	c.plotW = 600
+	c.fitted = true
+	if !c.SetVisibleTime(bars[60].Time, bars[90].Time) {
+		t.Fatal("SetVisibleTime refused the range")
+	}
+	offset := c.vp.Offset
+	// Forward: follows.
+	if err := rp.SeekIndexFollow(180); err != nil {
+		t.Fatalf("forward seek: %v", err)
+	}
+	if c.vp.Offset == offset {
+		t.Fatal("a forward SeekIndexFollow did not move the viewport")
+	}
+	// Pan back, then seek backward: keeps the position.
+	if !c.SetVisibleTime(bars[60].Time, bars[90].Time) {
+		t.Fatal("SetVisibleTime refused the range")
+	}
+	offset = c.vp.Offset
+	if err := rp.SeekIndexFollow(100); err != nil {
+		t.Fatalf("backward seek: %v", err)
+	}
+	if c.vp.Offset != offset {
+		t.Fatalf("a backward SeekIndexFollow moved the viewport: %.2f -> %.2f", offset, c.vp.Offset)
+	}
+}

@@ -180,12 +180,56 @@ func (r *Replay) SetClock(now func() time.Time) {
 
 // Step reveals n more base bars. n <= 0 does nothing. The cursor stops
 // at the last bar. Each new bar is reported to OnBar.
+//
+// A viewport the reader panned away from the right edge stays where it
+// is: a reader looking at history is not dragged along by a reveal. Use
+// StepFollow when the call itself means "show me the newest bar".
 func (r *Replay) Step(n int) error {
 	if err := r.ready(); err != nil {
 		return err
 	}
 	gen := r.nextOp()
 	return r.advance(n, true, gen)
+}
+
+// StepFollow is Step, and also brings the newest revealed bar to the
+// right edge even when the reader had panned away. It keeps the bar
+// width, so a reveal does not zoom. This is the "next bar" gesture a
+// training host binds to a button: the click says show that bar, unlike
+// playback, which must not pull a reader away from history.
+//
+// A callback that closes or replaces the replay during the step stops it
+// the same way it does for Step.
+func (r *Replay) StepFollow(n int) error {
+	if err := r.ready(); err != nil {
+		return err
+	}
+	gen := r.nextOp()
+	if err := r.advance(n, true, gen); err != nil {
+		return err
+	}
+	// Only follow while this replay still owns the chart: a callback
+	// during the step may have closed it or started a replacement.
+	if r.chart != nil && r.chart.replay == r && !r.closed {
+		r.followLatest()
+	}
+	return nil
+}
+
+// followLatest shows the newest revealed bar against the right edge
+// without changing the bar width.
+func (r *Replay) followLatest() {
+	a := r.chart
+	if a == nil || a.plotW <= 1 || a.bars() <= 0 {
+		return
+	}
+	if a.vp.BarWidth <= 0 {
+		a.vp.BarWidth = DefaultBarWidth
+	}
+	margin := float64(OverscrollBars) * a.vp.BarWidth
+	a.vp.Offset = float64(a.bars()) - (a.plotW-margin)/a.vp.BarWidth
+	a.vp.Clamp(a.bars(), a.plotW)
+	a.fitted = true
 }
 
 // StepBack hides n base bars and rebuilds the prefix. It does not report
@@ -208,11 +252,31 @@ func (r *Replay) StepBack(n int) error {
 // SeekIndex reveals the first i base bars. A forward seek reports each
 // newly revealed bar. A backward seek rebuilds the prefix and reports
 // nothing. i is clamped to the series.
+//
+// Like Step, a forward seek leaves a panned viewport where it was. Use
+// SeekIndexFollow when the call means "show me the bar at i".
 func (r *Replay) SeekIndex(i int) error {
 	if err := r.ready(); err != nil {
 		return err
 	}
 	return r.seekIndex(i, r.nextOp())
+}
+
+// SeekIndexFollow is SeekIndex for a forward seek, and brings the newest
+// revealed bar to the right edge. A backward seek keeps the reader's
+// position, since there is no new bar to show.
+func (r *Replay) SeekIndexFollow(i int) error {
+	if err := r.ready(); err != nil {
+		return err
+	}
+	before := r.cursor
+	if err := r.seekIndex(i, r.nextOp()); err != nil {
+		return err
+	}
+	if r.cursor > before {
+		r.followLatest()
+	}
+	return nil
 }
 
 func (r *Replay) seekIndex(i int, gen uint64) error {
