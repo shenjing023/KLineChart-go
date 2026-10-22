@@ -186,3 +186,66 @@ func nearUI(got color.RGBA, want ui.Color) bool {
 	db := int(got.B) - int(want.B)
 	return dr*dr+dg*dg+db*db <= 24*24
 }
+
+// TestHollowUpWickMissesTheBody is the visual rule a host reported: an
+// A-share hollow rising candle is empty inside, so the wick stops at the
+// body's edges instead of running through it. The existing bodyInterior
+// sample sits a quarter body left of the wick and cannot see this.
+func TestHollowUpWickMissesTheBody(t *testing.T) {
+	cs := []Candle{
+		{Time: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC), Open: 10, Close: 20, High: 24, Low: 6, Volume: 5},
+	}
+	style := DarkDefault()
+	style.Plot = ui.RGB(8, 8, 12)
+	style.VolumeBg = ui.RGB(8, 8, 12)
+	style.Grid = ui.RGB(40, 40, 48)
+	style.Up = ui.RGB(0, 220, 120)
+	style.Down = ui.RGB(230, 40, 40)
+
+	const (
+		w, h   = 480, 320
+		barW   = 48.0
+		bodyFr = 0.68
+	)
+	// paint returns the column of pixels down the candle's wick.
+	paint := func(hollow bool) (img *image.RGBA, panes Panes) {
+		s := style
+		s.HollowUp = hollow
+		img = paintAt(t, w, h, func(p *ui.Painter, r ui.Rect) {
+			panes = SplitNoTime(r)
+			vp := Viewport{BarWidth: barW}
+			Paint(p, panes, cs, nil, vp, Pointer{}, -1, s)
+		})
+		return img, panes
+	}
+
+	solid, panes := paint(false)
+	// The solid body's centre column is the body color all the way down.
+	cx := panes.Price.X + float32(barW/2)
+	yMid := panes.Price.Y + panes.Price.H/2
+	if got := pixelAt(t, solid, cx, yMid); !nearUI(got, style.Up) {
+		t.Fatalf("solid body at the wick column is %+v, want the body color", got)
+	}
+
+	hollow, _ := paint(true)
+	// Inside the hollow body the wick column must be the plot, not the
+	// candle color. Sample a few points so a one-pixel stroke elsewhere
+	// cannot make this pass by accident.
+	for _, dy := range []float32{-8, -3, 3, 8} {
+		if got := pixelAt(t, hollow, cx, yMid+dy); nearUI(got, style.Up) {
+			t.Fatalf("hollow body has the wick showing through at y%+v: %+v", dy, got)
+		}
+	}
+	// Above and below the body the wick must still be drawn. The High
+	// and Low sit inside the price domain, not at its edges, so find
+	// them through the same scale Paint used.
+	scale := MainScale(cs, nil, Viewport{BarWidth: barW}, float64(panes.Price.W))
+	yHi := panes.Price.Y + (1-scale.At(cs[0].High))*panes.Price.H
+	yLo := panes.Price.Y + (1-scale.At(cs[0].Low))*panes.Price.H
+	if got := pixelAt(t, hollow, cx, yHi+2); !nearUI(got, style.Up) {
+		t.Fatalf("upper wick missing at %v: %+v", yHi+2, got)
+	}
+	if got := pixelAt(t, hollow, cx, yLo-2); !nearUI(got, style.Up) {
+		t.Fatalf("lower wick missing at %v: %+v", yLo-2, got)
+	}
+}

@@ -503,17 +503,29 @@ func drawCandles(p *ui.Painter, plot ui.Rect, cs []Candle, vp Viewport, yScale c
 		yLow := chart.Y(plot, yScale.At(c.Low))
 		yOpen := chart.Y(plot, yScale.At(c.Open))
 		yClose := chart.Y(plot, yScale.At(c.Close))
-		p.Line(cx, yHigh, cx, yLow, 1, color)
 		top := min(yOpen, yClose)
 		bot := max(yOpen, yClose)
 		h := bot - top
-		if h < 1 {
+		flat := h < 1
+		if flat {
 			h = 1
 			top = (yOpen+yClose)/2 - 0.5
+			bot = top + 1
 		}
 		body := ui.Rect{X: cx - bodyW/2, Y: top, W: bodyW, H: h}
-		// A-share hollow: a rising body is an outline, a falling body stays
-		// filled. The wick is already drawn through the body.
+		// A-share hollow: a rising body is an outline and its interior
+		// stays empty, so the wick is drawn in two pieces that stop at
+		// the body's edges. A single line from high to low would show
+		// through the empty body, which is not how the A-share candle
+		// looks. A falling body, and a flat one, keep one line: the body
+		// is filled, so a wick behind it cannot be seen anyway.
+		if up && style.HollowUp && !flat {
+			p.Line(cx, yHigh, cx, top, 1, color)
+			p.Line(cx, bot, cx, yLow, 1, color)
+			p.Stroke(body, color, 0, 1)
+			continue
+		}
+		p.Line(cx, yHigh, cx, yLow, 1, color)
 		if up && style.HollowUp {
 			p.Stroke(body, color, 0, 1)
 			continue
