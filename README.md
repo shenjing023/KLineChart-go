@@ -203,7 +203,7 @@ Axis tick labels are right-aligned against the axis column's edge, so the number
 
 ## Extend
 
-Register indicators and drawings before `NewChart`, usually from `init`. A chart that already exists picks up new specs from `SyncIndicators`, which keeps every existing toggle in place: a `*bool` from `IndicatorEnabled` that a `ui.Toggle` holds stays bound. `Unregister` and `UnregisterOverlay` remove a host entry; the chart drops an indicator on the next `SyncIndicators`. Built-in names and tool names stay reserved, and `UnregisterOverlay` does not remove them. The lists are safe to read and update from more than one goroutine. `ChartOptions.Indicators` and `SetIndicators` read nil differently: nil options keep MA and MACD, and `SetIndicators(nil)` turns everything off.
+Register indicators and drawings before `NewChart`, usually from `init`. A chart that already exists picks up new specs from `SyncIndicators`, which keeps every existing toggle in place: a `*bool` from `IndicatorEnabled` that a `ui.Toggle` holds stays bound. `Unregister` and `UnregisterOverlay` remove a host entry; the chart drops an indicator on the next `SyncIndicators`. Built-in names and tool names stay reserved, and `UnregisterOverlay` does not remove them. The lists are safe to read and update from more than one goroutine. `ChartOptions.Indicators` and `SetIndicators` read nil differently: nil options keep MA and MACD, and `SetIndicators(nil)` turns everything off. On the options side nil and `[]string{}` are not the same either: nil keeps the defaults, and an empty non-nil slice turns everything off. A host that builds its list at runtime and gets nil back therefore reopens MA and MACD; an empty slice is how it says "none".
 
 ### Indicator
 

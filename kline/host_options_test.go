@@ -488,3 +488,43 @@ func TestPaneHeightsVolumeOnlyStillPlacesKDJ(t *testing.T) {
 		t.Fatalf("the KDJ band landed in Extra: %v", panes.Extra)
 	}
 }
+
+// TestIndicatorNilMeansDefaultsAndEmptyMeansNone pins the trap a host hit:
+// a panel that computed its indicator list at runtime produced nil when MA
+// was off, and ChartOptions read that as "use the defaults", so MA and
+// MACD came back on. An empty non-nil slice is the way to say "none".
+// SetIndicators is the opposite, and this test pins both directions so a
+// future change cannot quietly make them agree.
+func TestIndicatorNilMeansDefaultsAndEmptyMeansNone(t *testing.T) {
+	base := ChartOptions{
+		Symbols:  []string{"A"},
+		Period:   Period{Span: 1, Unit: UnitDay},
+		Source:   fixedSource{bars: hostBars(40)},
+		Location: ashareLocation,
+	}
+	withNil := base
+	withNil.Indicators = nil
+	a := hostChart(t, withNil)
+	if !a.IndicatorOn("MA") || !a.IndicatorOn("MACD") {
+		t.Fatalf("nil Indicators should keep the defaults, got MA=%v MACD=%v",
+			a.IndicatorOn("MA"), a.IndicatorOn("MACD"))
+	}
+
+	withEmpty := base
+	withEmpty.Indicators = []string{}
+	b := hostChart(t, withEmpty)
+	if b.IndicatorOn("MA") || b.IndicatorOn("MACD") || b.IndicatorOn("KDJ") {
+		t.Fatalf("an empty Indicators slice should turn everything off, got MA=%v MACD=%v KDJ=%v",
+			b.IndicatorOn("MA"), b.IndicatorOn("MACD"), b.IndicatorOn("KDJ"))
+	}
+
+	// SetIndicators reads nil as "none" on both charts: the opposite of
+	// the option above, and the same for a chart built either way.
+	if err := a.SetIndicators(nil); err != nil {
+		t.Fatalf("SetIndicators(nil): %v", err)
+	}
+	if a.IndicatorOn("MA") || a.IndicatorOn("MACD") {
+		t.Fatalf("SetIndicators(nil) should turn everything off, got MA=%v MACD=%v",
+			a.IndicatorOn("MA"), a.IndicatorOn("MACD"))
+	}
+}

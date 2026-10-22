@@ -78,10 +78,15 @@ type ChartOptions struct {
 	Style   Style
 	Hollow  bool
 	// Indicators names the registry entries that start on, for example
-	// "MA", "MACD", "BOLL", "KDJ". Nil keeps MA and MACD on. An empty
-	// slice turns every indicator off. Unknown names are ignored.
-	// SetIndicators reads nil differently: there it turns every
-	// indicator off.
+	// "MA", "MACD", "BOLL", "KDJ". Unknown names are ignored.
+	//
+	// Nil and an empty slice are NOT the same here:
+	//   nil  -> keep the default MA and MACD on
+	//   []string{} -> turn every indicator off
+	// A host that computes its list at runtime and happens to produce nil
+	// gets the defaults, which is how a closed MA panel can reopen with
+	// MA and MACD. Use an empty non-nil slice to mean "none".
+	// SetIndicators is the opposite: it reads nil as "none".
 	Indicators []string
 	Magnet     MagnetMode
 	// HideHeader skips the per-symbol OHLCV line View normally paints.
@@ -550,9 +555,9 @@ func (a *Chart) SetPaneHeights(h PaneHeights) { a.paneHeights = h }
 func (a *Chart) PaneHeights() PaneHeights { return a.paneHeights }
 
 // SetIndicators turns on exactly the named indicators and turns the
-// others off. Nil and an empty slice both turn every indicator off. That
-// differs from ChartOptions.Indicators, where nil keeps the default MA
-// and MACD. An unknown name returns ErrUnknownIndicator and changes
+// others off. Nil and an empty slice BOTH turn every indicator off, which
+// is the opposite of ChartOptions.Indicators, where nil keeps the default
+// MA and MACD. An unknown name returns ErrUnknownIndicator and changes
 // nothing. Volume is not an indicator and has no name here.
 func (a *Chart) SetIndicators(names []string) error {
 	want := make(map[string]bool, len(names))
