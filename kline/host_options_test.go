@@ -356,3 +356,37 @@ func near(got, want, tol float32) bool {
 	}
 	return d <= tol
 }
+
+// TestPaneHeightsVolumeOnlyWithNoSubPanes is the 0AMV panel shape: a MA
+// line, a volume strip, and no sub-pane. The host sets Volume and leaves
+// Sub at zero, which must not turn the volume override off or leave a
+// gap where a sub-pane would have been.
+func TestPaneHeightsVolumeOnlyWithNoSubPanes(t *testing.T) {
+	c := hostChart(t, ChartOptions{
+		Symbols:     []string{"A"},
+		Period:      Period{Span: 1, Unit: UnitDay},
+		Indicators:  []string{"MA"},
+		Source:      fixedSource{bars: hostBars(90)},
+		Location:    ashareLocation,
+		PaneHeights: PaneHeights{Volume: 34},
+	})
+	panes := c.painted[0]
+	if near(panes.Volume.H, 34, 1) == false {
+		t.Fatalf("volume height %v, want 34", panes.Volume.H)
+	}
+	if panes.MACD.H != 0 || panes.KDJ.H != 0 || len(panes.Extra) != 0 {
+		t.Fatalf("a chart with no sub-pane allocated one: macd=%v kdj=%v extra=%v",
+			panes.MACD.H, panes.KDJ.H, panes.Extra)
+	}
+	// The bands must fill the box exactly, with only the pane gaps spare.
+	used := panes.Price.H + panes.Volume.H + panes.Time.H
+	if gap := panes.Volume.Y - (panes.Price.Y + panes.Price.H); !near(gap, float32(paneGap), 0.5) {
+		t.Fatalf("gap between price and volume is %v, want %v", gap, paneGap)
+	}
+	if gap := panes.Time.Y - (panes.Volume.Y + panes.Volume.H); !near(gap, float32(paneGap), 0.5) {
+		t.Fatalf("gap between volume and time is %v, want %v", gap, paneGap)
+	}
+	if got := used + 2*float32(paneGap); !near(got, panes.Time.Y+panes.Time.H-panes.Price.Y, 0.5) {
+		t.Fatalf("bands plus gaps cover %v, want %v", got, panes.Time.Y+panes.Time.H-panes.Price.Y)
+	}
+}

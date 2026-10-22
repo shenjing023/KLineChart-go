@@ -345,11 +345,20 @@ func (a *Chart) layoutPanes(r ui.Rect, showTime bool) Panes {
 // in the same order, so the host only changes heights, never which
 // indicator paints where.
 func applyPaneHeights(r ui.Rect, fallback Panes, showTime bool, h PaneHeights, subs int) Panes {
+	// One gap between price and volume, then one per sub-pane, then one
+	// before the time strip. The strip and that last gap both come out
+	// of the box before the bands are sized, so the bands fill exactly
+	// what is left and nothing overruns into fitPanes.
+	bands := 1 + subs
 	bodyH := r.H
 	if showTime {
 		bodyH -= timeHeight
+		if fallback.Time.H > 0 {
+			bodyH -= paneGap
+			bands++
+		}
 	}
-	gaps := float32(paneGap) * float32(subs+1)
+	gaps := float32(paneGap) * float32(bands-1)
 	inner := bodyH - gaps
 	if inner <= 0 {
 		return fallback
@@ -391,7 +400,7 @@ func applyPaneHeights(r ui.Rect, fallback Panes, showTime bool, h PaneHeights, s
 			}
 		}
 	}
-	out := Panes{Time: fallback.Time}
+	out := Panes{}
 	out.Price = ui.Rect{X: r.X, Y: r.Y, W: fallback.Price.W, H: priceH}
 	out.PriceAxis = ui.Rect{X: fallback.PriceAxis.X, Y: r.Y, W: fallback.PriceAxis.W, H: priceH}
 	y := r.Y + priceH + paneGap
@@ -412,6 +421,18 @@ func applyPaneHeights(r ui.Rect, fallback Panes, showTime bool, h PaneHeights, s
 			out.ExtraAxis = append(out.ExtraAxis, ax)
 		}
 		y += height + paneGap
+	}
+	// The time strip sits at the bottom of the body, one gap below the
+	// last band. It is measured from the body rather than from the
+	// running y so rounding in the band heights cannot push it out of
+	// the box and make fitPanes shrink it.
+	if fallback.Time.H > 0 {
+		out.Time = ui.Rect{
+			X: fallback.Time.X,
+			Y: r.Y + bodyH + paneGap,
+			W: fallback.Time.W,
+			H: fallback.Time.H,
+		}
 	}
 	return fitPanes(r, out)
 }
