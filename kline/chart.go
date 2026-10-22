@@ -195,6 +195,8 @@ type Chart struct {
 	// keeps the built-in layouts. It is called with the instant already
 	// in zone, so it never converts a time itself.
 	timeFormat func(time.Time) string
+	// subDraw is the host's sub-pane painter. Nil draws nothing.
+	subDraw func(p *ui.Painter, rect ui.Rect, ind Indicator, index int)
 	// tickFormat is the host's per-role time formatter. It wins over
 	// timeFormat when both are set.
 	tickFormat func(time.Time, TickKind) string
@@ -793,7 +795,7 @@ func (a *Chart) paintPane(p *ui.Painter, r ui.Rect, t *ui.Theme, i int, showTime
 	style := a.chartStyle(t)
 	active := a.active(s)
 	paint := barPaint{style: style, host: a.barColor}
-	scale := drawPrice(p, panes, s.candles, active, a.vp, ptr, a.crossIndex, paint, a.labels())
+	scale := drawPriceHook(p, panes, s.candles, active, a.vp, ptr, a.crossIndex, paint, a.labels(), a.subDraw)
 	var rubber *Rubber
 	if a.draftOn && a.draftPane == i && a.crossPane == i {
 		rubber = &Rubber{From: a.draft, X: float64(a.hoverX), Y: float64(a.hoverY), Kind: a.draftRubberKind()}

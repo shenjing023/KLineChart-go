@@ -58,6 +58,12 @@ func Paint(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewpor
 // drawPrice is Paint, and it returns the price scale it used. A plot
 // smaller than 2 DIPs draws nothing and returns a zero scale.
 func drawPrice(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, paint barPaint, labels labelFmt) chart.Linear {
+	return drawPriceHook(p, panes, cs, inds, vp, ptr, barIndex, paint, labels, nil)
+}
+
+// drawPriceHook is drawPrice with a sub-pane painter. Chart passes its
+// host hook; the exported Paint leaves it nil.
+func drawPriceHook(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Viewport, ptr Pointer, barIndex int, paint barPaint, labels labelFmt, subDraw func(*ui.Painter, ui.Rect, Indicator, int)) chart.Linear {
 	price := panes.Price
 	style := paint.style
 	if price.W < 2 || price.H < 2 {
@@ -106,10 +112,134 @@ func drawPrice(p *ui.Painter, panes Panes, cs []Candle, inds []Indicator, vp Vie
 		p.Clip(rect, 0, func() {
 			ind.DrawSub(p, rect, vp)
 		})
+		if subDraw != nil {
+			hooked := rect
+			index := barIndex
+			if index < 0 {
+				index = len(cs) - 1
+			}
+			p.Clip(hooked, 0, func() {
+				subDraw(p, hooked, ind, index)
+			})
+		}
 	}
+	drawHighLow(p, panes, cs, vp, yScale, first, last, style, labels)
+	drawLastPrice(p, panes, cs, vp, yScale, style, labels)
 	drawCrosshair(p, panes, cs, vp, yScale, layers, ptr, barIndex, style, labels)
 	return yScale
 }
+
+// drawLastPrice marks the newest close with a dashed line across the
+// price plot and a filled tag on the axis, so the current price is
+// readable without moving the pointer. The color follows that bar's own
+// body unless Style.LastPrice overrides it, and ClearLastPrice hides it.
+func drawLastPrice(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, scale chart.Linear, style Style, labels labelFmt) {
+	if len(cs) == 0 {
+		return
+	}
+	price := panes.Price
+	if price.W < 2 || price.H < 2 {
+		return
+	}
+	last := cs[len(cs)-1]
+	if math.IsNaN(last.Close) || math.IsInf(last.Close, 0) {
+		return
+	}
+	y := chart.Y(price, scale.At(last.Close))
+	if y < price.Y-1 || y > price.Y+price.H+1 {
+		return
+	}
+	color := style.LastPrice
+	if color == (ui.Color{}) {
+		color = style.Up
+		if last.Close < last.Open {
+			color = style.Down
+		}
+	}
+	drawDashedLine(p, price.X, price.X+price.W, y, color)
+	drawTagColored(p, panes.PriceAxis.X+4, y, labels.price(last.Close), color, style)
+}
+
+// drawHighLow tags the highest high and the lowest low of the visible
+// window. The tag sits at the bar that owns the extreme, with the arrow
+// pointing back at the bar. ClearHighLow hides both.
+func drawHighLow(p *ui.Painter, panes Panes, cs []Candle, vp Viewport, scale chart.Linear, first, last int, style Style, labels labelFmt) {
+	if clearSet(style, ClearHighLow) {
+		return
+	}
+	price := panes.Price
+	if price.W < 2 || price.H < 2 || first > last {
+		return
+	}
+	hiBar, loBar := -1, -1
+	hi, lo := math.Inf(-1), math.Inf(1)
+	for i := first; i <= last && i < len(cs); i++ {
+		c := cs[i]
+		if !math.IsNaN(c.High) && !math.IsInf(c.High, 0) && c.High > hi {
+			hi, hiBar = c.High, i
+		}
+		if !math.IsNaN(c.Low) && !math.IsInf(c.Low, 0) && c.Low < lo {
+			lo, loBar = c.Low, i
+		}
+	}
+	color := style.HighLow
+	if color == (ui.Color{}) {
+		color = style.Muted
+	}
+	if hiBar >= 0 {
+		x := price.X + float32(vp.BarLeft(hiBar)+vp.BarWidth/2)
+		y := chart.Y(price, scale.At(hi))
+		drawExtremeTag(p, x, y, labels.price(hi), color, true)
+	}
+	if loBar >= 0 && (loBar != hiBar || lo != hi) {
+		x := price.X + float32(vp.BarLeft(loBar)+vp.BarWidth/2)
+		y := chart.Y(price, scale.At(lo))
+		drawExtremeTag(p, x, y, labels.price(lo), color, false)
+	}
+}
+
+// drawExtremeTag writes the value just above a high or just below a low,
+// with a small triangle pointing at the bar. It stays inside the plot.
+func drawExtremeTag(p *ui.Painter, x, y float32, text string, color ui.Color, above bool) {
+	span := ui.Span{Text: text, Size: 10, Color: color}
+	w, h := p.MeasureText(0, span)
+	tx := x - w/2
+	ty := y - h - 4
+	if above {
+		ty = y - h - 4
+	} else {
+		ty = y + 4
+	}
+	p.RichText(tx, ty, 0, span)
+}
+
+// drawDashedLine draws a horizontal dashed line by stepping short
+// segments. Painter has no dash pattern for a line, only for a rect.
+func drawDashedLine(p *ui.Painter, x0, y, x1 float32, color ui.Color) {
+	const dash, gap = 4, 3
+	for x := x0; x < x1; x += dash + gap {
+		end := x + dash
+		if end > x1 {
+			end = x1
+		}
+		p.Line(x, y, end, y, 1, color)
+	}
+}
+
+// drawTagColored is drawTag with an explicit fill color, used by the last
+// price mark so the tag matches the line.
+func drawTagColored(p *ui.Painter, x, y float32, text string, fill ui.Color, style Style) {
+	span := ui.Span{Text: text, Size: 11, Color: style.LabelText}
+	w, h := p.MeasureText(0, span)
+	padX, padY := float32(4), float32(2)
+	box := ui.Rect{X: x - w/2 - padX, Y: y - h/2 - padY, W: w + padX*2, H: h + padY*2}
+	p.Fill(box, fill, 3)
+	p.RichText(box.X+padX, box.Y+padY, 0, span)
+}
+
+// clearSet reports whether name was listed in Style.Clear, which forces
+// that field transparent even when it holds a color.
+func clearSet(s Style, name ColorClear) bool { return s.Clear&name != 0 }
 
 // subLayer is one open sub-pane and the scale its axis uses.
 type subLayer struct {

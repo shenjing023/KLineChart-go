@@ -758,6 +758,19 @@ func (a *Chart) OnCrosshairChange(fn func(symbol string, index int, ok bool)) {
 	a.crossHook = fn
 }
 
+// DrawSubPane installs a painter that runs inside View after a sub-pane
+// is drawn, so a host can put its own text in the band: a legend such as
+// "KDJ(9,3,3) K 28.25 D 22.53 J 39.69" at the band's top-left, which is
+// where readers of an A-share chart look for it. The rect is the band's
+// plot and p is clipped to it. index is the bar under the pointer, or the
+// newest bar when the pointer is off the plot.
+//
+// It runs for every visible sub-pane and must only paint: it may run more
+// than once a frame, and it must not call any Chart method. nil clears it.
+func (a *Chart) DrawSubPane(fn func(p *ui.Painter, rect ui.Rect, ind Indicator, index int)) {
+	a.subDraw = fn
+}
+
 // VisibleTime is the open time of the first and last visible bar. ok is
 // false when the plot has no bars on screen yet.
 func (a *Chart) VisibleTime() (from, to time.Time, ok bool) {
@@ -1146,6 +1159,40 @@ func (a *Chart) ResetView() {
 	a.vp.BarWidth = DefaultBarWidth
 	a.fitted = false
 }
+
+// SetBarWidth sets the width of one bar in DIPs, keeping the bar under
+// the left edge roughly in place. It is clamped to MinBarWidth and
+// MaxBarWidth, the same bounds the wheel uses, so a host cannot make the
+// chart unreadable or unusable. The wheel still zooms from there: this
+// sets the current width, not a lock.
+func (a *Chart) SetBarWidth(width float64) {
+	if math.IsNaN(width) || width <= 0 {
+		return
+	}
+	if width < MinBarWidth {
+		width = MinBarWidth
+	}
+	if width > MaxBarWidth {
+		width = MaxBarWidth
+	}
+	if a.vp.BarWidth == width {
+		return
+	}
+	// Keep the left edge where it is so the same bars stay on screen.
+	if a.vp.BarWidth > 0 {
+		left := a.vp.Offset
+		a.vp.BarWidth = width
+		a.vp.Offset = left
+	} else {
+		a.vp.BarWidth = width
+	}
+	if a.plotW > 1 {
+		a.vp.Clamp(a.bars(), a.plotW)
+	}
+}
+
+// BarWidth is the current width of one bar in DIPs.
+func (a *Chart) BarWidth() float64 { return a.vp.BarWidth }
 
 // Bars is the number of bars every symbol has on screen. Bar i is the
 // same open time on each symbol. Live bars still waiting for another

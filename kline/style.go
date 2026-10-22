@@ -38,6 +38,13 @@ type Style struct {
 	// Compare is the second series in overlay mode, drawn as a close
 	// line on the indexed price plot.
 	Compare ui.Color
+	// LastPrice is the dashed line and price tag at the newest close.
+	// Zero follows the body color of that bar, so it reads as the same
+	// up or down as the candle. ClearLastPrice hides the mark.
+	LastPrice ui.Color
+	// HighLow colors the highest-high and lowest-low tags on the visible
+	// window. Zero uses Muted. ClearHighLow hides them.
+	HighLow ui.Color
 	// Buy and Sell color trade markers. Zero means the rising and
 	// falling candle colors: Buy follows Up, Sell follows Down.
 	Buy, Sell ui.Color
@@ -147,6 +154,8 @@ const (
 	ClearCompare
 	ClearBuy
 	ClearSell
+	ClearLastPrice
+	ClearHighLow
 )
 
 // CandleBodyColor is the wick and body color for c.
@@ -306,6 +315,12 @@ func applyClear(s Style) Style {
 	}
 	if s.Clear&ClearCompare != 0 {
 		s.Compare = ui.Color{}
+	}
+	if s.Clear&ClearLastPrice != 0 {
+		s.LastPrice = ui.Color{}
+	}
+	if s.Clear&ClearHighLow != 0 {
+		s.HighLow = ui.Color{}
 	}
 	if s.Clear&ClearBuy != 0 {
 		s.Buy = ui.Color{}
