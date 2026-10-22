@@ -53,6 +53,56 @@ type weekGolden struct {
 		CloseCents    float64 `json:"closeCents"`
 		Volume        float64 `json:"volume"`
 	} `json:"lastWeekByReveal"`
+	CrossYearSamples []struct {
+		Name          string `json:"name"`
+		SpansTwoYears bool   `json:"spansTwoYears"`
+		Bars          []struct {
+			Date       string  `json:"date"`
+			OpenCents  float64 `json:"openCents"`
+			HighCents  float64 `json:"highCents"`
+			LowCents   float64 `json:"lowCents"`
+			CloseCents float64 `json:"closeCents"`
+			Volume     float64 `json:"volume"`
+		} `json:"bars"`
+		Weeks []struct {
+			WeekStart  string  `json:"weekStart"`
+			LastDate   string  `json:"lastDate"`
+			InProgress bool    `json:"inProgress"`
+			OpenCents  float64 `json:"openCents"`
+			HighCents  float64 `json:"highCents"`
+			LowCents   float64 `json:"lowCents"`
+			CloseCents float64 `json:"closeCents"`
+			Volume     float64 `json:"volume"`
+		} `json:"weeks"`
+	} `json:"crossYearSamples"`
+}
+
+// goldenBars converts one sample's daily rows into chart bars.
+func goldenBars(t *testing.T, in []struct {
+	Date       string  `json:"date"`
+	OpenCents  float64 `json:"openCents"`
+	HighCents  float64 `json:"highCents"`
+	LowCents   float64 `json:"lowCents"`
+	CloseCents float64 `json:"closeCents"`
+	Volume     float64 `json:"volume"`
+}) []Candle {
+	t.Helper()
+	out := make([]Candle, len(in))
+	for i, b := range in {
+		d, err := time.ParseInLocation("2006-01-02", b.Date, weekZone)
+		if err != nil {
+			t.Fatalf("golden date %q: %v", b.Date, err)
+		}
+		out[i] = Candle{
+			Time:   time.Date(d.Year(), d.Month(), d.Day(), 9, 30, 0, 0, weekZone),
+			Open:   b.OpenCents / 100,
+			High:   b.HighCents / 100,
+			Low:    b.LowCents / 100,
+			Close:  b.CloseCents / 100,
+			Volume: b.Volume,
+		}
+	}
+	return out
 }
 
 func loadWeekGolden(t *testing.T) *weekGolden {
@@ -302,5 +352,45 @@ func TestWeekGoldenSwitchingPeriodKeepsCursor(t *testing.T) {
 	}
 	if rp.Cursor() != reveal || c.Bars() != reveal {
 		t.Fatalf("round trip: cursor %d bars %d, want %d", rp.Cursor(), c.Bars(), reveal)
+	}
+}
+
+// TestWeekGoldenCrossYear compares the host's own cross-year windows.
+// These are the cases the main 640-bar window does not contain: a week
+// that starts in one year and ends in the next, and the counter-example
+// where a holiday week looks like it should span the year but does not.
+func TestWeekGoldenCrossYear(t *testing.T) {
+	g := loadWeekGolden(t)
+	if len(g.CrossYearSamples) == 0 {
+		t.Skip("the fixture has no cross-year samples")
+	}
+	spanning := 0
+	for _, s := range g.CrossYearSamples {
+		if s.SpansTwoYears {
+			spanning++
+		}
+		bars := goldenBars(t, s.Bars)
+		got := aggregate(bars, Period{Span: 1, Unit: UnitWeek}, weekZone)
+		if len(got) != len(s.Weeks) {
+			t.Fatalf("%s: week count %d, want %d", s.Name, len(got), len(s.Weeks))
+		}
+		for i, w := range s.Weeks {
+			if !sameWeekBar(got[i], w.WeekStart, w.LastDate, w.OpenCents, w.HighCents, w.LowCents, w.CloseCents, w.Volume, t) {
+				t.Fatalf("%s week %d (%s)", s.Name, i, w.WeekStart)
+			}
+		}
+		// A sample the host calls spanning must really have a week whose
+		// first and last trading day fall in different years, or the
+		// assertion above is checking an ordinary week.
+		for _, w := range s.Weeks {
+			if w.WeekStart[:4] != w.LastDate[:4] {
+				if !s.SpansTwoYears {
+					t.Fatalf("%s spans the year but is marked as not spanning", s.Name)
+				}
+			}
+		}
+	}
+	if spanning < 2 {
+		t.Fatalf("only %d cross-year samples; the fixture was probably trimmed wrong", spanning)
 	}
 }

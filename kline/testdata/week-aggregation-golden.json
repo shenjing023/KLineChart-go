@@ -15312,5 +15312,503 @@
    "closeCents": 158572,
    "volume": 115872
   }
+ ],
+ "crossYearSamples": [
+  {
+   "name": "2024-2025",
+   "bars": [
+    {
+     "date": "2024-12-20",
+     "openCents": 145155,
+     "highCents": 146222,
+     "lowCents": 144044,
+     "closeCents": 144242,
+     "volume": 28158
+    },
+    {
+     "date": "2024-12-23",
+     "openCents": 144342,
+     "highCents": 145842,
+     "lowCents": 143742,
+     "closeCents": 144687,
+     "volume": 21603
+    },
+    {
+     "date": "2024-12-24",
+     "openCents": 144542,
+     "highCents": 146442,
+     "lowCents": 144201,
+     "closeCents": 145924,
+     "volume": 22105
+    },
+    {
+     "date": "2024-12-25",
+     "openCents": 145922,
+     "highCents": 145922,
+     "lowCents": 144652,
+     "closeCents": 145042,
+     "volume": 17123
+    },
+    {
+     "date": "2024-12-26",
+     "openCents": 145442,
+     "highCents": 145920,
+     "lowCents": 144342,
+     "closeCents": 144821,
+     "volume": 18287
+    },
+    {
+     "date": "2024-12-27",
+     "openCents": 144932,
+     "highCents": 145642,
+     "lowCents": 143992,
+     "closeCents": 144939,
+     "volume": 20759
+    },
+    {
+     "date": "2024-12-30",
+     "openCents": 145439,
+     "highCents": 146438,
+     "lowCents": 144542,
+     "closeCents": 144542,
+     "volume": 25130
+    },
+    {
+     "date": "2024-12-31",
+     "openCents": 144582,
+     "highCents": 146542,
+     "lowCents": 144243,
+     "closeCents": 144442,
+     "volume": 39354
+    },
+    {
+     "date": "2025-01-02",
+     "openCents": 144442,
+     "highCents": 144491,
+     "lowCents": 140042,
+     "closeCents": 140842,
+     "volume": 50029
+    },
+    {
+     "date": "2025-01-03",
+     "openCents": 141492,
+     "highCents": 141541,
+     "lowCents": 138743,
+     "closeCents": 139542,
+     "volume": 32628
+    },
+    {
+     "date": "2025-01-06",
+     "openCents": 137342,
+     "highCents": 138308,
+     "lowCents": 135322,
+     "closeCents": 136042,
+     "volume": 44255
+    },
+    {
+     "date": "2025-01-07",
+     "openCents": 136508,
+     "highCents": 137231,
+     "lowCents": 135942,
+     "closeCents": 136062,
+     "volume": 24221
+    },
+    {
+     "date": "2025-01-08",
+     "openCents": 136042,
+     "highCents": 137224,
+     "lowCents": 134708,
+     "closeCents": 136292,
+     "volume": 35258
+    },
+    {
+     "date": "2025-01-09",
+     "openCents": 136941,
+     "highCents": 138500,
+     "lowCents": 135340,
+     "closeCents": 136442,
+     "volume": 29706
+    },
+    {
+     "date": "2025-01-10",
+     "openCents": 136752,
+     "highCents": 137237,
+     "lowCents": 135642,
+     "closeCents": 135642,
+     "volume": 21872
+    }
+   ],
+   "weeks": [
+    {
+     "weekStart": "2024-12-16",
+     "lastDate": "2024-12-20",
+     "inProgress": false,
+     "openCents": 145155,
+     "highCents": 146222,
+     "lowCents": 144044,
+     "closeCents": 144242,
+     "volume": 28158
+    },
+    {
+     "weekStart": "2024-12-23",
+     "lastDate": "2024-12-27",
+     "inProgress": false,
+     "openCents": 144342,
+     "highCents": 146442,
+     "lowCents": 143742,
+     "closeCents": 144939,
+     "volume": 99877
+    },
+    {
+     "weekStart": "2024-12-30",
+     "lastDate": "2025-01-03",
+     "inProgress": false,
+     "openCents": 145439,
+     "highCents": 146542,
+     "lowCents": 138743,
+     "closeCents": 139542,
+     "volume": 147141
+    },
+    {
+     "weekStart": "2025-01-06",
+     "lastDate": "2025-01-10",
+     "inProgress": false,
+     "openCents": 137342,
+     "highCents": 138500,
+     "lowCents": 134708,
+     "closeCents": 135642,
+     "volume": 155312
+    }
+   ],
+   "spansTwoYears": true
+  },
+  {
+   "name": "2025-2026",
+   "bars": [
+    {
+     "date": "2025-12-19",
+     "openCents": 138198,
+     "highCents": 138443,
+     "lowCents": 137299,
+     "closeCents": 138198,
+     "volume": 26509
+    },
+    {
+     "date": "2025-12-22",
+     "openCents": 138198,
+     "highCents": 138612,
+     "lowCents": 137856,
+     "closeCents": 138024,
+     "volume": 20426
+    },
+    {
+     "date": "2025-12-23",
+     "openCents": 138024,
+     "highCents": 138491,
+     "lowCents": 136917,
+     "closeCents": 137984,
+     "volume": 24507
+    },
+    {
+     "date": "2025-12-24",
+     "openCents": 137697,
+     "highCents": 137834,
+     "lowCents": 137198,
+     "closeCents": 137288,
+     "volume": 25187
+    },
+    {
+     "date": "2025-12-25",
+     "openCents": 137698,
+     "highCents": 139146,
+     "lowCents": 137336,
+     "closeCents": 138615,
+     "volume": 23386
+    },
+    {
+     "date": "2025-12-26",
+     "openCents": 138615,
+     "highCents": 139112,
+     "lowCents": 138198,
+     "closeCents": 138611,
+     "volume": 17803
+    },
+    {
+     "date": "2025-12-29",
+     "openCents": 138611,
+     "highCents": 138611,
+     "lowCents": 137298,
+     "closeCents": 137398,
+     "volume": 26308
+    },
+    {
+     "date": "2025-12-30",
+     "openCents": 137298,
+     "highCents": 137388,
+     "lowCents": 135798,
+     "closeCents": 136170,
+     "volume": 33792
+    },
+    {
+     "date": "2025-12-31",
+     "openCents": 136198,
+     "highCents": 136598,
+     "lowCents": 134915,
+     "closeCents": 134916,
+     "volume": 34766
+    },
+    {
+     "date": "2026-01-05",
+     "openCents": 135698,
+     "highCents": 140386,
+     "lowCents": 135698,
+     "closeCents": 139798,
+     "volume": 70949
+    },
+    {
+     "date": "2026-01-06",
+     "openCents": 140453,
+     "highCents": 140895,
+     "lowCents": 138851,
+     "closeCents": 139999,
+     "volume": 39586
+    },
+    {
+     "date": "2026-01-07",
+     "openCents": 140486,
+     "highCents": 140698,
+     "lowCents": 139218,
+     "closeCents": 139534,
+     "volume": 29684
+    },
+    {
+     "date": "2026-01-08",
+     "openCents": 139531,
+     "highCents": 139534,
+     "lowCents": 138012,
+     "closeCents": 138428,
+     "volume": 29135
+    },
+    {
+     "date": "2026-01-09",
+     "openCents": 138898,
+     "highCents": 140058,
+     "lowCents": 138799,
+     "closeCents": 139108,
+     "volume": 29848
+    }
+   ],
+   "weeks": [
+    {
+     "weekStart": "2025-12-15",
+     "lastDate": "2025-12-19",
+     "inProgress": false,
+     "openCents": 138198,
+     "highCents": 138443,
+     "lowCents": 137299,
+     "closeCents": 138198,
+     "volume": 26509
+    },
+    {
+     "weekStart": "2025-12-22",
+     "lastDate": "2025-12-26",
+     "inProgress": false,
+     "openCents": 138198,
+     "highCents": 139146,
+     "lowCents": 136917,
+     "closeCents": 138611,
+     "volume": 111309
+    },
+    {
+     "weekStart": "2025-12-29",
+     "lastDate": "2025-12-31",
+     "inProgress": false,
+     "openCents": 138611,
+     "highCents": 138611,
+     "lowCents": 134915,
+     "closeCents": 134916,
+     "volume": 94866
+    },
+    {
+     "weekStart": "2026-01-05",
+     "lastDate": "2026-01-09",
+     "inProgress": false,
+     "openCents": 135698,
+     "highCents": 140895,
+     "lowCents": 135698,
+     "closeCents": 139108,
+     "volume": 199202
+    }
+   ],
+   "spansTwoYears": false
+  },
+  {
+   "name": "2019-2020",
+   "bars": [
+    {
+     "date": "2019-12-20",
+     "openCents": 90292,
+     "highCents": 90292,
+     "lowCents": 88224,
+     "closeCents": 88704,
+     "volume": 23563.84
+    },
+    {
+     "date": "2019-12-23",
+     "openCents": 87974,
+     "highCents": 90324,
+     "lowCents": 87674,
+     "closeCents": 89004,
+     "volume": 25919.18
+    },
+    {
+     "date": "2019-12-24",
+     "openCents": 89374,
+     "highCents": 89574,
+     "lowCents": 88574,
+     "closeCents": 88874,
+     "volume": 11823.1
+    },
+    {
+     "date": "2019-12-25",
+     "openCents": 88374,
+     "highCents": 88374,
+     "lowCents": 87075,
+     "closeCents": 87444,
+     "volume": 24305.97
+    },
+    {
+     "date": "2019-12-26",
+     "openCents": 87274,
+     "highCents": 88272,
+     "lowCents": 86073,
+     "closeCents": 87584,
+     "volume": 22877.27
+    },
+    {
+     "date": "2019-12-27",
+     "openCents": 89074,
+     "highCents": 91274,
+     "lowCents": 89074,
+     "closeCents": 90374,
+     "volume": 47066.28
+    },
+    {
+     "date": "2019-12-30",
+     "openCents": 91094,
+     "highCents": 93624,
+     "lowCents": 91094,
+     "closeCents": 92654,
+     "volume": 40760.66
+    },
+    {
+     "date": "2019-12-31",
+     "openCents": 92374,
+     "highCents": 92874,
+     "lowCents": 91725,
+     "closeCents": 92374,
+     "volume": 22588.81
+    },
+    {
+     "date": "2020-01-02",
+     "openCents": 86874,
+     "highCents": 88580,
+     "lowCents": 85674,
+     "closeCents": 87074,
+     "volume": 148099.16
+    },
+    {
+     "date": "2020-01-03",
+     "openCents": 85774,
+     "highCents": 85774,
+     "lowCents": 81764,
+     "closeCents": 81930,
+     "volume": 130318.78
+    },
+    {
+     "date": "2020-01-06",
+     "openCents": 81160,
+     "highCents": 83364,
+     "lowCents": 80804,
+     "closeCents": 81873,
+     "volume": 63414.78
+    },
+    {
+     "date": "2020-01-07",
+     "openCents": 81824,
+     "highCents": 83974,
+     "lowCents": 81714,
+     "closeCents": 83527,
+     "volume": 47853.59
+    },
+    {
+     "date": "2020-01-08",
+     "openCents": 82579,
+     "highCents": 83624,
+     "lowCents": 82332,
+     "closeCents": 82888,
+     "volume": 25008.25
+    },
+    {
+     "date": "2020-01-09",
+     "openCents": 83474,
+     "highCents": 84613,
+     "lowCents": 83074,
+     "closeCents": 84344,
+     "volume": 37405.87
+    },
+    {
+     "date": "2020-01-10",
+     "openCents": 84974,
+     "highCents": 85673,
+     "lowCents": 84324,
+     "closeCents": 85324,
+     "volume": 35975.87
+    }
+   ],
+   "weeks": [
+    {
+     "weekStart": "2019-12-16",
+     "lastDate": "2019-12-20",
+     "inProgress": false,
+     "openCents": 90292,
+     "highCents": 90292,
+     "lowCents": 88224,
+     "closeCents": 88704,
+     "volume": 23563.84
+    },
+    {
+     "weekStart": "2019-12-23",
+     "lastDate": "2019-12-27",
+     "inProgress": false,
+     "openCents": 87974,
+     "highCents": 91274,
+     "lowCents": 86073,
+     "closeCents": 90374,
+     "volume": 131991.8
+    },
+    {
+     "weekStart": "2019-12-30",
+     "lastDate": "2020-01-03",
+     "inProgress": false,
+     "openCents": 91094,
+     "highCents": 93624,
+     "lowCents": 81764,
+     "closeCents": 81930,
+     "volume": 341767.41000000003
+    },
+    {
+     "weekStart": "2020-01-06",
+     "lastDate": "2020-01-10",
+     "inProgress": false,
+     "openCents": 81160,
+     "highCents": 85673,
+     "lowCents": 80804,
+     "closeCents": 85324,
+     "volume": 209658.36
+    }
+   ],
+   "spansTwoYears": true
+  }
  ]
 }
