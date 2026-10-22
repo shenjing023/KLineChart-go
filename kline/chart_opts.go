@@ -772,6 +772,11 @@ func (a *Chart) OnCrosshairChange(fn func(symbol string, index int, ok bool)) {
 //
 // It runs for every visible sub-pane and must only paint: it may run more
 // than once a frame, and it must not call any Chart method. nil clears it.
+//
+// If the hook paints a tag in the axis column, note that the library's own
+// tags (last price, crosshair price) anchor their left edge at the axis
+// column's start, not their centre: a readout begins where the plot ends,
+// so a matching tag lines up with them.
 func (a *Chart) DrawSubPane(fn func(p *ui.Painter, rect ui.Rect, ind Indicator, index int)) {
 	a.subDraw = fn
 }
